@@ -1,0 +1,507 @@
+use crate::parser::ast::TypeAst;
+use crate::parser::lexer::{LexerToken, LexicalError};
+use std::collections::HashSet;
+grammar<'input>;
+
+
+
+extern {
+    type Location = usize;
+    type Error = LexicalError;
+
+    enum LexerToken<'input> {
+        r"[0-9]+" => LexerToken::Num(<&'input str>),
+        r"[a-zA-Z_][a-zA-Z0-9_]*" => LexerToken::Ident(<&'input str>),
+        r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'" => LexerToken::CharLit(<&'input str>),
+        r#""([^"\\]|\\.)*""# => LexerToken::StringLit(<&'input str>),
+
+        "let" => LexerToken::Let,
+        "perform" => LexerToken::Perform,
+        "do" => LexerToken::Do,
+        "with" => LexerToken::With,
+        "as" => LexerToken::As,
+        "match" => LexerToken::Match,
+        "rec" => LexerToken::Rec,
+        "panic" => LexerToken::Panic,
+        "int" => LexerToken::Int,
+        "char" => LexerToken::Char,
+        "true" => LexerToken::True,
+        "false" => LexerToken::False,
+        "any" => LexerToken::Any,
+        "none" => LexerToken::None,
+        "__add" => LexerToken::DunderAdd,
+        "__sub" => LexerToken::DunderSub,
+        "__mul" => LexerToken::DunderMul,
+        "__div" => LexerToken::DunderDiv,
+        "__mod" => LexerToken::DunderMod,
+        "__is" => LexerToken::DunderIs,
+        "__opcode" => LexerToken::DunderOpcode,
+
+        "->" => LexerToken::Arrow,
+        "|->" => LexerToken::FatArrow,
+        "=>" => LexerToken::DoubleArrow,
+        "::" => LexerToken::DoubleColon,
+        "." => LexerToken::Dot,
+        "@" => LexerToken::At,
+        "|" => LexerToken::Pipe,
+        "!" => LexerToken::Bang,
+        ":" => LexerToken::Colon,
+        "~" => LexerToken::Tilde,
+        "," => LexerToken::Comma,
+        "&" => LexerToken::Ampersand,
+        "==" => LexerToken::Eq,
+        "!=" => LexerToken::Neq,
+        "<" => LexerToken::Lt,
+        "<=" => LexerToken::Lte,
+        ">" => LexerToken::Gt,
+        ">=" => LexerToken::Gte,
+        "<:" => LexerToken::Subtype,
+        "+" => LexerToken::Plus,
+        "-" => LexerToken::Minus,
+        "*" => LexerToken::Star,
+        "/" => LexerToken::Slash,
+        "%" => LexerToken::Percent,
+        "=" => LexerToken::Assign,
+        ";" => LexerToken::Semicolon,
+        "#" => LexerToken::Hash,
+        "\\" => LexerToken::Backslash,
+        "(" => LexerToken::LParen,
+        ")" => LexerToken::RParen,
+        "[" => LexerToken::LBracket,
+        "]" => LexerToken::RBracket,
+        "{" => LexerToken::LBrace,
+        "}" => LexerToken::RBrace,
+    }
+}
+
+Num: isize = <s:r"[0-9]+"> => s.parse().unwrap();
+Ident: String = <s:r"[a-zA-Z_][a-zA-Z0-9_]*"> => s.to_string();
+
+CharLiteral: char = {
+    <c:r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'"> => {
+        let content = &c[1..c.len()-1];
+        match content {
+            "\\n" => '\n', "\\r" => '\r', "\\t" => '\t',
+            "\\'" => '\'', "\\\"" => '\"', "\\\\" => '\\',
+            s if s.len() == 1 => s.chars().next().unwrap(),
+            _ => unreachable!(),
+        }
+    }
+};
+
+StringLiteral: String = {
+    <s:r#""([^"\\]|\\.)*""#> => {
+        let content = &s[1..s.len()-1];
+        content.replace("\\n", "\n")
+               .replace("\\r", "\r")
+               .replace("\\t", "\t")
+               .replace("\\\"", "\"")
+               .replace("\\\\", "\\")
+    }
+};
+
+
+AtomType: TypeAst = {
+    "int" => TypeAst::Int,
+    "char" => TypeAst::Char,
+    "true" => TypeAst::Top,
+    "false" => TypeAst::Bottom,
+    "any" => TypeAst::Top,
+    "none" => TypeAst::Bottom,
+    "__add" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Add),
+    "__sub" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Sub),
+    "__mul" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mul),
+    "__div" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Div),
+    "__mod" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mod),
+    "__is" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Is),
+    "__opcode" => TypeAst::Opcode,
+    <n: Num> => TypeAst::IntLiteral(n),
+    <id: Ident> => TypeAst::Variable(id),
+    <c: CharLiteral> => TypeAst::CharLiteral(c),
+    <s: StringLiteral> => {
+        let chars: Vec<TypeAst> = s.chars().map(TypeAst::CharLiteral).collect();
+        TypeAst::List(chars)
+    },
+}
+
+Term: TypeAst = {
+    "(" <t: Type> ")" => t,
+    "[" <t: Type> "]" => t,
+    "{" <t: Type> "}" => t,
+    <np: Namespace> => np,
+    <a: AtomType> => a,
+}
+
+Namespace: TypeAst = {
+    <tag: Ident> "::" <t: Term> => TypeAst::Namespace {
+        tag: tag,
+        expr: Box::new(t),
+    },
+}
+
+Apply: TypeAst = {
+    <obj: Apply> "." <k: Ident> => TypeAst::Apply {
+        func: TypeAst::Closure {
+            pattern: Box::new(TypeAst::Namespace {
+                tag: k,
+                expr: Box::new(TypeAst::Pattern {
+                    name: "projection#obj".to_string(),
+                    expr: Box::new(TypeAst::Top),
+                }),
+            }),
+            auto_captures: HashSet::new(),
+            body: Box::new(TypeAst::Variable("projection#obj".to_string())),
+            fail_branch: None,
+        }.into(),
+        arg: Box::new(obj),
+    },
+    <f: Apply> <x: Term> => TypeAst::Apply {
+        func: Box::new(f),
+        arg: Box::new(x),
+    },
+    <t: Term> => t,
+}
+
+List: TypeAst = {
+    "@" <element: Primary> => match element {
+        TypeAst::Tuple(elements) => TypeAst::List(elements),
+        single => TypeAst::List(vec![single]),
+    },
+}
+
+Match: TypeAst = {
+    "match" <value: Primary> <branches: MatchBranch+> <else_branch: ElseBranch> => {
+        TypeAst::Match {
+            value: Box::new(value),
+            match_branch: branches,
+            else_branch: Some(Box::new(else_branch)),
+        }
+    },
+    "match" <value: Primary> <branches: MatchBranch+> "|" "panic" => {
+        TypeAst::Match {
+            value: Box::new(value),
+            match_branch: branches,
+            else_branch: None,
+        }
+    },
+}
+
+MatchBranch: (TypeAst, TypeAst) = {
+    "|" <pattern: Primary> "=>" <t: Primary> => (pattern, t),
+}
+
+ElseBranch: TypeAst = {
+    "|" "!" "=>" <t: Primary> => t,
+}
+
+RecursiveGen: TypeAst = {
+    "rec" <id: Ident> ":" <t: Primary> => TypeAst::FixPoint {
+        param_name: id,
+        expr: Box::new(t),
+    },
+}
+
+FailBranch: Box<TypeAst> = {
+    "\\" <t: Primary> => Box::new(t),
+}
+
+Closure: TypeAst = {
+    <pattern: Factor> "->" <body: Primary> <fail_branch: FailBranch> => {
+        TypeAst::Closure {
+            pattern: Box::new(pattern),
+            auto_captures: HashSet::new(),
+            body: Box::new(body),
+            fail_branch: Some(fail_branch),
+        }
+    },
+    <pattern: Factor> "|->" <body: Primary> => {
+        TypeAst::Closure {
+            pattern: Box::new(pattern),
+            auto_captures: HashSet::new(),
+            body: Box::new(body),
+            fail_branch: None,
+        }
+    }
+}
+
+Tuple: TypeAst = {
+    () => TypeAst::Tuple(vec![]),
+    <items: Comma<TupleElement>> => TypeAst::Tuple(items),
+    <item: TupleElement> => item,
+}
+
+// Define Comma<T> for one or more comma-separated items.
+Comma<T>: Vec<T> = {
+    <v:(T CommaSep)+> <e:T> => {
+        let mut res = Vec::new();
+        for (it, _sep) in v.into_iter() {
+            res.push(it);
+        }
+        res.push(e);
+        res
+    },
+    <e:T> CommaSep => vec![e],
+};
+
+CommaSep = ","+;
+
+
+Primary: TypeAst = {
+    <l: List> => l,
+    <r: RecursiveGen> => r,
+    <c: Closure> => c,
+    <m: Match> => m,
+    <c: Calculate> => c,
+};
+
+Factor: TypeAst = {
+    "!" <a: Factor> => TypeAst::Not {
+        value: Box::new(a),
+    },
+    <id: Ident> ":" <a: Factor> => TypeAst::Pattern {
+        name: id,
+        expr: Box::new(a),
+    },
+    <ep: EffectPair> => ep,
+    <a: Apply> => a,
+}
+
+EffectPair: TypeAst = {
+    <payload: Term> "~" <then: Factor> => TypeAst::Effect {
+        payload: Box::new(payload),
+        then: Box::new(then),
+    }
+}
+
+TupleElement = Generalize;
+
+Generalize: TypeAst = {
+    <items: Bars<Specialize>> => TypeAst::Generalize(items),
+    <e: Specialize> => e,
+}
+
+Bars<T>: Vec<T> = {
+    <v:(T BarsSep)+> <e:T> => {
+        let mut res = Vec::new();
+        for (it, _sep) in v.into_iter() {
+            res.push(it);
+        }
+        res.push(e);
+        res
+    },
+};
+
+BarsSep = "|" +;
+
+Specialize: TypeAst = {
+    <items: Ands<Primary>> => TypeAst::Specialize(items),
+    <e: Primary> => e,
+}
+
+Ands<T>: Vec<T> = {
+    <v:(T AndsSep)+> <e:T> => {
+        let mut res = Vec::new();
+        for (it, _sep) in v.into_iter() {
+            res.push(it);
+        }
+        res.push(e);
+        res
+    },
+    <e:T> AndsSep => vec![e],
+};
+
+AndsSep = "&"+;
+
+
+Calculate: TypeAst = { Compare };
+
+Compare: TypeAst = {
+    <left: Compare> "==" <right: AddSub> => TypeAst::Eq {
+        left: Box::new(left),
+        right: Box::new(right),
+    },
+    <left: Compare> "!=" <right: AddSub> => TypeAst::Neq {
+        left: Box::new(left),
+        right: Box::new(right),
+    },
+    <left: Compare> "<" <right: AddSub> => TypeAst::Apply {
+        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Less)),
+        arg: Box::new(TypeAst::Tuple(vec![left, right])),
+    },
+    <left: Compare> "<=" <right: AddSub> => TypeAst::Generalize(vec![
+        TypeAst::Apply {
+            func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Less)),
+            arg: Box::new(TypeAst::Tuple(vec![left.clone(), right.clone()])),
+        },
+        TypeAst::Eq {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    ]),
+    <left: Compare> ">" <right: AddSub> => TypeAst::Apply {
+        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Greater)),
+        arg: Box::new(TypeAst::Tuple(vec![left, right])),
+    },
+    <left: Compare> ">=" <right: AddSub> => TypeAst::Generalize(vec![
+        TypeAst::Apply {
+            func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Greater)),
+            arg: Box::new(TypeAst::Tuple(vec![left.clone(), right.clone()])),
+        },
+        TypeAst::Eq {
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    ]),
+    <left: Compare> "<:" <right: AddSub> => TypeAst::Apply {
+        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Is)),
+        arg: Box::new(TypeAst::Tuple(vec![left, right])),
+    },
+    <t: AddSub> => t,
+}
+
+AddSub: TypeAst = {
+    <left: AddSub> "+" <right: Mod> => TypeAst::Apply {
+        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Add)),
+        arg: Box::new(TypeAst::Tuple(vec![left, right])),
+    },
+    <left: AddSub> "-" <right: Mod> => TypeAst::Apply {
+        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Sub)),
+        arg: Box::new(TypeAst::Tuple(vec![left, right])),
+    },
+    <t: Mod> => t,
+}
+
+Mod: TypeAst = {
+    <left: Mod> "%" <right: MulDiv> => TypeAst::Apply {
+        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mod)),
+        arg: Box::new(TypeAst::Tuple(vec![left, right])),
+    },
+    <t: MulDiv> => t,
+}
+
+MulDiv: TypeAst = {
+    <left: MulDiv> "*" <right: Factor> => TypeAst::Apply {
+        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mul)),
+        arg: Box::new(TypeAst::Tuple(vec![left, right])),
+    },
+    <left: MulDiv> "/" <right: Factor> => TypeAst::Apply {
+        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Div)),
+        arg: Box::new(TypeAst::Tuple(vec![left, right])),
+    },
+    <t: Factor> => t,
+}
+
+Let: (TypeAst, TypeAst) = {
+    "let" <id: Primary> "=" <value: Type> ";" => (id, value),
+}
+
+Perform: (TypeAst, TypeAst) = {
+    "perform" <id: Primary> "=" <value: Type> ";" => (id, value),
+}
+
+DiscardPerform: TypeAst = {
+    "perform" <e: Type> ";" => e,
+}
+
+Discard: TypeAst = {
+    "#" <e: Type> ";" => e,
+}
+
+DoWith: (TypeAst, TypeAst, TypeAst) = {
+    "do" <e: Type> "with" <param: Type> "as" <pattern: Type> ";" => (e, param, pattern),
+}
+
+Expression: TypeAst = {
+    <let_expr: Let> <e: Type> => {
+        match e {
+            TypeAst::Expression {
+                mut binding_patterns,
+                mut binding_types,
+                body,
+            } => {
+                binding_patterns.insert(0, let_expr.0);
+                binding_types.insert(0, let_expr.1);
+                TypeAst::Expression {
+                    binding_patterns,
+                    binding_types,
+                    body,
+                }
+            }
+            _ => TypeAst::Expression {
+                binding_patterns: vec![let_expr.0],
+                binding_types: vec![let_expr.1],
+                body: Box::new(e),
+            },
+        }
+    },
+    <discard_expr: Discard> <e: Type> => {
+        match e {
+            TypeAst::Expression {
+                mut binding_patterns,
+                mut binding_types,
+                body,
+            } => {
+                binding_patterns.insert(0, TypeAst::DiscardPattern);
+                binding_types.insert(0, discard_expr);
+                TypeAst::Expression {
+                    binding_patterns,
+                    binding_types,
+                    body,
+                }
+            }
+            _ => TypeAst::Expression {
+                binding_patterns: vec![TypeAst::DiscardPattern],
+                binding_types: vec![discard_expr],
+                body: Box::new(e),
+            },
+        }
+    },
+    <do_with: DoWith> <e: Type> => {
+        // alias do_with.0(() -> e)(do_with.1)
+        TypeAst::Apply {
+            func: Box::new(TypeAst::Apply {
+                func: Box::new(do_with.0),
+                arg: TypeAst::Closure {
+                    pattern: Box::new(do_with.2),
+                    auto_captures: HashSet::new(),
+                    body: Box::new(e),
+                    fail_branch: None,
+                }.into(),
+            }),
+            arg: Box::new(do_with.1),
+        }
+    }
+}
+
+Effect: TypeAst = {
+    <perform_expr: Perform> <e: Type> => {
+        TypeAst::Effect {
+            payload: Box::new(perform_expr.1),
+            then: Box::new(TypeAst::Closure {
+                pattern: Box::new(perform_expr.0),
+                auto_captures: HashSet::new(),
+                body: Box::new(e),
+                fail_branch: None,
+            }),
+        }
+    },
+    <discard_perform: DiscardPerform> <e: Type> => {
+        TypeAst::Effect {
+            payload: Box::new(discard_perform),
+            then: Box::new(TypeAst::Closure {
+                pattern: Box::new(TypeAst::DiscardPattern),
+                auto_captures: HashSet::new(),
+                body: Box::new(e),
+                fail_branch: None,
+            }),
+        }
+    },
+}
+
+
+
+pub Type: TypeAst = {
+    <e: Effect> => e,
+    <e: Expression> => e,
+    <t: Tuple> => t,
+}

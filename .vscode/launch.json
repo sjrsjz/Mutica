@@ -1,0 +1,11 @@
+{
+    "configurations": [
+        {
+            "name": "Run all examples",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/run_all.py",
+            "console": "integratedTerminal"
+        }
+    ]
+}
