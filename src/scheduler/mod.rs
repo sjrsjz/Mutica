@@ -22,6 +22,7 @@ impl LinearScheduler {
     }
 
     pub fn step(&mut self, gc: &mut GC<FixPointInner>) -> Result<bool, TypeError> {
+        gc.collect();
         let v = ClosureEnv::new(Vec::<Type>::new());
         let p = ParamEnv::from_collector(Collector::new());
         let mut rec_assumptions = smallvec::SmallVec::new();

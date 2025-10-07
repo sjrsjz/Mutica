@@ -48,6 +48,8 @@ pub enum LexerToken<'input> {
     Rec,
     #[token("panic")]
     Panic,
+    #[token("discard")]
+    Discard,
     #[token("int")]
     Int,
     #[token("char")]
@@ -76,6 +78,11 @@ pub enum LexerToken<'input> {
     DunderOpcode,
     #[token("__continuation")]
     DunderContinuation,
+    #[token("input")]
+    Input,
+    #[token("print")]
+    Print,
+
 
     #[token("->")]
     Arrow,

@@ -3,15 +3,18 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
-        fixpoint::FixPointInner, integer_value::IntegerValue, type_bound::TypeBound,
+        Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
+        character_value::CharacterValue, closure::ClosureEnv, fixpoint::FixPointInner,
+        integer_value::IntegerValue, list::List, tuple::Tuple, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
 
 #[derive(Debug, Clone)]
 pub enum Opcode {
-    Opcode, // 所有操作码的超类型
+    // Super type
+    Opcode,
+    // Arithmetic
     Add,
     Sub,
     Mul,
@@ -20,6 +23,9 @@ pub enum Opcode {
     Less,
     Greater,
     Is,
+    // I/O
+    Input,
+    Print,
 }
 
 impl GCTraceable<FixPointInner> for Opcode {
@@ -74,6 +80,23 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
             Opcode::Opcode => Err(TypeError::NonApplicableType(
                 self.clone().dispatch().stabilize().into(),
             )),
+            Opcode::Input => {
+                // 从stdin读取一行输入，返回List<CharacterValue>类型
+                let mut input = String::new();
+                std::io::stdin()
+                    .read_line(&mut input)
+                    .map_err(|e| TypeError::RuntimeError(std::sync::Arc::new(e)))?;
+                let chars = input
+                    .chars()
+                    .map(|c| CharacterValue::new(c))
+                    .collect::<Vec<_>>();
+                Ok(List::new(chars))
+            }
+            Opcode::Print => {
+                // 打印参数
+                print!("{}", ctx.arg.display(&mut FastCycleDetector::new()));
+                Ok(Tuple::new(Vec::<Type>::new()))
+            }
             Opcode::Is => {
                 if let Type::Tuple(tuple) = ctx.arg {
                     if tuple.len() == 2 {

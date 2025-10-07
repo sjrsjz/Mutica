@@ -23,6 +23,7 @@ extern {
         "match" => LexerToken::Match,
         "rec" => LexerToken::Rec,
         "panic" => LexerToken::Panic,
+        "discard" => LexerToken::Discard,
         "int" => LexerToken::Int,
         "char" => LexerToken::Char,
         "true" => LexerToken::True,
@@ -37,6 +38,8 @@ extern {
         "__is" => LexerToken::DunderIs,
         "__opcode" => LexerToken::DunderOpcode,
         "__continuation" => LexerToken::DunderContinuation,
+        "input" => LexerToken::Input,
+        "print" => LexerToken::Print,
 
         "->" => LexerToken::Arrow,
         "|->" => LexerToken::FatArrow,
@@ -109,13 +112,15 @@ AtomType: TypeAst = {
     "false" => TypeAst::Bottom,
     "any" => TypeAst::Top,
     "none" => TypeAst::Bottom,
-    "__add" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Add),
-    "__sub" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Sub),
-    "__mul" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mul),
-    "__div" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Div),
-    "__mod" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mod),
-    "__is" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Is),
-    "__opcode" => TypeAst::Opcode,
+    "__add" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add),
+    "__sub" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub),
+    "__mul" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul),
+    "__div" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div),
+    "__mod" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod),
+    "__is" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is),
+    "__opcode" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode),
+    "input" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Input),
+    "print" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Print),
     "__continuation" => TypeAst::Variable(None),
     <n: Num> => TypeAst::IntLiteral(n),
     <id: Ident> => TypeAst::Variable(Some(id)),
@@ -320,12 +325,12 @@ Compare: TypeAst = {
         right: Box::new(right),
     },
     <left: Compare> "<" <right: AddSub> => TypeAst::Apply {
-        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Less)),
+        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
     },
     <left: Compare> "<=" <right: AddSub> => TypeAst::Generalize(vec![
         TypeAst::Apply {
-            func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Less)),
+            func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less)),
             arg: Box::new(TypeAst::Tuple(vec![left.clone(), right.clone()])),
         },
         TypeAst::Eq {
@@ -334,12 +339,12 @@ Compare: TypeAst = {
         },
     ]),
     <left: Compare> ">" <right: AddSub> => TypeAst::Apply {
-        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Greater)),
+        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
     },
     <left: Compare> ">=" <right: AddSub> => TypeAst::Generalize(vec![
         TypeAst::Apply {
-            func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Greater)),
+            func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater)),
             arg: Box::new(TypeAst::Tuple(vec![left.clone(), right.clone()])),
         },
         TypeAst::Eq {
@@ -348,7 +353,7 @@ Compare: TypeAst = {
         },
     ]),
     <left: Compare> "<:" <right: AddSub> => TypeAst::Apply {
-        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Is)),
+        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
     },
     <t: AddSub> => t,
@@ -356,11 +361,11 @@ Compare: TypeAst = {
 
 AddSub: TypeAst = {
     <left: AddSub> "+" <right: Mod> => TypeAst::Apply {
-        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Add)),
+        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
     },
     <left: AddSub> "-" <right: Mod> => TypeAst::Apply {
-        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Sub)),
+        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
     },
     <t: Mod> => t,
@@ -368,7 +373,7 @@ AddSub: TypeAst = {
 
 Mod: TypeAst = {
     <left: Mod> "%" <right: MulDiv> => TypeAst::Apply {
-        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mod)),
+        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
     },
     <t: MulDiv> => t,
@@ -376,11 +381,11 @@ Mod: TypeAst = {
 
 MulDiv: TypeAst = {
     <left: MulDiv> "*" <right: Factor> => TypeAst::Apply {
-        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mul)),
+        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
     },
     <left: MulDiv> "/" <right: Factor> => TypeAst::Apply {
-        func: Box::new(TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Div)),
+        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
     },
     <t: Factor> => t,
@@ -400,6 +405,7 @@ DiscardPerform: (TypeAst, TypeAst) = {
 
 Discard: TypeAst = {
     "#" <e: Type> ";" => e,
+    "discard" <e: Type> ";" => e,
 }
 
 Expression: TypeAst = {

@@ -104,6 +104,8 @@ fn print_parse_error(expr: &str, e: lalrpop_util::ParseError<usize, LexerToken, 
 }
 
 pub fn parse_and_reduce(expr: &str) {
+    #[cfg(debug_assertions)]
+    println!("Parsing expression:\n{}\n", expr);
     let lexer = LexerToken::lexer(expr);
     let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
         let token = token_result?;
@@ -116,9 +118,9 @@ pub fn parse_and_reduce(expr: &str) {
         Ok(ast) => {
             let mut gc = GC::new();
             let basic = ast.into_basic();
-            println!("Basic AST: {:?}", basic);
+            // println!("Basic AST: {:?}", basic);
             let linearized = basic.linearize(&mut LinearizeContext::new()).linearize();
-            println!("Linearized AST: {:?}", linearized);
+            // println!("Linearized AST: {:?}", linearized);
             let flowed = linearized
                 .flow(&mut ParseContext::new(), false)
                 .unwrap()
@@ -127,6 +129,7 @@ pub fn parse_and_reduce(expr: &str) {
             let built_type = flowed
                 .to_type(&mut BuildContext::new(), false, &mut gc)
                 .unwrap();
+            #[cfg(debug_assertions)]
             println!(
                 "Built type: {}\n",
                 built_type.ty().display(&mut FastCycleDetector::new())
@@ -140,7 +143,7 @@ pub fn parse_and_reduce(expr: &str) {
                 }
             };
             match result {
-                Ok(v) => println!("Success: {}", v.display(&mut FastCycleDetector::new())),
+                Ok(v) => println!("{}", v.display(&mut FastCycleDetector::new())),
                 Err(e) => println!("Failed: {:?}", e),
             }
         }
@@ -290,26 +293,6 @@ mod tests {
     }
 
     #[test]
-    fn test_effects() {
-        let expr = r#"
-        let f: any = () -> {
-            let x: int = 1;
-            perform y: int = A::2;
-            perform z: int = B::3;
-            x + y * z
-        } \ false;
-        let handler: any = rec h: v: any -> match v 
-            | A::(x: int) ~ (f: any) => h(f(x + 1))
-            | B::(x: int) ~ (f: any) => h(f(x * 10))
-            | v: int => v
-            | ! => false
-        \ false;
-        handler(f())
-        "#;
-        parse_and_reduce(expr);
-    }
-
-    #[test]
     #[should_panic]
     fn test_assert_failed() {
         let expr = r#"
@@ -388,15 +371,12 @@ mod tests {
         let expr = r#"
         
         let list: any = @(1, 2, 3, 4, 5);
-        let break: any = v: any |-> (perform _: any = Break::v;);
-        let continue: any = v: any |-> {
-            perform next: any = Continue::v;
-            next
-        };
+        let break: any = v: any |-> Break::v;
+        let continue: any = v: any |-> Continue::v;
         let iter: any = f: any |-> rec iter: (state: any) |-> 
             match f(state)
-                | Continue::(next_state: any) ~ (next_f: any) => iter(next_f(next_state))
-                | Break::(result: any) ~ (next_f: any) => result
+                | Continue::(next_state: any) => iter(next_state)
+                | Break::(result: any) => result
                 | panic;
 
         let sum: any = (count: int, lst: (() | (int, any))) |-> 
@@ -410,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tmp() {
+    fn test_missing_pattern() {
         let expr = r#"
             match false
                 | (x: int, y: int) => x + y
@@ -441,7 +421,6 @@ mod tests {
     fn test_discard() {
         let expr = r#"
         # (let A: any = 1;);
-        perform 2;
         1
         "#;
         parse_and_reduce(expr);
@@ -463,34 +442,6 @@ mod tests {
         parse_and_reduce(expr);
     }
 
-    // #[test]
-    // fn test_io() {
-    //     // let expr = r#"
-    //     // perform Print::"Hello, world!";
-    //     // perform v : any = Input::"Please enter something: ";
-    //     // perform Print::v;
-    //     // "#;
-    //     // parse_and_reduce_with_io(expr);
-
-    //     let expr = r#"
-    //     let println: any = next: any |-> rec println: (chars: (() | (char, any))) |->
-    //         match chars
-    //             | () => {
-    //                 perform Print::'\n';
-    //                 next()
-    //             }
-    //             | (head: char, tail: any) => {
-    //                 perform Print::head;
-    //                 println(tail)
-    //             }
-    //             | panic;
-    //     do println with "Please enter something: " as ();
-    //     perform v: any = Input::();
-    //     do println with v as ();
-    //     "#;
-    //     parse_and_reduce_with_io(expr);
-    // }
-
     #[test]
     fn test_coinductive() {
         let expr = r#"
@@ -503,14 +454,13 @@ mod tests {
     #[test]
     fn test_simple_fn() {
         let expr = r#"
-        let f: any = x: int |-> x + 1;
-        f(1), f(2)
+        let f: any = rec f: x: int |-> match x
+            | 0 => 0
+            | 1 => 1
+            | ! => f(x - 2);
+        f(11)
         "#;
         parse_and_reduce(expr);
-        // let expr = r#"
-        // x: any |-> 1
-        // "#;
-        // parse_and_reduce(expr);
     }
 
     #[test]
@@ -530,53 +480,16 @@ mod tests {
         parse_and_reduce(expr);
     }
 
-    // #[test]
-    // fn test_effect_list() {
-    //     let expr = r#"
-    //     let run: any = v: any |-> (
-    //         rec run: (v: any, root: any) |->
-    //             match v
-    //                 | (payload: any) ~ (next: any) => {
-    //                     let r: any = run(payload, false);
-    //                     match root
-    //                         | false => X: any |-> r[v: any |-> [next(v)] ~ X]
-    //                         | ! => r[v: any |-> next(v)]
-    //                 }
-    //                 | result: any => v: any |-> result ~ v
-    //                 | panic
-    //         )(v, true);
-
-    //     let handler: any = rec h: v: any |-> match v
-    //         | () ~ (f: any) => h(f())
-    //         | (payload: any) ~ (f: any) => {
-    //             perform v: any = payload;
-    //             h(f(v))
-    //         }
-    //         | v: any => v
-    //         | panic;
-
-    //     let f: any = () |-> {
-    //         perform Print::'A';
-    //         let simple_num: any = 42;
-    //         perform Print::simple_num;
-    //     };
-
-    //     handler(run {
-    //         perform f();
-    //         perform Print::'C';
-    //         perform Print::'D';
-    //     })
-    //     "#;
-    //     parse_and_reduce_with_io(expr);
-    // }
-
-    // #[test]
-    // fn test_cps() {
-    //     let expr = r#"
-    //     let f: any = next: any |-> x: int |-> next(x + 1);
-    //     do f with 1 as v: int;
-    //     v * 2
-    //     "#;
-    //     parse_and_reduce_with_io(expr);
-    // }
+    #[test]
+    fn test_io() {
+        let expr = r#"
+        let print_chars: any = rec print_chars: (chars: (() | (char, any))) |->
+            match chars
+                | () => ()
+                | (head: char, tail: any) => (discard print(head); print_chars(tail))
+                | panic;
+        print_chars("Hello, world!\n")
+        "#;
+        parse_and_reduce(expr);
+    }
 }

@@ -23,18 +23,6 @@ use std::collections::HashSet;
 use std::ops::Deref;
 
 #[derive(Debug, Clone)]
-pub enum BinaryOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Less,
-    Greater,
-    Is,
-}
-
-#[derive(Debug, Clone)]
 pub enum AtomicOpcode {
     Opcode,
     Add,
@@ -45,6 +33,8 @@ pub enum AtomicOpcode {
     Less,
     Greater,
     Is,
+    Input,
+    Print,
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +43,6 @@ pub enum TypeAst {
     Char,
     Top,
     Bottom,
-    Opcode,
     DiscardPattern, // 用于表示_模式
     IntLiteral(isize),
     CharLiteral(char),
@@ -98,7 +87,7 @@ pub enum TypeAst {
     Not {
         value: Box<TypeAst>,
     },
-    BinaryOp(BinaryOp),
+    AtomicOpcode(AtomicOpcode),
     FixPoint {
         param_name: String,
         expr: Box<TypeAst>,
@@ -434,11 +423,7 @@ impl TypeAst {
             TypeAst::Char => BasicTypeAst::Char,
             TypeAst::Top => BasicTypeAst::Top,
             TypeAst::Bottom => BasicTypeAst::Bottom,
-            TypeAst::Opcode => BasicTypeAst::AtomicOpcode(AtomicOpcode::Opcode),
-            TypeAst::DiscardPattern => BasicTypeAst::Pattern {
-                name: "discard#value".to_string(),
-                expr: Box::new(BasicTypeAst::Top),
-            },
+            TypeAst::DiscardPattern => BasicTypeAst::Tuple(vec![]), // discard 只允许丢弃unit
             TypeAst::IntLiteral(v) => BasicTypeAst::IntLiteral(v),
             TypeAst::CharLiteral(v) => BasicTypeAst::CharLiteral(v),
             TypeAst::Variable(name) => BasicTypeAst::Variable(name),
@@ -594,16 +579,7 @@ impl TypeAst {
                 .into(),
                 arg: value.into_basic().into(),
             },
-            TypeAst::BinaryOp(binary_op) => match binary_op {
-                BinaryOp::Add => BasicTypeAst::AtomicOpcode(AtomicOpcode::Add),
-                BinaryOp::Sub => BasicTypeAst::AtomicOpcode(AtomicOpcode::Sub),
-                BinaryOp::Mul => BasicTypeAst::AtomicOpcode(AtomicOpcode::Mul),
-                BinaryOp::Div => BasicTypeAst::AtomicOpcode(AtomicOpcode::Div),
-                BinaryOp::Mod => BasicTypeAst::AtomicOpcode(AtomicOpcode::Mod),
-                BinaryOp::Less => BasicTypeAst::AtomicOpcode(AtomicOpcode::Less),
-                BinaryOp::Greater => BasicTypeAst::AtomicOpcode(AtomicOpcode::Greater),
-                BinaryOp::Is => BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
-            },
+            TypeAst::AtomicOpcode(binary_op) => BasicTypeAst::AtomicOpcode(binary_op),
             TypeAst::FixPoint { param_name, expr } => BasicTypeAst::FixPoint {
                 param_name,
                 expr: Box::new(expr.into_basic()),
@@ -1107,6 +1083,8 @@ impl LinearTypeAst {
                     AtomicOpcode::Less => Opcode::Less,
                     AtomicOpcode::Greater => Opcode::Greater,
                     AtomicOpcode::Is => Opcode::Is,
+                    AtomicOpcode::Input => Opcode::Input,
+                    AtomicOpcode::Print => Opcode::Print,
                 })))
             }
             LinearTypeAst::FixPoint { param_name, expr } => {

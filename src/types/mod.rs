@@ -17,7 +17,7 @@ pub mod tuple;
 pub mod type_bound;
 pub mod variable;
 
-use std::{fmt::Debug, ops::Deref, sync::Arc};
+use std::{error::Error, fmt::Debug, ops::Deref, sync::Arc};
 
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
@@ -112,6 +112,8 @@ pub enum TypeError {
     AssertFailed(Box<(StabilizedType, StabilizedType)>),
     #[error("Missing continuation")]
     MissingContinuation,
+    #[error("Runtime error: {0}")]
+    RuntimeError(Arc<dyn Error + Send + Sync>),
 }
 
 impl Debug for TypeError {

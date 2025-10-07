@@ -127,14 +127,22 @@ impl GCTraceable<FixPointInner> for ClosureInner {
         queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<FixPointInner>>,
     ) {
         self.env.collect(queue);
+        self.pattern.collect(queue);
         self.expr.collect(queue);
+        if let Some(fb) = &self.fail_branch {
+            fb.collect(queue);
+        }
     }
 }
 
 impl Rootable for ClosureInner {
     fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
         self.env.upgrade(collected);
+        self.pattern.upgrade(collected);
         self.expr.upgrade(collected);
+        if let Some(fb) = &self.fail_branch {
+            fb.upgrade(collected);
+        }
     }
 }
 
@@ -254,7 +262,6 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
             .iter()
             .map(|ty| ty.reduce(ctx))
             .collect::<Result<Vec<_>, _>>()?;
-        let new_env = ClosureEnv::new(env);
         Ok(Self::new(
             self.inner.pattern_param_size,
             &self.inner.pattern,
@@ -263,7 +270,7 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
                 Some(fb) => Some(fb.reduce(ctx)?),
                 None => None,
             },
-            new_env,
+            ClosureEnv::new(env), // 不能拆开成中间变量否则会导致临时变量被drop后fixpoint失效（极其罕见）
         ))
     }
 

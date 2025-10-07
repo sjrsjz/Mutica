@@ -1,12 +1,4 @@
-perform A::();
-perform {
-    perform B::();
-    perform C::();
-    perform {
-        perform D::();
-        perform E::();
-    };
-    perform F::();
-};
-perform G::();
-perform v: int = H::();
+perform print with 'A'; // same as `discard print('A');`
+discard print '\n';
+perform x: any = input with ();
+perform print with x;
