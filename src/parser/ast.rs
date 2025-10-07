@@ -2,15 +2,14 @@ use arc_gc::gc::GC;
 
 use crate::as_type;
 use crate::parser::{BuildContext, ParseContext, ParseError};
-use crate::types::apply::Apply;
 use crate::types::character::Character;
 use crate::types::character_value::CharacterValue;
 use crate::types::closure::{Closure, ClosureEnv};
-use crate::types::effect::Effect;
 use crate::types::fixpoint::{FixPoint, FixPointInner};
 use crate::types::generalize::Generalize;
 use crate::types::integer::Integer;
 use crate::types::integer_value::IntegerValue;
+use crate::types::invoke::Invoke;
 use crate::types::list::List;
 use crate::types::namespace::Namespace;
 use crate::types::opcode::Opcode;
@@ -58,14 +57,15 @@ pub enum TypeAst {
     DiscardPattern, // 用于表示_模式
     IntLiteral(isize),
     CharLiteral(char),
-    Variable(String),
+    Variable(Option<String>),
     Tuple(Vec<TypeAst>),
     List(Vec<TypeAst>),
     Generalize(Vec<TypeAst>),
     Specialize(Vec<TypeAst>),
-    Effect {
-        payload: Box<TypeAst>,
-        then: Box<TypeAst>,
+    Invoke {
+        func: Box<TypeAst>,
+        arg: Box<TypeAst>,
+        continuation: Box<TypeAst>,
     },
     Expression {
         binding_patterns: Vec<TypeAst>,
@@ -121,14 +121,15 @@ pub enum BasicTypeAst {
     Bottom,
     IntLiteral(isize),
     CharLiteral(char),
-    Variable(String),
+    Variable(Option<String>), // None 表示续体
     Tuple(Vec<BasicTypeAst>),
     List(Vec<BasicTypeAst>),
     Generalize(Vec<BasicTypeAst>),
     Specialize(Vec<BasicTypeAst>),
-    Effect {
-        payload: Box<BasicTypeAst>,
-        then: Box<BasicTypeAst>,
+    Invoke {
+        func: Box<BasicTypeAst>,
+        arg: Box<BasicTypeAst>,
+        continuation: Box<BasicTypeAst>,
     },
     Closure {
         pattern: Box<BasicTypeAst>,
@@ -152,6 +153,276 @@ pub enum BasicTypeAst {
     Pattern {
         name: String,
         expr: Box<BasicTypeAst>,
+    },
+}
+
+pub struct LinearizeContext {
+    invoke_tmpvar_counter: usize, // 用于生成唯一的
+}
+
+impl LinearizeContext {
+    pub fn new() -> Self {
+        Self {
+            invoke_tmpvar_counter: 0,
+        }
+    }
+
+    fn allocate_tmpvar(&mut self) -> usize {
+        let index = self.invoke_tmpvar_counter;
+        self.invoke_tmpvar_counter += 1;
+        index
+    }
+
+    pub fn allocate_tmpvar_name(&mut self) -> String {
+        let index = self.allocate_tmpvar();
+        format!("invoke#tmp#{}", index)
+    }
+}
+
+#[derive(Debug)]
+pub struct LinearizeResult {
+    bindings: Vec<(LinearTypeAst, LinearTypeAst, String)>, // (func, arg, tmpvar_name)
+    final_type: LinearTypeAst,
+}
+
+impl LinearizeResult {
+    pub fn new_simple(ty: LinearTypeAst) -> Self {
+        Self {
+            bindings: Vec::new(),
+            final_type: ty,
+        }
+    }
+
+    pub fn new_with_binding(
+        bindings: Vec<(LinearTypeAst, LinearTypeAst, String)>,
+        ty: LinearTypeAst,
+    ) -> Self {
+        Self {
+            bindings,
+            final_type: ty,
+        }
+    }
+
+    pub fn new_apply(
+        func: LinearizeResult,
+        arg: LinearizeResult,
+        allocated_tmpvar_name: String,
+    ) -> Self {
+        let mut bindings = func.bindings;
+        bindings.extend(arg.bindings);
+        bindings.push((
+            func.final_type,
+            arg.final_type,
+            allocated_tmpvar_name.clone(),
+        ));
+        Self {
+            bindings,
+            final_type: LinearTypeAst::Variable(Some(allocated_tmpvar_name)).into(),
+        }
+    }
+
+    pub fn bindings(&self) -> &Vec<(LinearTypeAst, LinearTypeAst, String)> {
+        &self.bindings
+    }
+
+    pub fn final_type(&self) -> &LinearTypeAst {
+        &self.final_type
+    }
+
+    pub fn linearize(self) -> LinearTypeAst {
+        let mut ty = self.final_type;
+        for (f, a, tmpvar) in self.bindings.into_iter().rev() {
+            ty = LinearTypeAst::Invoke {
+                func: Box::new(f),
+                arg: Box::new(a),
+                continuation: LinearTypeAst::Closure {
+                    pattern: LinearTypeAst::Pattern {
+                        name: tmpvar,
+                        expr: Box::new(LinearTypeAst::Top),
+                    }
+                    .into(),
+                    auto_captures: HashSet::new(),
+                    body: Box::new(ty),
+                    fail_branch: None,
+                }
+                .into(),
+            }
+        }
+        ty
+    }
+}
+
+impl BasicTypeAst {
+    pub fn linearize(self, ctx: &mut LinearizeContext) -> LinearizeResult {
+        match self {
+            BasicTypeAst::Int => LinearizeResult::new_simple(LinearTypeAst::Int),
+            BasicTypeAst::Char => LinearizeResult::new_simple(LinearTypeAst::Char),
+            BasicTypeAst::Top => LinearizeResult::new_simple(LinearTypeAst::Top),
+            BasicTypeAst::Bottom => LinearizeResult::new_simple(LinearTypeAst::Bottom),
+            BasicTypeAst::IntLiteral(v) => {
+                LinearizeResult::new_simple(LinearTypeAst::IntLiteral(v))
+            }
+            BasicTypeAst::CharLiteral(v) => {
+                LinearizeResult::new_simple(LinearTypeAst::CharLiteral(v))
+            }
+            BasicTypeAst::Variable(v) => LinearizeResult::new_simple(LinearTypeAst::Variable(v)),
+            BasicTypeAst::Tuple(v) => {
+                let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
+                let ty =
+                    LinearTypeAst::Tuple(elements.iter().map(|e| e.final_type().clone()).collect());
+
+                LinearizeResult::new_with_binding(
+                    elements
+                        .into_iter()
+                        .flat_map(|e| e.bindings.into_iter())
+                        .collect(),
+                    ty,
+                )
+            }
+            BasicTypeAst::List(v) => {
+                let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
+                let ty =
+                    LinearTypeAst::List(elements.iter().map(|e| e.final_type().clone()).collect());
+                LinearizeResult::new_with_binding(
+                    elements
+                        .into_iter()
+                        .flat_map(|e| e.bindings.into_iter())
+                        .collect(),
+                    ty,
+                )
+            }
+            BasicTypeAst::Generalize(v) => {
+                let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
+                let ty = LinearTypeAst::Generalize(
+                    elements.iter().map(|e| e.final_type().clone()).collect(),
+                );
+                LinearizeResult::new_with_binding(
+                    elements
+                        .into_iter()
+                        .flat_map(|e| e.bindings.into_iter())
+                        .collect(),
+                    ty,
+                )
+            }
+            BasicTypeAst::Specialize(v) => {
+                let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
+                let ty = LinearTypeAst::Specialize(
+                    elements.iter().map(|e| e.final_type().clone()).collect(),
+                );
+                LinearizeResult::new_with_binding(
+                    elements
+                        .into_iter()
+                        .flat_map(|e| e.bindings.into_iter())
+                        .collect(),
+                    ty,
+                )
+            }
+            BasicTypeAst::Invoke {
+                func,
+                arg,
+                continuation,
+            } => {
+                let func = func.linearize(ctx);
+                let arg = arg.linearize(ctx);
+                let continuation = continuation.linearize(ctx);
+                let ty = LinearTypeAst::Invoke {
+                    func: func.final_type().clone().into(),
+                    arg: arg.final_type().clone().into(),
+                    continuation: continuation.final_type().clone().into(),
+                };
+                let mut bindings = func.bindings;
+                bindings.extend(arg.bindings);
+                bindings.extend(continuation.bindings);
+                LinearizeResult::new_with_binding(bindings, ty)
+            }
+            BasicTypeAst::Closure {
+                pattern,
+                auto_captures,
+                body,
+                fail_branch,
+            } => {
+                let fail_branch = fail_branch.map(|b| b.linearize(ctx).linearize().into());
+                let ty = LinearTypeAst::Closure {
+                    pattern: Box::new(pattern.linearize(ctx).linearize()), // pattern 直接完整线性化
+                    auto_captures,
+                    body: Box::new(body.linearize(ctx).linearize()),
+                    fail_branch,
+                };
+                LinearizeResult::new_simple(ty)
+            }
+            BasicTypeAst::Apply { func, arg } => {
+                let func = func.linearize(ctx);
+                let arg = arg.linearize(ctx);
+                let allocated_tmpvar_name = ctx.allocate_tmpvar_name();
+                LinearizeResult::new_apply(func, arg, allocated_tmpvar_name)
+            }
+            BasicTypeAst::AtomicOpcode(atomic_opcode) => {
+                LinearizeResult::new_simple(LinearTypeAst::AtomicOpcode(atomic_opcode))
+            }
+            BasicTypeAst::FixPoint { param_name, expr } => {
+                let expr = expr.linearize(ctx);
+                let ty = LinearTypeAst::FixPoint {
+                    param_name,
+                    expr: Box::new(expr.final_type().clone()),
+                };
+                LinearizeResult::new_with_binding(expr.bindings, ty)
+            }
+            BasicTypeAst::Namespace { tag, expr } => {
+                let expr = expr.linearize(ctx);
+                let ty = LinearTypeAst::Namespace {
+                    tag,
+                    expr: Box::new(expr.final_type().clone()),
+                };
+                LinearizeResult::new_with_binding(expr.bindings, ty)
+            }
+            BasicTypeAst::Pattern { name, expr } => {
+                let expr = expr.linearize(ctx);
+                let ty = LinearTypeAst::Pattern {
+                    name,
+                    expr: Box::new(expr.final_type().clone()),
+                };
+                LinearizeResult::new_with_binding(expr.bindings, ty)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum LinearTypeAst {
+    Int,
+    Char,
+    Top,
+    Bottom,
+    IntLiteral(isize),
+    CharLiteral(char),
+    Variable(Option<String>), // None 表示续体
+    Tuple(Vec<LinearTypeAst>),
+    List(Vec<LinearTypeAst>),
+    Generalize(Vec<LinearTypeAst>),
+    Specialize(Vec<LinearTypeAst>),
+    Closure {
+        pattern: Box<LinearTypeAst>,
+        auto_captures: HashSet<String>,
+        body: Box<LinearTypeAst>,
+        fail_branch: Option<Box<LinearTypeAst>>,
+    },
+    Invoke {
+        func: Box<LinearTypeAst>,
+        arg: Box<LinearTypeAst>,
+        continuation: Box<LinearTypeAst>,
+    },
+    AtomicOpcode(AtomicOpcode),
+    FixPoint {
+        param_name: String,
+        expr: Box<LinearTypeAst>,
+    },
+    Namespace {
+        tag: String,
+        expr: Box<LinearTypeAst>,
+    },
+    Pattern {
+        name: String,
+        expr: Box<LinearTypeAst>,
     },
 }
 
@@ -183,9 +454,14 @@ impl TypeAst {
             TypeAst::Specialize(elements) => {
                 BasicTypeAst::Specialize(elements.into_iter().map(|e| e.into_basic()).collect())
             }
-            TypeAst::Effect { payload, then } => BasicTypeAst::Effect {
-                payload: Box::new(payload.into_basic()),
-                then: Box::new(then.into_basic()),
+            TypeAst::Invoke {
+                func,
+                arg,
+                continuation,
+            } => BasicTypeAst::Invoke {
+                func: Box::new(func.into_basic()),
+                arg: Box::new(arg.into_basic()),
+                continuation: Box::new(continuation.into_basic()),
             },
             TypeAst::Expression {
                 binding_patterns,
@@ -232,7 +508,7 @@ impl TypeAst {
                             body: branch_expr.into(),
                             fail_branch: expr,
                         }),
-                        arg: Box::new(BasicTypeAst::Variable("match#value".to_string())),
+                        arg: Box::new(BasicTypeAst::Variable(Some("match#value".to_string()))),
                     }));
                 }
                 BasicTypeAst::Apply {
@@ -281,16 +557,16 @@ impl TypeAst {
                         BasicTypeAst::Apply {
                             func: Box::new(BasicTypeAst::AtomicOpcode(AtomicOpcode::Is)),
                             arg: Box::new(BasicTypeAst::Tuple(vec![
-                                BasicTypeAst::Variable("eq#left".to_string()),
-                                BasicTypeAst::Variable("eq#right".to_string()),
+                                BasicTypeAst::Variable(Some("eq#left".to_string())),
+                                BasicTypeAst::Variable(Some("eq#right".to_string())),
                             ])),
                         }
                         .into(),
                         BasicTypeAst::Apply {
                             func: Box::new(BasicTypeAst::AtomicOpcode(AtomicOpcode::Is)),
                             arg: Box::new(BasicTypeAst::Tuple(vec![
-                                BasicTypeAst::Variable("eq#right".to_string()),
-                                BasicTypeAst::Variable("eq#left".to_string()),
+                                BasicTypeAst::Variable(Some("eq#right".to_string())),
+                                BasicTypeAst::Variable(Some("eq#left".to_string())),
                             ])),
                         }
                         .into(),
@@ -384,13 +660,13 @@ impl IntoIterator for PatternEnv {
 }
 
 pub struct FlowResult {
-    ty: BasicTypeAst,          // flow后的类型
+    ty: LinearTypeAst,         // flow后的类型
     captures: HashSet<String>, // 该类型所捕获的自由变量
     patterns: PatternEnv,      // 该类型中出现的所有模式变量
 }
 
 impl FlowResult {
-    pub fn simple(ty: BasicTypeAst) -> Self {
+    pub fn simple(ty: LinearTypeAst) -> Self {
         FlowResult {
             ty,
             captures: HashSet::new(),
@@ -398,7 +674,7 @@ impl FlowResult {
         }
     }
 
-    pub fn complex(ty: BasicTypeAst, captures: HashSet<String>, patterns: PatternEnv) -> Self {
+    pub fn complex(ty: LinearTypeAst, captures: HashSet<String>, patterns: PatternEnv) -> Self {
         FlowResult {
             ty,
             captures,
@@ -406,7 +682,7 @@ impl FlowResult {
         }
     }
 
-    pub fn ty(&self) -> &BasicTypeAst {
+    pub fn ty(&self) -> &LinearTypeAst {
         &self.ty
     }
 
@@ -419,25 +695,25 @@ impl FlowResult {
     }
 }
 
-impl BasicTypeAst {
+impl LinearTypeAst {
     pub fn flow(
         &self,
         ctx: &mut ParseContext,
         pattern_mode: bool,
     ) -> Result<FlowResult, ParseError> {
         match self {
-            BasicTypeAst::Int => Ok(FlowResult::simple(BasicTypeAst::Int)),
-            BasicTypeAst::Char => Ok(FlowResult::simple(BasicTypeAst::Char)),
-            BasicTypeAst::Top => Ok(FlowResult::simple(BasicTypeAst::Top)),
-            BasicTypeAst::Bottom => Ok(FlowResult::simple(BasicTypeAst::Bottom)),
-            BasicTypeAst::IntLiteral(v) => Ok(FlowResult::simple(BasicTypeAst::IntLiteral(*v))),
-            BasicTypeAst::CharLiteral(v) => Ok(FlowResult::simple(BasicTypeAst::CharLiteral(*v))),
-            BasicTypeAst::Variable(name) => {
+            LinearTypeAst::Int => Ok(FlowResult::simple(LinearTypeAst::Int)),
+            LinearTypeAst::Char => Ok(FlowResult::simple(LinearTypeAst::Char)),
+            LinearTypeAst::Top => Ok(FlowResult::simple(LinearTypeAst::Top)),
+            LinearTypeAst::Bottom => Ok(FlowResult::simple(LinearTypeAst::Bottom)),
+            LinearTypeAst::IntLiteral(v) => Ok(FlowResult::simple(LinearTypeAst::IntLiteral(*v))),
+            LinearTypeAst::CharLiteral(v) => Ok(FlowResult::simple(LinearTypeAst::CharLiteral(*v))),
+            LinearTypeAst::Variable(Some(name)) => {
                 if ctx.is_declared(name) {
                     let mut captures = HashSet::new();
                     captures.insert(name.clone());
                     Ok(FlowResult::complex(
-                        BasicTypeAst::Variable(name.clone()),
+                        LinearTypeAst::Variable(Some(name.clone())),
                         captures,
                         PatternEnv::new(),
                     ))
@@ -445,7 +721,8 @@ impl BasicTypeAst {
                     Err(ParseError::UseBeforeDeclaration(self.clone(), name.clone()))
                 }
             }
-            BasicTypeAst::Tuple(elements) => {
+            LinearTypeAst::Variable(None) => Ok(FlowResult::simple(LinearTypeAst::Variable(None))), // None 表示续体，不会捕获任何变量（因为续体对于任何函数都是存在的）
+            LinearTypeAst::Tuple(elements) => {
                 let mut new_elements = Vec::new();
                 let mut all_captures = HashSet::new();
                 let mut all_patterns = PatternEnv::new();
@@ -458,12 +735,12 @@ impl BasicTypeAst {
                         .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
                 }
                 Ok(FlowResult::complex(
-                    BasicTypeAst::Tuple(new_elements),
+                    LinearTypeAst::Tuple(new_elements),
                     all_captures,
                     all_patterns,
                 ))
             }
-            BasicTypeAst::List(elements) => {
+            LinearTypeAst::List(elements) => {
                 let mut new_elements = Vec::new();
                 let mut all_captures = HashSet::new();
                 let mut all_patterns = PatternEnv::new();
@@ -476,12 +753,12 @@ impl BasicTypeAst {
                         .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
                 }
                 Ok(FlowResult::complex(
-                    BasicTypeAst::List(new_elements),
+                    LinearTypeAst::List(new_elements),
                     all_captures,
                     all_patterns,
                 ))
             }
-            BasicTypeAst::Generalize(types) => {
+            LinearTypeAst::Generalize(types) => {
                 let mut new_types = Vec::new();
                 let mut all_captures = HashSet::new();
                 let mut all_patterns = PatternEnv::new();
@@ -498,12 +775,12 @@ impl BasicTypeAst {
                     return Err(ParseError::AmbiguousPattern(self.clone()));
                 }
                 Ok(FlowResult::complex(
-                    BasicTypeAst::Generalize(new_types),
+                    LinearTypeAst::Generalize(new_types),
                     all_captures,
                     all_patterns,
                 ))
             }
-            BasicTypeAst::Specialize(types) => {
+            LinearTypeAst::Specialize(types) => {
                 let mut new_types = Vec::new();
                 let mut all_captures = HashSet::new();
                 let mut all_patterns = PatternEnv::new();
@@ -520,52 +797,44 @@ impl BasicTypeAst {
                     return Err(ParseError::AmbiguousPattern(self.clone()));
                 }
                 Ok(FlowResult::complex(
-                    BasicTypeAst::Specialize(new_types),
+                    LinearTypeAst::Specialize(new_types),
                     all_captures,
                     all_patterns,
                 ))
             }
-            BasicTypeAst::Effect { payload, then } => {
-                let payload_res = payload.flow(ctx, pattern_mode)?;
-                let then_res = then.flow(ctx, pattern_mode)?;
-                let mut all_captures = payload_res.captures;
-                all_captures.extend(then_res.captures);
-                let mut all_patterns = payload_res.patterns;
-                all_patterns
-                    .extend(then_res.patterns)
-                    .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
-                Ok(FlowResult::complex(
-                    BasicTypeAst::Effect {
-                        payload: Box::new(payload_res.ty),
-                        then: Box::new(then_res.ty),
-                    },
-                    all_captures,
-                    all_patterns,
-                ))
-            }
-
-            BasicTypeAst::Apply { func, arg } => {
+            LinearTypeAst::Invoke {
+                func,
+                arg,
+                continuation,
+            } => {
                 let func_res = func.flow(ctx, pattern_mode)?;
                 let arg_res = arg.flow(ctx, pattern_mode)?;
+                let cont_res = continuation.flow(ctx, pattern_mode)?;
                 let mut all_captures = func_res.captures;
                 all_captures.extend(arg_res.captures);
+                all_captures.extend(cont_res.captures.clone());
+
                 let mut all_patterns = func_res.patterns;
                 all_patterns
                     .extend(arg_res.patterns)
                     .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
+                all_patterns
+                    .extend(cont_res.patterns.clone())
+                    .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
                 Ok(FlowResult::complex(
-                    BasicTypeAst::Apply {
+                    LinearTypeAst::Invoke {
                         func: Box::new(func_res.ty),
                         arg: Box::new(arg_res.ty),
+                        continuation: Box::new(cont_res.ty),
                     },
                     all_captures,
                     all_patterns,
                 ))
             }
-            BasicTypeAst::AtomicOpcode(atomic_opcode) => Ok(FlowResult::simple(
-                BasicTypeAst::AtomicOpcode(atomic_opcode.clone()),
+            LinearTypeAst::AtomicOpcode(atomic_opcode) => Ok(FlowResult::simple(
+                LinearTypeAst::AtomicOpcode(atomic_opcode.clone()),
             )),
-            BasicTypeAst::FixPoint { param_name, expr } => {
+            LinearTypeAst::FixPoint { param_name, expr } => {
                 ctx.enter_scope();
                 ctx.declare_variable(param_name.clone());
                 // 递归函数的表达式中不允许出现模式变量
@@ -574,7 +843,7 @@ impl BasicTypeAst {
                 // 移除掉param_name，因为它是递归函数的参数，不应当被视为捕获的自由变量
                 expr_res.captures.remove(param_name);
                 Ok(FlowResult::complex(
-                    BasicTypeAst::FixPoint {
+                    LinearTypeAst::FixPoint {
                         param_name: param_name.clone(),
                         expr: Box::new(expr_res.ty),
                     },
@@ -582,10 +851,10 @@ impl BasicTypeAst {
                     PatternEnv::new(), // fixpoint类型本身不应当把模式变量泄露出去
                 ))
             }
-            BasicTypeAst::Namespace { tag, expr } => {
+            LinearTypeAst::Namespace { tag, expr } => {
                 let expr_res = expr.flow(ctx, pattern_mode)?;
                 Ok(FlowResult::complex(
-                    BasicTypeAst::Namespace {
+                    LinearTypeAst::Namespace {
                         tag: tag.clone(),
                         expr: Box::new(expr_res.ty),
                     },
@@ -593,7 +862,7 @@ impl BasicTypeAst {
                     expr_res.patterns,
                 ))
             }
-            BasicTypeAst::Pattern { name, expr } => {
+            LinearTypeAst::Pattern { name, expr } => {
                 if !pattern_mode {
                     return Err(ParseError::PatternOutOfParameterDefinition(self.clone()));
                 }
@@ -601,7 +870,7 @@ impl BasicTypeAst {
                 let mut patterns = PatternEnv::new();
                 patterns.extend(vec![name.clone()]).unwrap();
                 Ok(FlowResult::complex(
-                    BasicTypeAst::Pattern {
+                    LinearTypeAst::Pattern {
                         name: name.clone(),
                         expr: Box::new(expr_res.ty),
                     },
@@ -609,7 +878,7 @@ impl BasicTypeAst {
                     patterns,
                 ))
             }
-            BasicTypeAst::Closure {
+            LinearTypeAst::Closure {
                 pattern,
                 auto_captures,
                 body,
@@ -639,7 +908,7 @@ impl BasicTypeAst {
                     None
                 };
                 Ok(FlowResult::complex(
-                    BasicTypeAst::Closure {
+                    LinearTypeAst::Closure {
                         pattern: Box::new(pattern_res.ty),
                         auto_captures: body_captures.clone(),
                         body: Box::new(body_res.ty),
@@ -689,7 +958,7 @@ impl BuildResult {
     }
 }
 
-impl BasicTypeAst {
+impl LinearTypeAst {
     pub fn to_type(
         &self,
         ctx: &mut BuildContext,
@@ -697,17 +966,17 @@ impl BasicTypeAst {
         gc: &mut GC<FixPointInner>,
     ) -> Result<BuildResult, Result<TypeError, ParseError>> {
         match self {
-            BasicTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
-            BasicTypeAst::Char => Ok(BuildResult::simple(Character::new())),
-            BasicTypeAst::Top => Ok(BuildResult::simple(TypeBound::top())),
-            BasicTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom())),
-            BasicTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(*v))),
-            BasicTypeAst::CharLiteral(v) => Ok(BuildResult::simple(CharacterValue::new(*v))),
-            BasicTypeAst::Variable(var) => {
+            LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
+            LinearTypeAst::Char => Ok(BuildResult::simple(Character::new())),
+            LinearTypeAst::Top => Ok(BuildResult::simple(TypeBound::top())),
+            LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom())),
+            LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(*v))),
+            LinearTypeAst::CharLiteral(v) => Ok(BuildResult::simple(CharacterValue::new(*v))),
+            LinearTypeAst::Variable(Some(var)) => {
                 if let Some(ty) = ctx.current_layer().get(var) {
                     match ty {
                         Ok(t) => Ok(BuildResult::simple(t.clone().stabilize())), // fixpoint类型
-                        Err(index) => Ok(BuildResult::simple(Variable::new(index))),
+                        Err(index) => Ok(BuildResult::simple(Variable::new_deburijn(index))),
                     }
                 } else {
                     Err(Err(ParseError::UseBeforeDeclaration(
@@ -716,7 +985,8 @@ impl BasicTypeAst {
                     )))
                 }
             }
-            BasicTypeAst::Tuple(basic_type_asts) => {
+            LinearTypeAst::Variable(None) => Ok(BuildResult::simple(Variable::new_continuation())),
+            LinearTypeAst::Tuple(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(ctx, pattern_mode, gc)?);
@@ -724,7 +994,7 @@ impl BasicTypeAst {
                 let (types, patterns) = BuildResult::fold(types);
                 Ok(BuildResult::complex(Tuple::new(&types), patterns))
             }
-            BasicTypeAst::List(basic_type_asts) => {
+            LinearTypeAst::List(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(ctx, pattern_mode, gc)?);
@@ -732,7 +1002,7 @@ impl BasicTypeAst {
                 let (types, patterns) = BuildResult::fold(types);
                 Ok(BuildResult::complex(List::new(&types), patterns))
             }
-            BasicTypeAst::Generalize(basic_type_asts) => {
+            LinearTypeAst::Generalize(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(ctx, pattern_mode, gc)?);
@@ -741,7 +1011,7 @@ impl BasicTypeAst {
                 let (types, patterns) = BuildResult::fold(types);
                 Ok(BuildResult::complex(Generalize::new_raw(&types), patterns))
             }
-            BasicTypeAst::Specialize(basic_type_asts) => {
+            LinearTypeAst::Specialize(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(ctx, false, gc)?);
@@ -753,16 +1023,22 @@ impl BasicTypeAst {
                 }
                 Ok(BuildResult::complex(Specialize::new_raw(&types), patterns))
             }
-            BasicTypeAst::Effect { payload, then } => {
-                let payload_type = payload.to_type(ctx, pattern_mode, gc)?;
-                let then_type = then.to_type(ctx, pattern_mode, gc)?;
-                let (types, patterns) = BuildResult::fold(vec![payload_type, then_type]);
+            LinearTypeAst::Invoke {
+                func,
+                arg,
+                continuation,
+            } => {
+                let func_type = func.to_type(ctx, false, gc)?;
+                let arg_type = arg.to_type(ctx, pattern_mode, gc)?;
+                let continuation_type = continuation.to_type(ctx, false, gc)?;
+                let (types, patterns) =
+                    BuildResult::fold(vec![func_type, arg_type, continuation_type]);
                 Ok(BuildResult::complex(
-                    Effect::new(&types[0], &types[1]),
+                    Invoke::new(&types[0], &types[1], &types[2]),
                     patterns,
                 ))
             }
-            BasicTypeAst::Closure {
+            LinearTypeAst::Closure {
                 pattern,
                 auto_captures,
                 body,
@@ -774,7 +1050,7 @@ impl BasicTypeAst {
                     if let Some(ty) = ctx.current_layer().get(var) {
                         match ty {
                             Ok(t) => closure_env.push(t.clone().stabilize()), // fixpoint类型
-                            Err(index) => closure_env.push(Variable::new(index)),
+                            Err(index) => closure_env.push(Variable::new_deburijn(index)),
                         }
                     } else {
                         return Err(Err(ParseError::UseBeforeDeclaration(
@@ -820,16 +1096,7 @@ impl BasicTypeAst {
                     closure_env,
                 )))
             }
-            BasicTypeAst::Apply { func, arg } => {
-                let func_type = func.to_type(ctx, pattern_mode, gc)?;
-                let arg_type = arg.to_type(ctx, pattern_mode, gc)?;
-                let (types, patterns) = BuildResult::fold(vec![func_type, arg_type]);
-                Ok(BuildResult::complex(
-                    Apply::new(&types[0], &types[1]),
-                    patterns,
-                ))
-            }
-            BasicTypeAst::AtomicOpcode(atomic_opcode) => {
+            LinearTypeAst::AtomicOpcode(atomic_opcode) => {
                 Ok(BuildResult::simple(Opcode::new(match atomic_opcode {
                     AtomicOpcode::Opcode => Opcode::Opcode,
                     AtomicOpcode::Add => Opcode::Add,
@@ -842,7 +1109,7 @@ impl BasicTypeAst {
                     AtomicOpcode::Is => Opcode::Is,
                 })))
             }
-            BasicTypeAst::FixPoint { param_name, expr } => {
+            LinearTypeAst::FixPoint { param_name, expr } => {
                 let placeholder = FixPoint::new_placeholder(gc);
                 ctx.current_layer_mut()
                     .enter_fixpoint(param_name.clone(), placeholder.weak().clone());
@@ -853,14 +1120,14 @@ impl BasicTypeAst {
                     .map_err(Ok)?;
                 Ok(BuildResult::simple(placeholder))
             }
-            BasicTypeAst::Namespace { tag, expr } => {
+            LinearTypeAst::Namespace { tag, expr } => {
                 let expr_type = expr.to_type(ctx, pattern_mode, gc)?;
                 Ok(BuildResult::complex(
                     Namespace::new(tag.clone(), &expr_type.ty),
                     expr_type.patterns,
                 ))
             }
-            BasicTypeAst::Pattern { name, expr } => {
+            LinearTypeAst::Pattern { name, expr } => {
                 if !pattern_mode {
                     return Err(Err(ParseError::PatternOutOfParameterDefinition(
                         self.clone(),

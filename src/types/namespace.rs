@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
-use arc_gc::{gc::GC, traceable::GCTraceable};
+use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable,
-        StabilizedType, TaggedPtr, Type,
-        closure::{ClosureEnv, ParamEnv},
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
+        StabilizedType, Type, TypeError,
         fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
-    util::collector::Collector,
+    util::cycle_detector::FastCycleDetector,
 };
 
 #[derive(Clone)]
@@ -34,10 +33,7 @@ impl Rootable for Namespace {
 }
 
 impl Representable for Namespace {
-    fn represent(
-        &self,
-        path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
-    ) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
         format!("{}::{}", self.tag, self.expr.represent(path))
     }
 }
@@ -47,55 +43,34 @@ impl CoinductiveType<Type, StabilizedType> for Namespace {
         Type::Namespace(self)
     }
 
-    fn is(
-        &self,
-        other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(super::TaggedPtr<()>, super::TaggedPtr<()>); 8]>,
-        closure_env: (&super::closure::ClosureEnv, &super::closure::ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
-    ) -> Result<Option<()>, super::TypeError> {
-        pattern_env.collect(|pattern_env| match other {
-            Type::Namespace(v) => {
-                if self.tag == v.tag {
-                    self.expr
-                        .is(&v.expr, assumptions, closure_env, pattern_env, pattern_mode)
-                } else {
-                    Ok(None)
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            match other {
+                Type::Namespace(v) => {
+                    if self.tag == v.tag {
+                        self.expr.is(&v.expr, &mut inner_ctx)
+                    } else {
+                        Ok(None)
+                    }
                 }
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                _ => Ok(None),
             }
-            Type::Bound(TypeBound::Top) => Ok(Some(())),
-            Type::Generalize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Specialize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::FixPoint(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Pattern(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Variable(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            _ => Ok(None),
         })
     }
 
-    fn reduce(
-        &self,
-        v: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, super::TypeError> {
-        Ok(Self::new(
-            &self.tag,
-            self.expr.reduce(v, p, rec_assumptions, gc)?,
-        ))
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
+        Ok(Self::new(&self.tag, self.expr.reduce(ctx)?))
     }
 
-    fn apply(
-        &self,
-        v: &Type,
-        context: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, super::TypeError> {
-        self.expr.apply(v, context, p, rec_assumptions, gc)
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+        self.expr.invoke(ctx)
     }
 }
 
@@ -103,7 +78,7 @@ impl Namespace {
     pub fn new<T: Into<String>, I: AsTypeRef>(tag: T, expr: I) -> StabilizedType {
         Self {
             tag: tag.into(),
-            expr: Arc::new(expr.as_type_ref().clone()),
+            expr: Arc::new(expr.into_type()),
         }
         .dispatch()
         .stabilize()

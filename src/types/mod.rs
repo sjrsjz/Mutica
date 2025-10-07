@@ -1,14 +1,13 @@
 //! Mutica 类型系统模块
 
-pub mod apply;
 pub mod character;
 pub mod character_value;
 pub mod closure;
-pub mod effect;
 pub mod fixpoint;
 pub mod generalize;
 pub mod integer;
 pub mod integer_value;
+pub mod invoke;
 pub mod list;
 pub mod namespace;
 pub mod opcode;
@@ -29,15 +28,14 @@ use smallvec::SmallVec;
 
 use crate::{
     types::{
-        apply::Apply,
         character::Character,
         character_value::CharacterValue,
         closure::{Closure, ClosureEnv, ParamEnv},
-        effect::Effect,
         fixpoint::{FixPoint, FixPointInner},
         generalize::Generalize,
         integer::Integer,
         integer_value::IntegerValue,
+        invoke::Invoke,
         list::List,
         namespace::Namespace,
         opcode::Opcode,
@@ -73,13 +71,11 @@ pub enum Type {
     // 不动点类型
     FixPoint(FixPoint),
     // 类型应用
-    Apply(Apply),
+    Invoke(Invoke),
     // 类型变量
     Variable(Variable),
     // 闭包类型
     Closure(Closure),
-    // 效果类型
-    Effect(Effect),
     // 操作码类型
     Opcode(Opcode),
     // 命名空间类型
@@ -114,6 +110,8 @@ pub enum TypeError {
     UnboundVariable(isize),
     #[error("Assert failed: L </: R {0:?}")]
     AssertFailed(Box<(StabilizedType, StabilizedType)>),
+    #[error("Missing continuation")]
+    MissingContinuation,
 }
 
 impl Debug for TypeError {
@@ -132,11 +130,10 @@ macro_rules! type_dispatch {
             Type::Generalize(v) => v.$method($($args),*),
             Type::Specialize(v) => v.$method($($args),*),
             Type::FixPoint(v) => v.$method($($args),*),
-            Type::Apply(v) => v.$method($($args),*),
+            Type::Invoke(v) => v.$method($($args),*),
             Type::Variable(v) => v.$method($($args),*),
             Type::Closure(v) => v.$method($($args),*),
             Type::Opcode(v) => v.$method($($args),*),
-            Type::Effect(v) => v.$method($($args),*),
             Type::List(v) => v.$method($($args),*),
             Type::Char(v) => v.$method($($args),*),
             Type::CharValue(v) => v.$method($($args),*),
@@ -162,23 +159,8 @@ impl Rootable for Type {
 
 impl CoinductiveType<Type, StabilizedType> for Type {
     #[stacksafe::stacksafe]
-    fn is(
-        &self,
-        other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool, // 是否处于模式匹配模式
-    ) -> Result<Option<()>, TypeError> {
-        type_dispatch!(
-            self,
-            is,
-            other,
-            assumptions,
-            closure_env,
-            pattern_env,
-            pattern_mode
-        )
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+        type_dispatch!(self, is, other, ctx)
     }
 
     fn dispatch(self) -> Type {
@@ -186,26 +168,13 @@ impl CoinductiveType<Type, StabilizedType> for Type {
     }
 
     #[stacksafe::stacksafe]
-    fn reduce(
-        &self,
-        v: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
-        type_dispatch!(self, reduce, v, p, rec_assumptions, gc)
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
+        type_dispatch!(self, reduce, ctx)
     }
 
     #[stacksafe::stacksafe]
-    fn apply(
-        &self,
-        v: &Type,
-        context: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
-        type_dispatch!(self, apply, v, context, p, rec_assumptions, gc)
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+        type_dispatch!(self, invoke, ctx)
     }
 }
 
@@ -251,11 +220,20 @@ impl Type {
 /// Trait to extract Type reference from different input types
 pub trait AsTypeRef {
     fn as_type_ref(&self) -> &Type;
+    fn into_type(self) -> Type
+    where
+        Self: Sized;
 }
 
 // Implement AsTypeRef for different types
 impl AsTypeRef for Type {
     fn as_type_ref(&self) -> &Type {
+        self
+    }
+    fn into_type(self) -> Type
+    where
+        Self: Sized,
+    {
         self
     }
 }
@@ -264,17 +242,35 @@ impl AsTypeRef for &Type {
     fn as_type_ref(&self) -> &Type {
         self
     }
+    fn into_type(self) -> Type
+    where
+        Self: Sized,
+    {
+        self.clone()
+    }
 }
 
 impl AsTypeRef for StabilizedType {
     fn as_type_ref(&self) -> &Type {
         self.weak()
     }
+    fn into_type(self) -> Type
+    where
+        Self: Sized,
+    {
+        self.weak().clone()
+    }
 }
 
 impl AsTypeRef for &StabilizedType {
     fn as_type_ref(&self) -> &Type {
         self.weak()
+    }
+    fn into_type(self) -> Type
+    where
+        Self: Sized,
+    {
+        self.weak().clone()
     }
 }
 
@@ -342,36 +338,97 @@ pub trait Stabilized<T: CoinductiveType<T, U>, U: Stabilized<T, U>> {
     fn weak(&self) -> &T;
 }
 
+/// 类型检查上下文，用于 `is` 和 `has` 方法
+pub struct TypeCheckContext<'a> {
+    pub assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
+    pub closure_env: (&'a ClosureEnv, &'a ClosureEnv),
+    pub pattern_env: &'a mut Collector<(usize, Type)>,
+    pub pattern_mode: bool,
+}
+
+impl<'a> TypeCheckContext<'a> {
+    pub fn new(
+        assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
+        closure_env: (&'a ClosureEnv, &'a ClosureEnv),
+        pattern_env: &'a mut Collector<(usize, Type)>,
+        pattern_mode: bool,
+    ) -> Self {
+        Self {
+            assumptions,
+            closure_env,
+            pattern_env,
+            pattern_mode,
+        }
+    }
+}
+
+/// 归约上下文，用于 `reduce` 方法
+pub struct ReductionContext<'a> {
+    pub closure_env: &'a ClosureEnv,
+    pub param_env: &'a ParamEnv,
+    pub continuation: Option<&'a Type>,
+    pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
+    pub gc: &'a mut GC<FixPointInner>,
+}
+
+impl<'a> ReductionContext<'a> {
+    pub fn new(
+        closure_env: &'a ClosureEnv,
+        param_env: &'a ParamEnv,
+        continuation: Option<&'a Type>,
+        rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
+        gc: &'a mut GC<FixPointInner>,
+    ) -> Self {
+        Self {
+            closure_env,
+            param_env,
+            continuation,
+            rec_assumptions,
+            gc,
+        }
+    }
+}
+
+/// 类型应用上下文，用于 `invoke` 方法
+pub struct InvokeContext<'a> {
+    pub arg: &'a Type,
+    pub closure_env: &'a ClosureEnv,
+    pub param_env: &'a ParamEnv,
+    pub continuation: Option<&'a Type>,
+    pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
+    pub gc: &'a mut GC<FixPointInner>,
+}
+
+impl<'a> InvokeContext<'a> {
+    pub fn new(
+        arg: &'a Type,
+        closure_env: &'a ClosureEnv,
+        param_env: &'a ParamEnv,
+        continuation: Option<&'a Type>,
+        rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
+        gc: &'a mut GC<FixPointInner>,
+    ) -> Self {
+        Self {
+            arg,
+            closure_env,
+            param_env,
+            continuation,
+            rec_assumptions,
+            gc,
+        }
+    }
+}
+
 pub trait CoinductiveType<T: CoinductiveType<T, U>, U: Stabilized<T, U>>: Clone {
-    fn is(
-        &self,
-        other: &T,
-        assumptions: &mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool, // 是否处于模式匹配模式
-    ) -> Result<Option<()>, TypeError>;
+    fn is(&self, other: &T, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError>;
 
     fn dispatch(self) -> T;
 
     // 归约变换
-    fn reduce(
-        &self,
-        v: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<U, TypeError>;
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<U, TypeError>;
 
     // 类型应用
-    fn apply(
-        &self,
-        v: &T,
-        c: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<U, TypeError>;
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<U, TypeError>;
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         TaggedPtr::new_unique(self as *const _ as *const ())
@@ -382,10 +439,7 @@ pub trait CoinductiveTypeWithAny<T: CoinductiveType<T, U>, U: Stabilized<T, U>> 
     fn has<V: CoinductiveType<T, U>>(
         &self,
         other: &V,
-        assumptions: &mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
+        ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, TypeError>;
 }
 

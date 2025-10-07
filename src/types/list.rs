@@ -1,17 +1,13 @@
 use std::sync::Arc;
 
-use arc_gc::{gc::GC, traceable::GCTraceable};
+use arc_gc::traceable::GCTraceable;
 
-use crate::{
-    types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable,
+use crate::types::{
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
         StabilizedType, TaggedPtr, Type, TypeError,
-        closure::{ClosureEnv, ParamEnv},
         fixpoint::FixPointInner,
         type_bound::TypeBound,
-    },
-    util::collector::Collector,
-};
+    };
 
 // 抽象链表类型，实际实现为 Vec<T>
 // 逻辑等价为 (T_1, (T_2, (T_3, ...)))
@@ -64,97 +60,74 @@ impl CoinductiveType<Type, StabilizedType> for List {
         Type::List(self)
     }
 
-    fn is(
-        &self,
-        other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
-    ) -> Result<Option<()>, super::TypeError> {
-        pattern_env.collect(|pattern_env| match other {
-            Type::List(v) => {
-                if self.len() != v.len() {
-                    return Ok(None);
-                }
-                for (a, b) in self.iter().zip(v.iter()) {
-                    if !a
-                        .is(b, assumptions, closure_env, pattern_env, pattern_mode)?
-                        .is_some()
-                    {
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            match other {
+                Type::List(v) => {
+                    if self.len() != v.len() {
                         return Ok(None);
                     }
+                    for (a, b) in self.iter().zip(v.iter()) {
+                        if !a.is(b, &mut inner_ctx)?.is_some() {
+                            return Ok(None);
+                        }
+                    }
+                    Ok(Some(()))
                 }
-                Ok(Some(()))
+                Type::Tuple(v) => {
+                    if self.len() == 0 && v.is_empty() {
+                        return Ok(Some(()));
+                    }
+                    if self.len() == 0 || v.len() != 2 {
+                        return Ok(None);
+                    }
+                    let head = self.head().unwrap();
+                    let first = &v.types()[0];
+                    if !head.is(first, &mut inner_ctx)?.is_some() {
+                        return Ok(None);
+                    }
+                    let view = self.view(1);
+                    let second = &v.types()[1];
+                    view.is(second, &mut inner_ctx)
+                }
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                _ => Ok(None),
             }
-            Type::Tuple(v) => {
-                if self.len() == 0 && v.is_empty() {
-                    return Ok(Some(()));
-                }
-                if self.len() == 0 || v.len() != 2 {
-                    return Ok(None);
-                }
-                let head = self.head().unwrap();
-                let first = &v.types()[0];
-                if !head
-                    .is(first, assumptions, closure_env, pattern_env, pattern_mode)?
-                    .is_some()
-                {
-                    return Ok(None);
-                }
-                let view = self.view(1);
-                let second = &v.types()[1];
-                view.is(second, assumptions, closure_env, pattern_env, pattern_mode)
-            }
-            Type::Bound(TypeBound::Top) => Ok(Some(())),
-            Type::Specialize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Generalize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::FixPoint(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Pattern(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Variable(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            _ => Ok(None),
         })
     }
 
-    fn reduce(
-        &self,
-        v: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, super::TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, super::TypeError> {
         let mut reduced_elements = Vec::with_capacity(self.len());
         for element in self.iter() {
-            reduced_elements.push(element.reduce(v, p, rec_assumptions, gc)?);
+            reduced_elements.push(element.reduce(ctx)?);
         }
         Ok(Self::new(reduced_elements))
     }
 
-    fn apply(
-        &self,
-        v: &Type,
-        _context: &ClosureEnv,
-        _p: &ParamEnv,
-        _rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        _gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, super::TypeError> {
-        match v {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, super::TypeError> {
+        match ctx.arg {
             Type::IntegerValue(iv) => match iv.value() {
                 0 => self.head().map(|t| t.clone().stabilize()).ok_or_else(|| {
                     TypeError::TupleIndexOutOfBounds(Box::new((
                         self.clone().dispatch().stabilize(),
-                        v.clone().stabilize(),
+                        ctx.arg.clone().stabilize(),
                     )))
                 }),
                 1 => self.tail().ok_or_else(|| {
                     TypeError::TupleIndexOutOfBounds(Box::new((
                         self.clone().dispatch().stabilize(),
-                        v.clone().stabilize(),
+                        ctx.arg.clone().stabilize(),
                     )))
                 }),
                 _ => Err(TypeError::TupleIndexOutOfBounds(Box::new((
                     self.clone().dispatch().stabilize(),
-                    v.clone().stabilize(),
+                    ctx.arg.clone().stabilize(),
                 )))),
             },
             _ => Ok(TypeBound::bottom()),
@@ -187,7 +160,7 @@ impl List {
         I: IntoIterator<Item = T>,
         T: AsTypeRef,
     {
-        let elements: Vec<Type> = types.into_iter().map(|t| t.as_type_ref().clone()).collect();
+        let elements: Vec<Type> = types.into_iter().map(|t| t.into_type()).collect();
         Self {
             elements: Arc::new(elements),
             head: 0,

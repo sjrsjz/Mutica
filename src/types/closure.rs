@@ -1,12 +1,12 @@
 use std::{ops::Deref, sync::Arc};
 
-use arc_gc::{gc::GC, traceable::GCTraceable};
+use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable,
-        StabilizedType, TaggedPtr, Type, TypeError, fixpoint::FixPointInner,
-        generalize::Generalize, type_bound::TypeBound,
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
+        fixpoint::FixPointInner, generalize::Generalize, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -66,7 +66,7 @@ impl Representable for ClosureEnv {
 
 impl ClosureEnv {
     pub fn new<T: AsTypeRef>(v: impl IntoIterator<Item = T>) -> Self {
-        ClosureEnv(v.into_iter().map(|t| t.as_type_ref().clone()).collect())
+        ClosureEnv(v.into_iter().map(|t| t.into_type()).collect())
     }
 
     pub fn get(&self, index: usize) -> Result<&Type, TypeError> {
@@ -173,155 +173,165 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
         Type::Closure(self)
     }
 
-    fn is(
-        &self,
-        other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
-    ) -> Result<Option<()>, TypeError> {
-        pattern_env.collect(|pattern_env| match other {
-            Type::Closure(v) => {
-                // 我们不考虑比较时捕获对象是Variable的情况，因为自由变量不应当存在被检查的闭包的环境中
-                // 由于闭包的模式不应当被泄漏，对闭包的解构是不适用的
-                let pattern_match = v
-                    .inner
-                    .pattern
-                    .is(
-                        &self.inner.pattern,
-                        assumptions,
-                        closure_env,
-                        pattern_env,
-                        false,
-                    )?
-                    .is_some();
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
+            match other {
+                Type::Closure(v) => {
+                    // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
+                    // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
 
-                if !pattern_match {
-                    return Ok(None);
-                }
+                    // 创建用于模式比较的上下文
+                    let mut pattern_ctx =
+                        TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, false);
 
-                let expr_match = self
-                    .inner
-                    .expr
-                    .is(
-                        &v.inner.expr,
-                        assumptions,
+                    let pattern_match = v
+                        .inner
+                        .pattern
+                        .is(&self.inner.pattern, &mut pattern_ctx)?
+                        .is_some();
+
+                    if !pattern_match {
+                        return Ok(None);
+                    }
+
+                    // 创建用于表达式比较的上下文(不同的闭包环境)
+                    let mut expr_ctx = TypeCheckContext::new(
+                        ctx.assumptions,
                         (&self.inner.env, &v.inner.env),
                         pattern_env,
                         false,
-                    )?
-                    .is_some();
+                    );
 
-                if !expr_match {
-                    return Ok(None);
+                    let expr_match = self.inner.expr.is(&v.inner.expr, &mut expr_ctx)?.is_some();
+
+                    if !expr_match {
+                        return Ok(None);
+                    }
+
+                    let fail_branch_match = match (&self.inner.fail_branch, &v.inner.fail_branch) {
+                        (Some(a), Some(b)) => {
+                            let mut fb_ctx = TypeCheckContext::new(
+                                ctx.assumptions,
+                                ctx.closure_env,
+                                pattern_env,
+                                ctx.pattern_mode,
+                            );
+                            a.is(b, &mut fb_ctx)?.is_some()
+                        }
+                        (None, None) => true,
+                        _ => false,
+                    };
+
+                    if !fail_branch_match {
+                        return Ok(None);
+                    }
+
+                    Ok(Some(()))
                 }
-
-                let fail_branch_match = match (&self.inner.fail_branch, &v.inner.fail_branch) {
-                    (Some(a), Some(b)) => a
-                        .is(b, assumptions, closure_env, pattern_env, pattern_mode)?
-                        .is_some(),
-                    (None, None) => true,
-                    _ => false,
-                };
-
-                if !fail_branch_match {
-                    return Ok(None);
-                }
-
-                Ok(Some(()))
+                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                _ => Ok(None),
             }
-            Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-            Type::Generalize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Specialize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::FixPoint(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Pattern(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Variable(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            _ => Ok(None),
         })
     }
 
-    fn reduce(
-        &self,
-        v: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
         // 先把闭包环境中的类型都化简
         let env = self
             .inner
             .env
             .0
             .iter()
-            .map(|ty| ty.reduce(v, p, rec_assumptions, gc))
+            .map(|ty| ty.reduce(ctx))
             .collect::<Result<Vec<_>, _>>()?;
         let new_env = ClosureEnv::new(env);
-        Ok(Self {
-            inner: Arc::new(ClosureInner {
-                env: new_env,
-                pattern: self.inner.pattern.clone(),
-                pattern_param_size: self.inner.pattern_param_size,
-                expr: self.inner.expr.clone(),
-                fail_branch: self.inner.fail_branch.clone(),
-            }),
-        }
-        .dispatch()
-        .stabilize())
+        Ok(Self::new(
+            self.inner.pattern_param_size,
+            &self.inner.pattern,
+            &self.inner.expr,
+            match &self.inner.fail_branch {
+                Some(fb) => Some(fb.reduce(ctx)?),
+                None => None,
+            },
+            new_env,
+        ))
     }
 
-    fn apply(
-        &self,
-        v: &Type,
-        context: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
         let mut matched_pattern = Collector::new();
-        if v.is(
-            &self.inner.pattern,
-            &mut smallvec::smallvec![],
-            (context, context),
+
+        // 创建用于模式匹配的类型检查上下文
+        let mut assumptions_temp = smallvec::smallvec![];
+        let mut pattern_check_ctx = TypeCheckContext::new(
+            &mut assumptions_temp,
+            (ctx.closure_env, ctx.closure_env),
             &mut matched_pattern,
             true,
-        )?
-        .is_some()
+        );
+
+        if ctx
+            .arg
+            .is(&self.inner.pattern, &mut pattern_check_ctx)?
+            .is_some()
         {
-            // 一旦模式匹配成功，就可以用 matched_pattern 来替换 expr 中的模式变量
-            self.inner.expr.reduce(
+            // 一旦模式匹配成功,就可以用 matched_pattern 来替换 expr 中的模式变量
+            let param_env = ParamEnv::from_collector(matched_pattern);
+            let mut reduce_ctx = ReductionContext::new(
                 self.inner.env(),
-                &ParamEnv::from_collector(matched_pattern),
-                rec_assumptions,
-                gc,
-            )
+                &param_env,
+                ctx.continuation,
+                ctx.rec_assumptions,
+                ctx.gc,
+            );
+            self.inner.expr.reduce(&mut reduce_ctx)
         } else {
             if self.inner.fail_branch.is_none() {
                 return Err(TypeError::AssertFailed(
                     (
-                        v.clone().stabilize(),
+                        ctx.arg.clone().stabilize(),
                         self.inner.pattern.clone().stabilize(),
                     )
                         .into(),
                 ));
             }
-            // 模式匹配失败，返回 fail_branch
+            // 模式匹配失败,返回 fail_branch
+            let mut reduce_ctx = ReductionContext::new(
+                ctx.closure_env,
+                ctx.param_env,
+                ctx.continuation,
+                ctx.rec_assumptions,
+                ctx.gc,
+            );
             self.inner
                 .fail_branch
                 .as_ref()
                 .unwrap()
-                .reduce(context, p, rec_assumptions, gc)
+                .reduce(&mut reduce_ctx)
         }
     }
 }
 
 impl Representable for Closure {
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
-        let mut repr = format!(
-            "<{}> with {}",
-            self.inner.pattern.represent(path),
-            self.inner.env.represent(path)
-        );
+        let mut repr = if self.inner.env.0.is_empty() {
+            format!("<{}>", self.inner.pattern.represent(path))
+        } else {
+            format!(
+                "<{}> carry {}",
+                self.inner.pattern.represent(path),
+                self.inner.env.represent(path)
+            )
+        };
         repr.push_str(" -> ");
         repr.push_str(&self.inner.expr.represent(path));
         if let Some(fail_branch) = &self.inner.fail_branch {
@@ -348,10 +358,10 @@ impl Closure {
         Self {
             inner: Arc::new(ClosureInner {
                 env,
-                pattern: pattern.as_type_ref().clone(),
+                pattern: pattern.into_type(),
                 pattern_param_size,
-                expr: expr.as_type_ref().clone(),
-                fail_branch: fail_branch.map(|fb| fb.as_type_ref().clone()),
+                expr: expr.into_type(),
+                fail_branch: fail_branch.map(|fb| fb.into_type()),
             }),
         }
         .dispatch()

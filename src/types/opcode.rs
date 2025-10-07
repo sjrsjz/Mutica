@@ -1,13 +1,10 @@
-use arc_gc::{gc::GC, traceable::GCTraceable};
+use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable, StabilizedType,
-        TaggedPtr, Type, TypeError,
-        closure::{ClosureEnv, ParamEnv},
-        fixpoint::FixPointInner,
-        integer_value::IntegerValue,
-        type_bound::TypeBound,
+        CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
+        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
+        fixpoint::FixPointInner, integer_value::IntegerValue, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -40,68 +37,58 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
         Type::Opcode(self)
     }
 
-    fn is(
-        &self,
-        other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
-    ) -> Result<Option<()>, super::TypeError> {
-        pattern_env.collect(|pattern_env| match other {
-            Type::Opcode(Opcode::Opcode) => Ok(Some(())),
-            Type::Opcode(v) => Ok(
-                if std::mem::discriminant(self) == std::mem::discriminant(v) {
-                    Some(())
-                } else {
-                    None
-                },
-            ),
-            Type::Bound(TypeBound::Top) => Ok(Some(())),
-            Type::Specialize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Generalize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::FixPoint(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Pattern(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Variable(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            _ => Ok(None),
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
+            match other {
+                Type::Opcode(Opcode::Opcode) => Ok(Some(())),
+                Type::Opcode(v) => Ok(
+                    if std::mem::discriminant(self) == std::mem::discriminant(v) {
+                        Some(())
+                    } else {
+                        None
+                    },
+                ),
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                _ => Ok(None),
+            }
         })
     }
 
-    fn reduce(
-        &self,
-        _v: &ClosureEnv,
-        _p: &ParamEnv,
-        _rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        _gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
         Ok(self.clone().dispatch().stabilize())
     }
 
-    fn apply(
-        &self,
-        v: &Type,
-        _context: &ClosureEnv,
-        _p: &ParamEnv,
-        _rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        _gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
         match self {
             Opcode::Opcode => Err(TypeError::NonApplicableType(
                 self.clone().dispatch().stabilize().into(),
             )),
             Opcode::Is => {
-                if let Type::Tuple(tuple) = v {
+                if let Type::Tuple(tuple) = ctx.arg {
                     if tuple.len() == 2 {
                         let left = &tuple.types()[0];
                         let right = &tuple.types()[1];
                         let empty_closure = ClosureEnv::new(Vec::<Type>::new());
-                        match left.is(
-                            right,
-                            &mut smallvec::SmallVec::new(),
+                        let mut assumptions = smallvec::SmallVec::new();
+                        let mut pattern_env = Collector::new();
+                        let mut type_check_ctx = TypeCheckContext::new(
+                            &mut assumptions,
                             (&empty_closure, &empty_closure),
-                            &mut Collector::new(),
+                            &mut pattern_env,
                             false,
-                        ) {
+                        );
+                        match left.is(right, &mut type_check_ctx) {
                             Ok(res) => Ok(if res.is_some() {
                                 TypeBound::top()
                             } else {
@@ -111,13 +98,13 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            v.clone().stabilize().into(),
+                            ctx.arg.clone().stabilize().into(),
                             "(Any, Any)".to_string(),
                         ))
                     }
                 } else {
                     Err(TypeError::TypeMismatch(
-                        v.clone().stabilize().into(),
+                        ctx.arg.clone().stabilize().into(),
                         "Tuple".to_string(),
                     ))
                 }
@@ -129,7 +116,7 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
             | Opcode::Mod
             | Opcode::Less
             | Opcode::Greater => {
-                if let Type::Tuple(tuple) = v {
+                if let Type::Tuple(tuple) = ctx.arg {
                     if tuple.len() == 2 {
                         let left = &tuple.types()[0];
                         let right = &tuple.types()[1];
@@ -141,7 +128,7 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
                                 Opcode::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            v.clone().stabilize().into(),
+                                            ctx.arg.clone().stabilize().into(),
                                             "Non-zero".to_string(),
                                         ))
                                     } else {
@@ -151,7 +138,7 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
                                 Opcode::Mod => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            v.clone().stabilize().into(),
+                                            ctx.arg.clone().stabilize().into(),
                                             "Non-zero".to_string(),
                                         ))
                                     } else {
@@ -174,19 +161,19 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
 
                             // }
                             _ => Err(TypeError::TypeMismatch(
-                                v.clone().stabilize().into(),
+                                ctx.arg.clone().stabilize().into(),
                                 "(IntegerValue, IntegerValue)".to_string(),
                             )),
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            v.clone().stabilize().into(),
+                            ctx.arg.clone().stabilize().into(),
                             "Tuple".to_string(),
                         ))
                     }
                 } else {
                     Err(TypeError::TypeMismatch(
-                        v.clone().stabilize().into(),
+                        ctx.arg.clone().stabilize().into(),
                         "Tuple".to_string(),
                     ))
                 }

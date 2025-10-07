@@ -2,15 +2,12 @@ use std::sync::Arc;
 
 use arc_gc::traceable::GCTraceable;
 
-use crate::{
-    types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable,
-        StabilizedType, TaggedPtr, Type, TypeError,
-        closure::{ClosureEnv, ParamEnv},
+use crate::types::{
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
+        StabilizedType, Type, TypeError,
+        
         fixpoint::FixPointInner,
-    },
-    util::collector::Collector,
-};
+    };
 
 #[derive(Clone)]
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
@@ -52,24 +49,16 @@ impl CoinductiveType<Type, StabilizedType> for Pattern {
     fn is(
         &self,
         other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(super::TaggedPtr<()>, super::TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
+        ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, TypeError> {
-        pattern_env.collect(|pattern_env| {
-            if !pattern_mode {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            if !ctx.pattern_mode {
                 // 由于Pattern的特殊性，Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
                 return match other {
                     Type::Pattern(v) => {
                         if self.debruijn_index == v.debruijn_index {
-                            self.expr.is(
-                                &v.expr,
-                                assumptions,
-                                closure_env,
-                                pattern_env,
-                                pattern_mode,
-                            )
+                            self.expr.is(&v.expr, &mut inner_ctx)
                         } else {
                             Ok(None)
                         }
@@ -78,29 +67,22 @@ impl CoinductiveType<Type, StabilizedType> for Pattern {
                 };
             }
             self.expr
-                .is(other, assumptions, closure_env, pattern_env, pattern_mode)
+                .is(other, &mut inner_ctx)
         })
     }
 
-    fn apply(
+    fn invoke(
         &self,
-        v: &Type,
-        context: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut arc_gc::gc::GC<FixPointInner>,
+        ctx: &mut InvokeContext,
     ) -> Result<StabilizedType, TypeError> {
-        self.expr.apply(v, context, p, rec_assumptions, gc)
+        self.expr.invoke(ctx)
     }
 
     fn reduce(
         &self,
-        v: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut arc_gc::gc::GC<FixPointInner>,
+        ctx: &mut ReductionContext,
     ) -> Result<StabilizedType, TypeError> {
-        self.expr.reduce(v, p, rec_assumptions, gc)
+        self.expr.reduce(ctx)
     }
 
     fn tagged_ptr(&self) -> super::TaggedPtr<()> {
@@ -112,24 +94,16 @@ impl CoinductiveTypeWithAny<Type, StabilizedType> for Pattern {
     fn has<V: CoinductiveType<Type, StabilizedType> + Clone>(
         &self,
         other: &V,
-        assumptions: &mut smallvec::SmallVec<[(super::TaggedPtr<()>, super::TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
+        ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, TypeError> {
-        pattern_env.collect(|pattern_env| {
-            if !pattern_mode {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            if !ctx.pattern_mode {
                 // 由于调用has的other一定不是Pattern类型
                 return Ok(None);
             }
             if other
-                .is(
-                    &self.expr,
-                    assumptions,
-                    closure_env,
-                    pattern_env,
-                    pattern_mode,
-                )?
+                .is(&self.expr, &mut inner_ctx)?
                 .is_some()
             {
                 pattern_env.push((self.debruijn_index, other.clone().dispatch()));
@@ -145,7 +119,7 @@ impl Pattern {
     pub fn new<T: AsTypeRef>(debruijn_index: usize, expr: T) -> StabilizedType {
         Self {
             debruijn_index,
-            expr: Arc::new(expr.as_type_ref().clone()),
+            expr: Arc::new(expr.into_type()),
         }
         .dispatch()
         .stabilize()

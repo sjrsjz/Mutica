@@ -7,15 +7,15 @@ use std::{
     fmt::Debug,
 };
 
-use crate::{parser::ast::BasicTypeAst, types::Type};
+use crate::{parser::ast::LinearTypeAst, types::Type};
 
 #[derive(Debug, Clone)]
 pub enum ParseError {
-    UseBeforeDeclaration(BasicTypeAst, String),
-    RedeclaredPattern(BasicTypeAst, String),
-    AmbiguousPattern(BasicTypeAst),
-    PatternOutOfParameterDefinition(BasicTypeAst),
-    MissingBranch(BasicTypeAst),
+    UseBeforeDeclaration(LinearTypeAst, String),
+    RedeclaredPattern(LinearTypeAst, String),
+    AmbiguousPattern(LinearTypeAst),
+    PatternOutOfParameterDefinition(LinearTypeAst),
+    MissingBranch(LinearTypeAst),
 }
 
 pub struct ParseContext {

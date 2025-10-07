@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
-use arc_gc::{gc::GC, traceable::GCTraceable};
+use arc_gc::traceable::GCTraceable;
 use smallvec::smallvec;
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable,
-        StabilizedType, TaggedPtr, Type, TypeError,
-        closure::{ClosureEnv, ParamEnv},
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
+        StabilizedType, Type, TypeError,
+        
         fixpoint::FixPointInner,
         type_bound::TypeBound,
+        closure::ClosureEnv,
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    util::{cycle_detector::FastCycleDetector, collector::Collector},
 };
 
 /// # 类型特化运算符 (Type Specialization Operator)
@@ -92,45 +93,36 @@ impl CoinductiveType<Type, StabilizedType> for Specialize {
         Type::Specialize(self)
     }
 
-    fn is(
-        &self,
-        other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
-    ) -> Result<Option<()>, super::TypeError> {
-        pattern_env.collect(|pattern_env| match other {
-            Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-            Type::Specialize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::FixPoint(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Pattern(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Variable(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            match other {
+                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
 
-            _ if pattern_mode => {
-                // 当 pattern_mode 不为 false 时，表示需要匹配子模式
-                // 这时不能短路返回，因为可能需要多个子类型共同匹配一个模式
-                let mut matched = false;
-                for sub in self.types.iter() {
-                    // 实际上fallback可能会导致pattern_env被意外修改，我们需要一个可回滚的机制
-                    matched |= sub
-                        .is(other, assumptions, closure_env, pattern_env, pattern_mode)?
-                        .is_some()
-                }
-                Ok(if matched { Some(()) } else { None })
-            }
-
-            _ => {
-                // 当 pattern_mode 为 false 时，表示不需要匹配子模式，短路返回不会影响正确性
-                for sub in self.types.iter() {
-                    if sub
-                        .is(other, assumptions, closure_env, pattern_env, pattern_mode)?
-                        .is_some()
-                    {
-                        return Ok(Some(()));
+                _ if ctx.pattern_mode => {
+                    // 当 pattern_mode 不为 false 时,表示需要匹配子模式
+                    // 这时不能短路返回,因为可能需要多个子类型共同匹配一个模式
+                    let mut matched = false;
+                    for sub in self.types.iter() {
+                        // 实际上fallback可能会导致pattern_env被意外修改,我们需要一个可回滚的机制
+                        matched |= sub.is(other, &mut inner_ctx)?.is_some()
                     }
+                    Ok(if matched { Some(()) } else { None })
                 }
-                Ok(None)
+
+                _ => {
+                    // 当 pattern_mode 为 false 时,表示不需要匹配子模式,短路返回不会影响正确性
+                    for sub in self.types.iter() {
+                        if sub.is(other, &mut inner_ctx)?.is_some() {
+                            return Ok(Some(()));
+                        }
+                    }
+                    Ok(None)
+                }
             }
         })
     }
@@ -140,33 +132,20 @@ impl CoinductiveType<Type, StabilizedType> for Specialize {
     /// `Min<T₁, ..., Tₙ>[V] = Min<T₁[V], ..., Tₙ[V]>`
     ///
     /// 类型应用操作分布到不可约集合中的每个类型上。
-    fn reduce(
-        &self,
-        v: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
         let mut result = smallvec::SmallVec::<[StabilizedType; 8]>::new();
         for sub in self.types.iter() {
-            result.push(sub.reduce(v, p, rec_assumptions, gc)?);
+            result.push(sub.reduce(ctx)?);
         }
-        Self::new(&result, v)
+        Self::new(&result, ctx.closure_env)
     }
 
-    fn apply(
-        &self,
-        v: &Type,
-        context: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
         let mut result = smallvec::SmallVec::<[StabilizedType; 8]>::new();
         for sub in self.types.iter() {
-            result.push(sub.apply(v, context, p, rec_assumptions, gc)?);
+            result.push(sub.invoke(ctx)?);
         }
-        Self::new(&result, context)
+        Self::new(&result, ctx.closure_env)
     }
 }
 
@@ -174,18 +153,13 @@ impl CoinductiveTypeWithAny<Type, StabilizedType> for Specialize {
     fn has<V: CoinductiveType<Type, StabilizedType> + Clone>(
         &self,
         other: &V,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        _pattern_mode: bool,
+        ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, super::TypeError> {
-        pattern_env.collect(|pattern_env| {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, false);
             for sub in self.types.iter() {
-                // 我们传入 false 是因为specialize是乱序的，它不适用于模式匹配，因为模式匹配的解构是有序的
-                if other
-                    .is(sub, assumptions, closure_env, pattern_env, false)?
-                    .is_none()
-                {
+                // 我们传入 false 是因为specialize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
+                if other.is(sub, &mut inner_ctx)?.is_none() {
                     return Ok(None);
                 }
             }
@@ -275,17 +249,16 @@ impl Specialize {
             }
             for j in 0..collected.len() {
                 if i != j && !absorbed[j] {
-                    // 如果有其他类型是该类型的子类型，则该类型被吸收
-                    if collected[j]
-                        .is(
-                            &collected[i],
-                            &mut smallvec![],
-                            (closure_env, closure_env),
-                            &mut Collector::new(),
-                            false,
-                        )?
-                        .is_some()
-                    {
+                    // 如果有其他类型是该类型的子类型,则该类型被吸收
+                    let mut assumptions = smallvec![];
+                    let mut pattern_env = Collector::new();
+                    let mut check_ctx = TypeCheckContext::new(
+                        &mut assumptions,
+                        (closure_env, closure_env),
+                        &mut pattern_env,
+                        false,
+                    );
+                    if collected[j].is(&collected[i], &mut check_ctx)?.is_some() {
                         absorbed[i] = true;
                         break;
                     }
@@ -318,7 +291,7 @@ impl Specialize {
         T: AsTypeRef,
     {
         let collected: smallvec::SmallVec<[Type; 8]> =
-            types.into_iter().map(|t| t.as_type_ref().clone()).collect();
+            types.into_iter().map(|t| t.into_type()).collect();
         Self {
             types: Arc::from(collected.into_boxed_slice()),
         }

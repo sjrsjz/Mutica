@@ -1,14 +1,14 @@
-use arc_gc::{gc::GC, traceable::GCTraceable};
+use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable, StabilizedType,
-        TaggedPtr, Type, TypeError,
-        closure::{ClosureEnv, ParamEnv},
+        CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable, StabilizedType,
+        Type, TypeError,
+        
         fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    util::cycle_detector::FastCycleDetector,
 };
 
 #[derive(Clone)]
@@ -31,51 +31,34 @@ impl CoinductiveType<Type, StabilizedType> for CharacterValue {
         Type::CharValue(self)
     }
 
-    fn is(
-        &self,
-        other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
-    ) -> Result<Option<()>, TypeError> {
-        pattern_env.collect(|pattern_env| match other {
-            Type::CharValue(v) => {
-                if self.value == v.value {
-                    Ok(Some(()))
-                } else {
-                    Ok(None)
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            match other {
+                Type::CharValue(v) => {
+                    if self.value == v.value {
+                        Ok(Some(()))
+                    } else {
+                        Ok(None)
+                    }
                 }
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Char(_) => Ok(Some(())),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                _ => Ok(None),
             }
-            Type::Bound(TypeBound::Top) => Ok(Some(())),
-            Type::Char(_) => Ok(Some(())),
-            Type::Generalize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Specialize(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::FixPoint(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Pattern(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Variable(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            _ => Ok(None),
         })
     }
 
-    fn reduce(
-        &self,
-        _v: &ClosureEnv,
-        _p: &ParamEnv,
-        _rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        _gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
         Ok(self.clone().dispatch().stabilize())
     }
 
-    fn apply(
-        &self,
-        _v: &Type,
-        _context: &ClosureEnv,
-        _p: &ParamEnv,
-        _rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        _gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
         Err(TypeError::NonApplicableType(
             self.clone().dispatch().stabilize().into(),
         ))

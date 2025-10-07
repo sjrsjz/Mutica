@@ -36,6 +36,7 @@ extern {
         "__mod" => LexerToken::DunderMod,
         "__is" => LexerToken::DunderIs,
         "__opcode" => LexerToken::DunderOpcode,
+        "__continuation" => LexerToken::DunderContinuation,
 
         "->" => LexerToken::Arrow,
         "|->" => LexerToken::FatArrow,
@@ -115,8 +116,9 @@ AtomType: TypeAst = {
     "__mod" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Mod),
     "__is" => TypeAst::BinaryOp(crate::parser::ast::BinaryOp::Is),
     "__opcode" => TypeAst::Opcode,
+    "__continuation" => TypeAst::Variable(None),
     <n: Num> => TypeAst::IntLiteral(n),
-    <id: Ident> => TypeAst::Variable(id),
+    <id: Ident> => TypeAst::Variable(Some(id)),
     <c: CharLiteral> => TypeAst::CharLiteral(c),
     <s: StringLiteral> => {
         let chars: Vec<TypeAst> = s.chars().map(TypeAst::CharLiteral).collect();
@@ -150,7 +152,7 @@ Apply: TypeAst = {
                 }),
             }),
             auto_captures: HashSet::new(),
-            body: Box::new(TypeAst::Variable("projection#obj".to_string())),
+            body: Box::new(TypeAst::Variable(Some("projection#obj".to_string()))),
             fail_branch: None,
         }.into(),
         arg: Box::new(obj),
@@ -262,16 +264,9 @@ Factor: TypeAst = {
         name: id,
         expr: Box::new(a),
     },
-    <ep: EffectPair> => ep,
     <a: Apply> => a,
 }
 
-EffectPair: TypeAst = {
-    <payload: Term> "~" <then: Factor> => TypeAst::Effect {
-        payload: Box::new(payload),
-        then: Box::new(then),
-    }
-}
 
 TupleElement = Generalize;
 
@@ -395,20 +390,16 @@ Let: (TypeAst, TypeAst) = {
     "let" <id: Primary> "=" <value: Type> ";" => (id, value),
 }
 
-Perform: (TypeAst, TypeAst) = {
-    "perform" <id: Primary> "=" <value: Type> ";" => (id, value),
+Perform: (TypeAst, TypeAst, TypeAst) = {
+    "perform" <id: Primary> "=" <f: Type> "with" <value: Type> ";" => (id, f, value),
 }
 
-DiscardPerform: TypeAst = {
-    "perform" <e: Type> ";" => e,
+DiscardPerform: (TypeAst, TypeAst) = {
+    "perform" <f: Type> "with"  <e: Type> ";" => (f, e),
 }
 
 Discard: TypeAst = {
     "#" <e: Type> ";" => e,
-}
-
-DoWith: (TypeAst, TypeAst, TypeAst) = {
-    "do" <e: Type> "with" <param: Type> "as" <pattern: Type> ";" => (e, param, pattern),
 }
 
 Expression: TypeAst = {
@@ -456,28 +447,14 @@ Expression: TypeAst = {
             },
         }
     },
-    <do_with: DoWith> <e: Type> => {
-        // alias do_with.0(() -> e)(do_with.1)
-        TypeAst::Apply {
-            func: Box::new(TypeAst::Apply {
-                func: Box::new(do_with.0),
-                arg: TypeAst::Closure {
-                    pattern: Box::new(do_with.2),
-                    auto_captures: HashSet::new(),
-                    body: Box::new(e),
-                    fail_branch: None,
-                }.into(),
-            }),
-            arg: Box::new(do_with.1),
-        }
-    }
 }
 
 Effect: TypeAst = {
     <perform_expr: Perform> <e: Type> => {
-        TypeAst::Effect {
-            payload: Box::new(perform_expr.1),
-            then: Box::new(TypeAst::Closure {
+        TypeAst::Invoke {
+            func: Box::new(perform_expr.1),
+            arg: Box::new(perform_expr.2),
+            continuation: Box::new(TypeAst::Closure {
                 pattern: Box::new(perform_expr.0),
                 auto_captures: HashSet::new(),
                 body: Box::new(e),
@@ -486,9 +463,10 @@ Effect: TypeAst = {
         }
     },
     <discard_perform: DiscardPerform> <e: Type> => {
-        TypeAst::Effect {
-            payload: Box::new(discard_perform),
-            then: Box::new(TypeAst::Closure {
+        TypeAst::Invoke {
+            func: Box::new(discard_perform.0),
+            arg: Box::new(discard_perform.1),
+            continuation: Box::new(TypeAst::Closure {
                 pattern: Box::new(TypeAst::DiscardPattern),
                 auto_captures: HashSet::new(),
                 body: Box::new(e),

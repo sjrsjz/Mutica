@@ -35,5 +35,5 @@ fn main() {
 }
 
 fn mutica_run(code: &str) {
-    mutica::parse_and_reduce_with_io(code);
+    // mutica::parse_and_reduce_with_io(code);
 }

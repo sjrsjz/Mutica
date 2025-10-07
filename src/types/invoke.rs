@@ -1,0 +1,245 @@
+use arc_gc::{gc::GC, traceable::GCTraceable};
+
+use crate::{
+    types::{
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
+        closure::{Closure, ClosureEnv, ParamEnv},
+        fixpoint::FixPointInner,
+        pattern::Pattern,
+        type_bound::TypeBound,
+        variable::Variable,
+    },
+    util::{collector::Collector, cycle_detector::FastCycleDetector},
+};
+
+#[derive(Clone)]
+pub struct Invoke {
+    func: Box<Type>,
+    arg: Box<Type>,
+    continuation: Box<Type>,
+}
+
+impl GCTraceable<FixPointInner> for Invoke {
+    fn collect(
+        &self,
+        queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<FixPointInner>>,
+    ) {
+        self.func.collect(queue);
+        self.arg.collect(queue);
+        self.continuation.collect(queue);
+    }
+}
+
+impl Rootable for Invoke {
+    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+        self.func.upgrade(collected);
+        self.arg.upgrade(collected);
+        self.continuation.upgrade(collected);
+    }
+}
+
+impl CoinductiveType<Type, StabilizedType> for Invoke {
+    fn dispatch(self) -> Type {
+        Type::Invoke(self)
+    }
+
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
+            match other {
+                Type::Invoke(v) => {
+                    let func_eq = self.func.is(&v.func, &mut inner_ctx)?;
+                    if func_eq.is_none() {
+                        return Ok(None);
+                    }
+                    let arg_eq = self.arg.is(&v.arg, &mut inner_ctx)?;
+                    if arg_eq.is_none() {
+                        return Ok(None);
+                    }
+                    let cont_eq = self.continuation.is(&v.continuation, &mut inner_ctx)?;
+                    if cont_eq.is_none() {
+                        return Ok(None);
+                    }
+                    Ok(Some(()))
+                }
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                _ => Ok(None),
+            }
+        })
+    }
+
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, super::TypeError> {
+        Ok(Self::new(
+            self.func.reduce(ctx)?,
+            self.arg.reduce(ctx)?,
+            self.continuation.reduce(ctx)?,
+        ))
+    }
+
+    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, super::TypeError> {
+        Err(TypeError::NonApplicableType(
+            self.clone().dispatch().stabilize().into(),
+        ))
+    }
+}
+
+impl Representable for Invoke {
+    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+        format!(
+            "CPS({}, {}, {})",
+            self.func.represent(path),
+            self.arg.represent(path),
+            self.continuation.represent(path)
+        )
+    }
+}
+
+impl Invoke {
+    pub fn new<U: AsTypeRef, V: AsTypeRef, W: AsTypeRef>(
+        func: U,
+        arg: V,
+        continuation: W,
+    ) -> StabilizedType {
+        Self {
+            func: Box::new(func.into_type()),
+            arg: Box::new(arg.into_type()),
+            continuation: Box::new(continuation.into_type()),
+        }
+        .dispatch()
+        .stabilize()
+    }
+
+    pub fn func(&self) -> &Type {
+        &self.func
+    }
+
+    pub fn arg(&self) -> &Type {
+        &self.arg
+    }
+
+    pub fn continuation(&self) -> &Type {
+        &self.continuation
+    }
+}
+impl Invoke {
+    /// Flattens a nested computation by composing continuations.
+    ///
+    /// This method is the core of the scheduler's ability to handle algebraic effects and
+    /// deep CPS-style function calls. It addresses the scenario where applying a function
+    /// does not yield a final value, but rather another `Invoke` instruction that needs to be
+    /// executed.
+    ///
+    /// ## The Problem: Nested Control Flow
+    ///
+    /// In a Continuation-Passing Style (CPS) model, a function call like `f(g(x))` is
+    /// linearized into a sequence. However, at the instruction level, the execution of
+    /// `self` (representing the call to `f`) might result in `v`, where `v` itself is the
+    /// instruction for `g(x)`. This creates a nested control flow: `handle(invoke_g, k_f)`.
+    /// Our linear scheduler cannot directly execute this tree-like structure.
+    ///
+    /// ## The Solution: Continuation Composition
+    ///
+    /// This function "flattens" the nested structure by creating a new, composed continuation.
+    /// It transforms a nested computation into a single, linear step for the scheduler.
+    ///
+    /// ### Formal Semantics
+    ///
+    /// This function implements the following reduction rule, where `self` is the outer
+    /// `Invoke` (representing the context `k`) and `v` is the result of its target function:
+    ///
+    /// *   **If `v` is a value `val`**:
+    ///     The operation is `k(val)`. We simply apply the continuation of `self` to the value.
+    ///
+    /// *   **If `v` is another instruction `Invoke<A, B, C>`**:
+    ///     The operation is `k(Invoke<A, B, C>)`. This is the nested case.
+    ///     We transform it according to the rule:
+    ///     `k(Invoke<A, B, C>)  --->  Invoke<A, B, (λx. k(C(x)))>`
+    ///
+    ///     Where:
+    ///     *   `self` represents the invocation context that provides `k` (`self.continuation`).
+    ///     *   `v` is the inner `Invoke<A, B, C>`.
+    ///     *   `A` is `v.func`, `B` is `v.arg`, `C` is `v.continuation`.
+    ///     *   `(λx. k(C(x)))` is the new, composed continuation created by this function.
+    ///     *   The returned `Invoke` is the flattened instruction `Invoke<A, B, ...>` ready
+    ///       for the next scheduler step.
+    ///
+    /// # Parameters
+    ///
+    /// * `self`: The outer `Invoke` instruction, whose continuation `k` acts as the context.
+    /// * `v`: The result of executing `self.func`. This can be a final value or another `Invoke` instruction.
+    /// * `gc`: A reference to the garbage collector for creating new closures.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(StabilizedType)`: The next instruction for the scheduler. If `v` was a value,
+    ///   this is the result of `k(v)`. If `v` was a nested `Invoke`, this is the new,
+    ///   flattened `Invoke` instruction.
+    /// * `Err(TypeError)`: If applying the continuation fails.
+    pub fn flat_compose(
+        &self,
+        v: &Type,
+        gc: &mut GC<FixPointInner>,
+    ) -> Result<StabilizedType, TypeError> {
+        // The `map` here is used to traverse the type structure without deep recursion
+        // if `v` is already a value.
+        v.map(&mut FastCycleDetector::new(), |_, ty| match ty {
+            // Case 1: The result `v` is another `Invoke` instruction (the nested case).
+            Type::Invoke(invoke) => {
+                // We are in the k(Invoke<A, B, C>) case.
+                // We construct the new continuation: λx. k(C(x))
+                // which translates to: λx. self.continuation(invoke.continuation(x))
+                Ok(Invoke::new(
+                    // A: The target function of the inner instruction.
+                    invoke.func.as_ref(),
+                    // B: The argument of the inner instruction.
+                    invoke.arg.as_ref(),
+                    // The new composed continuation: λx. C(x, k)
+                    // Note: In our model, this becomes λx. Invoke(C, x, k)
+                    Closure::new(
+                        1,                                 // Arity of the new closure (takes one argument `x`)
+                        Pattern::new(0, TypeBound::top()), // The parameter `x`
+                        // The body of the new closure: Invoke(C, x, k)
+                        Invoke::new(
+                            // C: The continuation of the inner instruction.
+                            invoke.continuation.as_ref(),
+                            // x: The value that will be passed to C.
+                            Variable::new_deburijn(0),
+                            // k: The continuation of the outer instruction (`self`).
+                            self.continuation.as_ref(),
+                        ),
+                        None::<Type>,
+                        ClosureEnv::new(Vec::<Type>::new()), // The new closure captures no variables.
+                    ),
+                ))
+            }
+            // Case 2: The result `v` is a final value.
+            _ => {
+                // We are in the k(val) case.
+                // Simply invoke the outer continuation `k` with the value `v`.
+                let closure_env = ClosureEnv::new(Vec::<Type>::new());
+                let param_env = ParamEnv::from_collector(Collector::new());
+                let mut rec_assumptions = smallvec::SmallVec::new();
+                let mut invoke_ctx = InvokeContext::new(
+                    &ty,
+                    &closure_env,
+                    &param_env,
+                    None, // The continuation's own continuation is not needed here.
+                    &mut rec_assumptions,
+                    gc,
+                );
+                self.continuation().invoke(&mut invoke_ctx)
+            }
+        })?
+    }
+}

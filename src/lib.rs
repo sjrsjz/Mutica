@@ -6,31 +6,23 @@
 use lalrpop_util::lalrpop_mod;
 
 pub mod parser;
+pub mod scheduler;
 pub mod types;
 pub mod util;
 
 lalrpop_mod!(pub grammar, "/parser/grammar.rs");
 
-use std::ops::ControlFlow;
-
 use arc_gc::gc::GC;
 use logos::Logos;
-use smallvec::smallvec;
 
 use crate::{
     parser::{
         BuildContext, ParseContext,
+        ast::LinearizeContext,
         lexer::{LexerToken, LexicalError},
     },
-    types::{
-        CoinductiveType, Representable, Type,
-        apply::Apply,
-        character_value::CharacterValue,
-        closure::{ClosureEnv, ParamEnv},
-        list::List,
-        tuple::Tuple,
-    },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    types::Representable,
+    util::cycle_detector::FastCycleDetector,
 };
 
 fn print_parse_error(expr: &str, e: lalrpop_util::ParseError<usize, LexerToken, LexicalError>) {
@@ -124,8 +116,10 @@ pub fn parse_and_reduce(expr: &str) {
         Ok(ast) => {
             let mut gc = GC::new();
             let basic = ast.into_basic();
-            // println!("Basic AST: {:?}", basic);
-            let flowed = basic
+            println!("Basic AST: {:?}", basic);
+            let linearized = basic.linearize(&mut LinearizeContext::new()).linearize();
+            println!("Linearized AST: {:?}", linearized);
+            let flowed = linearized
                 .flow(&mut ParseContext::new(), false)
                 .unwrap()
                 .ty()
@@ -133,102 +127,21 @@ pub fn parse_and_reduce(expr: &str) {
             let built_type = flowed
                 .to_type(&mut BuildContext::new(), false, &mut gc)
                 .unwrap();
-            let reduced = built_type.ty().reduce(
-                &ClosureEnv::new(Vec::<Type>::new()),
-                &ParamEnv::from_collector(Collector::new()),
-                &mut smallvec![],
-                &mut gc,
+            println!(
+                "Built type: {}\n",
+                built_type.ty().display(&mut FastCycleDetector::new())
             );
-            match reduced {
-                Ok(v) => println!("{}", v.display(&mut FastCycleDetector::new())),
-                Err(e) => println!("{:?}", e),
-            }
-        }
-        Err(e) => print_parse_error(expr, e),
-    }
-}
-
-pub fn parse_and_reduce_with_io(expr: &str) {
-    let lexer = LexerToken::lexer(expr);
-
-    let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
-        let token = token_result?;
-        Ok((span.start, token, span.end))
-    });
-
-    let parser = crate::grammar::TypeParser::new();
-    let parsed = parser.parse(spanned_lexer);
-    match parsed {
-        Ok(ast) => {
-            let mut gc = GC::new();
-            let basic = ast.into_basic();
-            // println!("Basic AST: {:?}", basic);
-            let flowed = basic
-                .flow(&mut ParseContext::new(), false)
-                .unwrap()
-                .ty()
-                .clone();
-            let built_type = flowed
-                .to_type(&mut BuildContext::new(), false, &mut gc)
-                .unwrap();
-            let mut reduced = built_type.ty().clone();
-            let reduced = loop {
-                let result =
-                    {
-                        match reduced.reduce(
-                            &ClosureEnv::new(Vec::<Type>::new()),
-                            &ParamEnv::from_collector(Collector::new()),
-                            &mut smallvec![],
-                            &mut gc,
-                        ) {
-                            Ok(r) => r.map(&mut FastCycleDetector::new(), |_, ty| match ty {
-                                Type::Effect(eff) => eff.payload().map(
-                                    &mut FastCycleDetector::new(),
-                                    |_, payload| match payload {
-                                        Type::Namespace(ns) if ns.tag() == "Print" => {
-                                            print!(
-                                                "{}",
-                                                ns.expr().display(&mut FastCycleDetector::new())
-                                            );
-                                            ControlFlow::Continue(Apply::new(
-                                                eff.then(),
-                                                Tuple::new(Vec::<Type>::new()),
-                                            ))
-                                        }
-                                        Type::Namespace(ns) if ns.tag() == "Input" => {
-                                            use std::io;
-                                            let mut input = String::new();
-                                            io::stdin().read_line(&mut input).unwrap();
-                                            let input = input.trim_end().to_string();
-                                            ControlFlow::Continue(Apply::new(
-                                                eff.then(),
-                                                List::new(
-                                                    input
-                                                        .chars()
-                                                        .map(|c| CharacterValue::new(c))
-                                                        .collect::<Vec<_>>(),
-                                                ),
-                                            ))
-                                        }
-                                        _ => ControlFlow::Break(ty.clone().stabilize()),
-                                    },
-                                ),
-                                v => Ok(ControlFlow::Break(v.clone().stabilize())),
-                            }),
-                            Err(e) => Err(e),
-                        }
-                    };
-                match result {
-                    Ok(Ok(ControlFlow::Continue(v))) => reduced = v,
-                    Ok(Ok(ControlFlow::Break(v))) => break Ok(v),
-                    Err(e) | Ok(Err(e)) => {
-                        break Err(e);
-                    }
+            let mut linear_scheduler = scheduler::LinearScheduler::new(built_type.ty().clone());
+            let result = loop {
+                match linear_scheduler.step(&mut gc) {
+                    Ok(true) => continue,
+                    Ok(false) => break Ok(linear_scheduler.current_type().clone()),
+                    Err(e) => break Err(e),
                 }
             };
-            match reduced {
-                Ok(v) => println!("{}", v.display(&mut FastCycleDetector::new())),
-                Err(e) => println!("{:?}", e),
+            match result {
+                Ok(v) => println!("Success: {}", v.display(&mut FastCycleDetector::new())),
+                Err(e) => println!("Failed: {:?}", e),
             }
         }
         Err(e) => print_parse_error(expr, e),
@@ -238,7 +151,7 @@ pub fn parse_and_reduce_with_io(expr: &str) {
 #[cfg(test)]
 mod tests {
     use super::parse_and_reduce;
-    use super::parse_and_reduce_with_io;
+    // use super::parse_and_reduce_with_io;
     #[test]
     fn test_alpha_equivalence() {
         let expr = r#"
@@ -550,33 +463,33 @@ mod tests {
         parse_and_reduce(expr);
     }
 
-    #[test]
-    fn test_io() {
-        // let expr = r#"
-        // perform Print::"Hello, world!";
-        // perform v : any = Input::"Please enter something: ";
-        // perform Print::v;
-        // "#;
-        // parse_and_reduce_with_io(expr);
+    // #[test]
+    // fn test_io() {
+    //     // let expr = r#"
+    //     // perform Print::"Hello, world!";
+    //     // perform v : any = Input::"Please enter something: ";
+    //     // perform Print::v;
+    //     // "#;
+    //     // parse_and_reduce_with_io(expr);
 
-        let expr = r#"
-        let println: any = next: any |-> rec println: (chars: (() | (char, any))) |->
-            match chars
-                | () => {
-                    perform Print::'\n';
-                    next()
-                }
-                | (head: char, tail: any) => {
-                    perform Print::head;
-                    println(tail)
-                }
-                | panic;
-        do println with "Please enter something: " as ();
-        perform v: any = Input::();
-        do println with v as ();
-        "#;
-        parse_and_reduce_with_io(expr);
-    }
+    //     let expr = r#"
+    //     let println: any = next: any |-> rec println: (chars: (() | (char, any))) |->
+    //         match chars
+    //             | () => {
+    //                 perform Print::'\n';
+    //                 next()
+    //             }
+    //             | (head: char, tail: any) => {
+    //                 perform Print::head;
+    //                 println(tail)
+    //             }
+    //             | panic;
+    //     do println with "Please enter something: " as ();
+    //     perform v: any = Input::();
+    //     do println with v as ();
+    //     "#;
+    //     parse_and_reduce_with_io(expr);
+    // }
 
     #[test]
     fn test_coinductive() {
@@ -585,6 +498,19 @@ mod tests {
         P0
         "#;
         parse_and_reduce(expr);
+    }
+
+    #[test]
+    fn test_simple_fn() {
+        let expr = r#"
+        let f: any = x: int |-> x + 1;
+        f(1), f(2)
+        "#;
+        parse_and_reduce(expr);
+        // let expr = r#"
+        // x: any |-> 1
+        // "#;
+        // parse_and_reduce(expr);
     }
 
     #[test]
@@ -604,72 +530,53 @@ mod tests {
         parse_and_reduce(expr);
     }
 
-    #[test]
-    fn test_effect_list() {
-        let expr = r#"
-        let run: any = v: any |-> (
-            rec run: (v: any, root: any) |-> 
-                match v
-                    | (payload: any) ~ (next: any) => {
-                        let r: any = run(payload, false);
-                        match root
-                            | false => X: any |-> r[v: any |-> [next(v)] ~ X]
-                            | ! => r[v: any |-> next(v)]
-                    }
-                    | result: any => v: any |-> result ~ v
-                    | panic
-            )(v, true);
+    // #[test]
+    // fn test_effect_list() {
+    //     let expr = r#"
+    //     let run: any = v: any |-> (
+    //         rec run: (v: any, root: any) |->
+    //             match v
+    //                 | (payload: any) ~ (next: any) => {
+    //                     let r: any = run(payload, false);
+    //                     match root
+    //                         | false => X: any |-> r[v: any |-> [next(v)] ~ X]
+    //                         | ! => r[v: any |-> next(v)]
+    //                 }
+    //                 | result: any => v: any |-> result ~ v
+    //                 | panic
+    //         )(v, true);
 
-        let handler: any = rec h: v: any |-> match v 
-            | () ~ (f: any) => h(f())
-            | (payload: any) ~ (f: any) => {
-                perform v: any = payload;
-                h(f(v))
-            }
-            | v: any => v
-            | panic;
+    //     let handler: any = rec h: v: any |-> match v
+    //         | () ~ (f: any) => h(f())
+    //         | (payload: any) ~ (f: any) => {
+    //             perform v: any = payload;
+    //             h(f(v))
+    //         }
+    //         | v: any => v
+    //         | panic;
 
-        let f: any = () |-> {
-            perform Print::'A';
-            let simple_num: any = 42;
-            perform Print::simple_num;
-        };
+    //     let f: any = () |-> {
+    //         perform Print::'A';
+    //         let simple_num: any = 42;
+    //         perform Print::simple_num;
+    //     };
 
-        handler(run {
-            perform f();
-            perform Print::'C';
-            perform Print::'D';
-        })
-        "#;
-        parse_and_reduce_with_io(expr);
-    }
+    //     handler(run {
+    //         perform f();
+    //         perform Print::'C';
+    //         perform Print::'D';
+    //     })
+    //     "#;
+    //     parse_and_reduce_with_io(expr);
+    // }
 
-    #[test]
-    fn test_effect_tree() {
-        let expr = r#"
-        let effects: any = [perform A::();
-            perform (
-                perform (
-                    perform B::();
-                    perform C::();
-                );
-                perform D::();
-                perform E::();
-            );
-            perform F::();];
-
-        let handler: any = rec h: v: any |-> match v
-            | (subeffect: (any ~ any)) ~ (f: any) => {
-
-            }
-            | (payload: any) ~ (f: any) => {
-                perform v: any = payload;
-                h(f(v))
-            }
-            | v: any => v
-            | panic;
-
-        "#;
-        parse_and_reduce_with_io(expr);
-    }
+    // #[test]
+    // fn test_cps() {
+    //     let expr = r#"
+    //     let f: any = next: any |-> x: int |-> next(x + 1);
+    //     do f with 1 as v: int;
+    //     v * 2
+    //     "#;
+    //     parse_and_reduce_with_io(expr);
+    // }
 }

@@ -9,12 +9,12 @@ use arc_gc::{
 use crate::{
     as_type,
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, GCArcStorage, Representable, Rootable,
-        Stabilized, StabilizedType, TaggedPtr, Type, TypeError,
-        closure::{ClosureEnv, ParamEnv},
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, GCArcStorage, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
+        Stabilized, StabilizedType, Type, TypeError,
+        
         type_bound::TypeBound,
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    util::cycle_detector::FastCycleDetector,
 };
 
 /// # 不动点算子内部实现 (Fixed-Point Operator Inner Implementation)
@@ -143,7 +143,7 @@ impl FixPoint {
             inner
                 .as_ref()
                 .inner
-                .set(t.as_type_ref().clone())
+                .set(t.into_type())
                 .map_err(|_| TypeError::RedeclaredType) // already initialized
         } else {
             Err(TypeError::UnresolvableType) // reference is dead
@@ -173,34 +173,34 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
     /// ```
     ///
     /// 即：在假设 μX.S <: μY.T 的前提下，检查展开后的类型关系。
-    fn is(
-        &self,
-        other: &Type,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
-    ) -> Result<Option<()>, TypeError> {
-        pattern_env.collect(|pattern_env| match other {
-            Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-            Type::Pattern(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            Type::Variable(v) => v.has(self, assumptions, closure_env, pattern_env, pattern_mode),
-            _ => match self.reference.upgrade() {
-                Some(inner) => {
-                    let inner = inner.as_ref().get().ok_or(TypeError::UnresolvableType)?;
-                    let self_ptr = inner.tagged_ptr();
-                    let other_ptr = other.tagged_ptr();
-                    if assumptions.contains(&(self_ptr.clone(), other_ptr.clone())) {
-                        return Ok(Some(())); // already assumed
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            match other {
+                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                _ => match self.reference.upgrade() {
+                    Some(inner) => {
+                        let inner = inner.as_ref().get().ok_or(TypeError::UnresolvableType)?;
+                        let self_ptr = inner.tagged_ptr();
+                        let other_ptr = other.tagged_ptr();
+                        let assumption_pair = (self_ptr, other_ptr);
+                        
+                        // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
+                        let already_assumed = inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
+                        if already_assumed {
+                            return Ok(Some(())); // already assumed
+                        }
+                        
+                        inner_ctx.assumptions.push(assumption_pair);
+                        let result = inner.is(other, &mut inner_ctx);
+                        inner_ctx.assumptions.pop();
+                        result
                     }
-                    assumptions.push((self_ptr, other_ptr));
-                    let result =
-                        inner.is(other, assumptions, closure_env, pattern_env, pattern_mode);
-                    assumptions.pop();
-                    result
-                }
-                None => Err(TypeError::UnresolvableType), // reference is dead
-            },
+                    None => Err(TypeError::UnresolvableType), // reference is dead
+                },
+            }
         })
     }
 
@@ -209,38 +209,32 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
     /// `(μX.T)[V] = T[μX.T/X][V]`
     ///
     /// 即：将递归类型应用到输入上，等价于将展开的类型应用到输入上。
-    fn reduce(
-        &self,
-        v: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
         match self.reference.upgrade() {
             Some(inner) => {
                 let inner_type = inner.as_ref().get().ok_or(TypeError::UnresolvableType)?;
-                for r in rec_assumptions.iter_mut().rev() {
+                for r in ctx.rec_assumptions.iter_mut().rev() {
                     if r.0 == inner_type.tagged_ptr() {
-                        //已经假设递归的归约结果，直接返回
+                        //已经假设递归的归约结果,直接返回
                         r.2 = true; // mark as used
                         return Ok(r.1.clone().stabilize());
                     }
                 }
-                let temp_fixpoint = Self::new_placeholder(gc);
+                let temp_fixpoint = Self::new_placeholder(ctx.gc);
                 // 假设递归类型的归约结果为 temp_fixpoint
-                rec_assumptions.push((
+                ctx.rec_assumptions.push((
                     inner_type.tagged_ptr(),
                     temp_fixpoint.weak().clone(),
                     false,
                 ));
-                let result = inner_type.reduce(v, p, rec_assumptions, gc);
-                let (_, _, used) = rec_assumptions.pop().unwrap();
+                let result = inner_type.reduce(ctx);
+                let (_, _, used) = ctx.rec_assumptions.pop().unwrap();
                 if used {
-                    // 递归类型在展开中被使用，返回新的递归类型
+                    // 递归类型在展开中被使用,返回新的递归类型
                     as_type!(temp_fixpoint.weak(), Type::FixPoint).set(result?)?;
                     Ok(temp_fixpoint)
                 } else {
-                    // 递归类型未被使用，直接返回展开结果
+                    // 递归类型未被使用,直接返回展开结果
                     result
                 }
             }
@@ -248,20 +242,13 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
         }
     }
 
-    fn apply(
-        &self,
-        v: &Type,
-        context: &ClosureEnv,
-        p: &ParamEnv,
-        rec_assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
         match self.reference.upgrade() {
             Some(inner) => inner
                 .as_ref()
                 .get()
                 .ok_or(TypeError::UnresolvableType)
-                .and_then(|t| t.apply(v, context, p, rec_assumptions, gc)),
+                .and_then(|t| t.invoke(ctx)),
             None => Err(TypeError::UnresolvableType), // reference is dead
         }
     }
@@ -271,20 +258,17 @@ impl CoinductiveTypeWithAny<Type, StabilizedType> for FixPoint {
     fn has<V: CoinductiveType<Type, StabilizedType> + Clone>(
         &self,
         other: &V,
-        assumptions: &mut smallvec::SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&ClosureEnv, &ClosureEnv),
-        pattern_env: &mut Collector<(usize, Type)>,
-        pattern_mode: bool,
+        ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, TypeError> {
-        pattern_env.collect(|pattern_env| match self.reference.upgrade() {
-            Some(inner) => other.is(
-                inner.as_ref().get().ok_or(TypeError::UnresolvableType)?,
-                assumptions,
-                closure_env,
-                pattern_env,
-                pattern_mode,
-            ),
-            None => Err(TypeError::UnresolvableType), // reference is dead
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            match self.reference.upgrade() {
+                Some(inner) => other.is(
+                    inner.as_ref().get().ok_or(TypeError::UnresolvableType)?,
+                    &mut inner_ctx,
+                ),
+                None => Err(TypeError::UnresolvableType), // reference is dead
+            }
         })
     }
 }
