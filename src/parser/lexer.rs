@@ -83,7 +83,6 @@ pub enum LexerToken<'input> {
     #[token("print")]
     Print,
 
-
     #[token("->")]
     Arrow,
     #[token("|->")]
@@ -152,4 +151,6 @@ pub enum LexerToken<'input> {
     LBrace,
     #[token("}")]
     RBrace,
+    #[token("|>")]
+    PipeGreaterThan,
 }

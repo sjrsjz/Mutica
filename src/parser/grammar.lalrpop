@@ -75,6 +75,7 @@ extern {
         "]" => LexerToken::RBracket,
         "{" => LexerToken::LBrace,
         "}" => LexerToken::RBrace,
+        "|>" => LexerToken::PipeGreaterThan,
     }
 }
 
@@ -161,6 +162,11 @@ Apply: TypeAst = {
             fail_branch: None,
         }.into(),
         arg: Box::new(obj),
+    },
+    <f: Apply> <x: Term> "|>" <k: Term> => TypeAst::Invoke {
+        func: Box::new(f),
+        arg: Box::new(x),
+        continuation: Box::new(k),
     },
     <f: Apply> <x: Term> => TypeAst::Apply {
         func: Box::new(f),
