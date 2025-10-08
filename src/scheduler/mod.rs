@@ -7,7 +7,7 @@ use crate::{
         closure::{ClosureEnv, ParamEnv},
         fixpoint::FixPointInner,
     },
-    util::collector::Collector,
+    util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
 
 pub struct LinearScheduler {
@@ -29,26 +29,27 @@ impl LinearScheduler {
         let mut reduction_ctx = ReductionContext::new(&v, &p, None, &mut rec_assumptions, gc);
 
         let reduced = self.current_type.reduce(&mut reduction_ctx)?;
-        let (next_type, updated) = match reduced.weak() {
-            Type::Invoke(invoke) => {
-                let v2 = ClosureEnv::new(Vec::<Type>::new());
-                let p2 = ParamEnv::from_collector(Collector::new());
-                let mut rec_assumptions2 = smallvec::SmallVec::new();
-                let mut invoke_ctx = InvokeContext::new(
-                    invoke.arg(),
-                    &v2,
-                    &p2,
-                    Some(invoke.continuation()),
-                    &mut rec_assumptions2,
-                    gc,
-                );
+        let (next_type, updated) =
+            reduced.map(&mut FastCycleDetector::new(), |_, reduced| match reduced {
+                Type::Invoke(invoke) => {
+                    let v2 = ClosureEnv::new(Vec::<Type>::new());
+                    let p2 = ParamEnv::from_collector(Collector::new());
+                    let mut rec_assumptions2 = smallvec::SmallVec::new();
+                    let mut invoke_ctx = InvokeContext::new(
+                        invoke.arg(),
+                        &v2,
+                        &p2,
+                        Some(invoke.continuation()),
+                        &mut rec_assumptions2,
+                        gc,
+                    );
 
-                let result = invoke.func().invoke(&mut invoke_ctx)?;
-                let result = invoke.flat_compose(result.weak(), gc)?;
-                (result, true)
-            }
-            _ => (reduced.clone(), false),
-        };
+                    let result = invoke.func().invoke(&mut invoke_ctx)?;
+                    let result = invoke.flat_compose(result.weak(), gc)?;
+                    Ok((result, true))
+                }
+                _ => Ok((reduced.clone().stabilize(), false)),
+            })??;
         self.current_type = next_type;
         // println!(
         //     "-> Current type: {}\n",
