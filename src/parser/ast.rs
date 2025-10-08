@@ -241,6 +241,7 @@ impl LinearizeResult {
 }
 
 impl BasicTypeAst {
+    #[stacksafe::stacksafe]
     pub fn linearize(self, ctx: &mut LinearizeContext) -> LinearizeResult {
         match self {
             BasicTypeAst::Int => LinearizeResult::new_simple(LinearTypeAst::Int),
@@ -422,6 +423,7 @@ pub enum LinearTypeAst {
 
 impl TypeAst {
     // 把高级抽象语法转换为基础抽象语法
+    #[stacksafe::stacksafe]
     pub fn into_basic(self) -> BasicTypeAst {
         match self {
             TypeAst::Int => BasicTypeAst::Int,
@@ -678,6 +680,7 @@ impl FlowResult {
 }
 
 impl LinearTypeAst {
+    #[stacksafe::stacksafe]
     pub fn flow(
         &self,
         ctx: &mut ParseContext,
@@ -1004,6 +1007,7 @@ impl BuildResult {
 }
 
 impl LinearTypeAst {
+    #[stacksafe::stacksafe]
     pub fn to_type(
         &self,
         ctx: &mut BuildContext,
