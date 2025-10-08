@@ -253,7 +253,12 @@ Comma<T>: Vec<T> = {
 CommaSep = ","+;
 
 
+Literal: TypeAst = {
+    "#" <t: Primary> => TypeAst::Literal(Box::new(t)),
+}
+
 Primary: TypeAst = {
+    <l: Literal> => l,
     <l: List> => l,
     <r: RecursiveGen> => r,
     <c: Closure> => c,
@@ -404,7 +409,6 @@ DiscardPerform: (TypeAst, TypeAst) = {
 }
 
 Discard: TypeAst = {
-    "#" <e: Type> ";" => e,
     "discard" <e: Type> ";" => e,
 }
 
@@ -481,7 +485,6 @@ Effect: TypeAst = {
         }
     },
 }
-
 
 
 pub Type: TypeAst = {

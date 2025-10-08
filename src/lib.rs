@@ -119,7 +119,7 @@ pub fn parse_and_reduce(expr: &str) {
             let mut gc = GC::new();
             let basic = ast.into_basic();
             // println!("Basic AST: {:?}", basic);
-            let linearized = basic.linearize(&mut LinearizeContext::new()).linearize();
+            let linearized = basic.linearize(&mut LinearizeContext::new()).finalize();
             // println!("Linearized AST: {:?}", linearized);
             let flowed = linearized
                 .flow(&mut ParseContext::new(), false)
@@ -215,7 +215,7 @@ mod tests {
         let expr = r#"
         let Just: any = x: any |-> Just::x;
         let Nothing: any = Nothing::();
-        let Option: any = T: any |-> (Nothing | Just T);
+        // let Option: any = T: any |-> (Nothing | Just T);
         let safe_div: any = (x: int, y: int) |->
             match y
                 | 0 => Nothing
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn test_nat() {
         let expr = r#"
-        let Nat: any = rec n: (() | ((), n));
+        // let Nat: any = rec n: (() | ((), n));
         let succ: any = x: any -> ((), x) \ false;
         let zero: any = ();
         let one: any = succ(zero);
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn test_discard() {
         let expr = r#"
-        # (let A: any = 1;);
+        discard ();
         1
         "#;
         parse_and_reduce(expr);
@@ -489,6 +489,17 @@ mod tests {
                 | (head: char, tail: any) => (discard print(head); print_chars(tail))
                 | panic;
         print_chars("Hello, world!\n")
+        "#;
+        parse_and_reduce(expr);
+    }
+
+    #[test]
+    fn test_literal() {
+        let expr: &'static str = r#"
+        let f: any = x: any |-> x + 1;
+        let g: any = #f(42);
+        let h: any = (#lazy_cps:any) |-> lazy_cps;
+        h(g), g
         "#;
         parse_and_reduce(expr);
     }

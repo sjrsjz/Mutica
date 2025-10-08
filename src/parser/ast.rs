@@ -1,7 +1,7 @@
 use arc_gc::gc::GC;
 
 use crate::as_type;
-use crate::parser::{BuildContext, ParseContext, ParseError};
+use crate::parser::{BuildContext, ContextError, ParseContext, ParseError};
 use crate::types::character::Character;
 use crate::types::character_value::CharacterValue;
 use crate::types::closure::{Closure, ClosureEnv};
@@ -10,6 +10,7 @@ use crate::types::generalize::Generalize;
 use crate::types::integer::Integer;
 use crate::types::integer_value::IntegerValue;
 use crate::types::invoke::Invoke;
+use crate::types::lazy::Lazy;
 use crate::types::list::List;
 use crate::types::namespace::Namespace;
 use crate::types::opcode::Opcode;
@@ -100,6 +101,7 @@ pub enum TypeAst {
         name: String,
         expr: Box<TypeAst>,
     },
+    Literal(Box<TypeAst>),
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +145,7 @@ pub enum BasicTypeAst {
         name: String,
         expr: Box<BasicTypeAst>,
     },
+    Literal(Box<BasicTypeAst>),
 }
 
 pub struct LinearizeContext {
@@ -171,14 +174,14 @@ impl LinearizeContext {
 #[derive(Debug)]
 pub struct LinearizeResult {
     bindings: Vec<(LinearTypeAst, LinearTypeAst, String)>, // (func, arg, tmpvar_name)
-    final_type: LinearTypeAst,
+    tail_type: LinearTypeAst,
 }
 
 impl LinearizeResult {
     pub fn new_simple(ty: LinearTypeAst) -> Self {
         Self {
             bindings: Vec::new(),
-            final_type: ty,
+            tail_type: ty,
         }
     }
 
@@ -188,7 +191,7 @@ impl LinearizeResult {
     ) -> Self {
         Self {
             bindings,
-            final_type: ty,
+            tail_type: ty,
         }
     }
 
@@ -199,14 +202,10 @@ impl LinearizeResult {
     ) -> Self {
         let mut bindings = func.bindings;
         bindings.extend(arg.bindings);
-        bindings.push((
-            func.final_type,
-            arg.final_type,
-            allocated_tmpvar_name.clone(),
-        ));
+        bindings.push((func.tail_type, arg.tail_type, allocated_tmpvar_name.clone()));
         Self {
             bindings,
-            final_type: LinearTypeAst::Variable(Some(allocated_tmpvar_name)).into(),
+            tail_type: LinearTypeAst::Variable(Some(allocated_tmpvar_name)).into(),
         }
     }
 
@@ -214,12 +213,12 @@ impl LinearizeResult {
         &self.bindings
     }
 
-    pub fn final_type(&self) -> &LinearTypeAst {
-        &self.final_type
+    pub fn tail_type(&self) -> &LinearTypeAst {
+        &self.tail_type
     }
 
-    pub fn linearize(self) -> LinearTypeAst {
-        let mut ty = self.final_type;
+    pub fn finalize(self) -> LinearTypeAst {
+        let mut ty = self.tail_type;
         for (f, a, tmpvar) in self.bindings.into_iter().rev() {
             ty = LinearTypeAst::Invoke {
                 func: Box::new(f),
@@ -258,7 +257,7 @@ impl BasicTypeAst {
             BasicTypeAst::Tuple(v) => {
                 let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
                 let ty =
-                    LinearTypeAst::Tuple(elements.iter().map(|e| e.final_type().clone()).collect());
+                    LinearTypeAst::Tuple(elements.iter().map(|e| e.tail_type().clone()).collect());
 
                 LinearizeResult::new_with_binding(
                     elements
@@ -271,7 +270,7 @@ impl BasicTypeAst {
             BasicTypeAst::List(v) => {
                 let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
                 let ty =
-                    LinearTypeAst::List(elements.iter().map(|e| e.final_type().clone()).collect());
+                    LinearTypeAst::List(elements.iter().map(|e| e.tail_type().clone()).collect());
                 LinearizeResult::new_with_binding(
                     elements
                         .into_iter()
@@ -283,7 +282,7 @@ impl BasicTypeAst {
             BasicTypeAst::Generalize(v) => {
                 let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
                 let ty = LinearTypeAst::Generalize(
-                    elements.iter().map(|e| e.final_type().clone()).collect(),
+                    elements.iter().map(|e| e.tail_type().clone()).collect(),
                 );
                 LinearizeResult::new_with_binding(
                     elements
@@ -296,7 +295,7 @@ impl BasicTypeAst {
             BasicTypeAst::Specialize(v) => {
                 let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
                 let ty = LinearTypeAst::Specialize(
-                    elements.iter().map(|e| e.final_type().clone()).collect(),
+                    elements.iter().map(|e| e.tail_type().clone()).collect(),
                 );
                 LinearizeResult::new_with_binding(
                     elements
@@ -315,9 +314,9 @@ impl BasicTypeAst {
                 let arg = arg.linearize(ctx);
                 let continuation = continuation.linearize(ctx);
                 let ty = LinearTypeAst::Invoke {
-                    func: func.final_type().clone().into(),
-                    arg: arg.final_type().clone().into(),
-                    continuation: continuation.final_type().clone().into(),
+                    func: func.tail_type().clone().into(),
+                    arg: arg.tail_type().clone().into(),
+                    continuation: continuation.tail_type().clone().into(),
                 };
                 let mut bindings = func.bindings;
                 bindings.extend(arg.bindings);
@@ -330,11 +329,11 @@ impl BasicTypeAst {
                 body,
                 fail_branch,
             } => {
-                let fail_branch = fail_branch.map(|b| b.linearize(ctx).linearize().into());
+                let fail_branch = fail_branch.map(|b| b.linearize(ctx).finalize().into());
                 let ty = LinearTypeAst::Closure {
-                    pattern: Box::new(pattern.linearize(ctx).linearize()), // pattern 直接完整线性化
+                    pattern: Box::new(pattern.linearize(ctx).finalize()), // pattern 直接完整线性化
                     auto_captures,
-                    body: Box::new(body.linearize(ctx).linearize()),
+                    body: Box::new(body.linearize(ctx).finalize()),
                     fail_branch,
                 };
                 LinearizeResult::new_simple(ty)
@@ -352,7 +351,7 @@ impl BasicTypeAst {
                 let expr = expr.linearize(ctx);
                 let ty = LinearTypeAst::FixPoint {
                     param_name,
-                    expr: Box::new(expr.final_type().clone()),
+                    expr: Box::new(expr.tail_type().clone()),
                 };
                 LinearizeResult::new_with_binding(expr.bindings, ty)
             }
@@ -360,7 +359,7 @@ impl BasicTypeAst {
                 let expr = expr.linearize(ctx);
                 let ty = LinearTypeAst::Namespace {
                     tag,
-                    expr: Box::new(expr.final_type().clone()),
+                    expr: Box::new(expr.tail_type().clone()),
                 };
                 LinearizeResult::new_with_binding(expr.bindings, ty)
             }
@@ -368,9 +367,14 @@ impl BasicTypeAst {
                 let expr = expr.linearize(ctx);
                 let ty = LinearTypeAst::Pattern {
                     name,
-                    expr: Box::new(expr.final_type().clone()),
+                    expr: Box::new(expr.tail_type().clone()),
                 };
                 LinearizeResult::new_with_binding(expr.bindings, ty)
+            }
+            BasicTypeAst::Literal(inner) => {
+                // 我们直接认为字面量类型的内部类型已经是线性化的
+                let inner = inner.linearize(ctx).finalize();
+                LinearizeResult::new_simple(LinearTypeAst::Literal(Box::new(inner)))
             }
         }
     }
@@ -413,6 +417,7 @@ pub enum LinearTypeAst {
         name: String,
         expr: Box<LinearTypeAst>,
     },
+    Literal(Box<LinearTypeAst>),
 }
 
 impl TypeAst {
@@ -592,6 +597,7 @@ impl TypeAst {
                 name,
                 expr: Box::new(expr.into_basic()),
             },
+            TypeAst::Literal(inner) => BasicTypeAst::Literal(Box::new(inner.into_basic())),
         }
     }
 }
@@ -685,7 +691,7 @@ impl LinearTypeAst {
             LinearTypeAst::IntLiteral(v) => Ok(FlowResult::simple(LinearTypeAst::IntLiteral(*v))),
             LinearTypeAst::CharLiteral(v) => Ok(FlowResult::simple(LinearTypeAst::CharLiteral(*v))),
             LinearTypeAst::Variable(Some(name)) => {
-                if ctx.is_declared(name) {
+                if ctx.use_variable(name).is_ok() {
                     let mut captures = HashSet::new();
                     captures.insert(name.clone());
                     Ok(FlowResult::complex(
@@ -812,10 +818,32 @@ impl LinearTypeAst {
             )),
             LinearTypeAst::FixPoint { param_name, expr } => {
                 ctx.enter_scope();
-                ctx.declare_variable(param_name.clone());
+                match ctx.declare_variable(param_name.clone()) {
+                    Ok(_) => {}
+                    Err(ContextError::EmptyContext) => {
+                        return Err(ParseError::InternalError(
+                            "Context should not be empty when declaring a variable".to_string(),
+                        ));
+                    }
+                    Err(ContextError::NotDeclared(_)) => unreachable!(),
+                    Err(ContextError::NotUsed(v)) => {
+                        return Err(ParseError::UnusedVariable(self.clone(), v));
+                    }
+                }
                 // 递归函数的表达式中不允许出现模式变量
                 let mut expr_res = expr.flow(ctx, false)?;
-                ctx.exit_scope();
+                match ctx.exit_scope() {
+                    Ok(_) => {}
+                    Err(ContextError::EmptyContext) => {
+                        return Err(ParseError::InternalError(
+                            "Context should not be empty when exiting a scope".to_string(),
+                        ));
+                    }
+                    Err(ContextError::NotDeclared(_)) => unreachable!(),
+                    Err(ContextError::NotUsed(v)) => {
+                        return Err(ParseError::UnusedVariable(self.clone(), v));
+                    }
+                }
                 // 移除掉param_name，因为它是递归函数的参数，不应当被视为捕获的自由变量
                 expr_res.captures.remove(param_name);
                 Ok(FlowResult::complex(
@@ -864,13 +892,46 @@ impl LinearTypeAst {
                 let pattern_res = pattern.flow(&mut ParseContext::new(), true)?;
                 ctx.enter_scope();
                 for var in auto_captures {
-                    ctx.declare_variable(var.clone());
+                    match ctx.declare_variable(var.clone()) {
+                        Ok(_) => {}
+                        Err(ContextError::EmptyContext) => {
+                            return Err(ParseError::InternalError(
+                                "Context should not be empty when declaring a variable".to_string(),
+                            ));
+                        }
+                        Err(ContextError::NotDeclared(_)) => unreachable!(),
+                        Err(ContextError::NotUsed(v)) => {
+                            return Err(ParseError::UnusedVariable(self.clone(), v));
+                        }
+                    }
                 }
                 for var in pattern_res.patterns.iter() {
-                    ctx.declare_variable(var.clone());
+                    match ctx.declare_variable(var.clone()) {
+                        Ok(_) => {}
+                        Err(ContextError::EmptyContext) => {
+                            return Err(ParseError::InternalError(
+                                "Context should not be empty when declaring a variable".to_string(),
+                            ));
+                        }
+                        Err(ContextError::NotDeclared(_)) => unreachable!(),
+                        Err(ContextError::NotUsed(v)) => {
+                            return Err(ParseError::UnusedVariable(self.clone(), v));
+                        }
+                    }
                 }
                 let body_res = body.flow(ctx, false)?; // 闭包体不允许出现模式变量
-                ctx.exit_scope();
+                match ctx.exit_scope() {
+                    Ok(_) => {}
+                    Err(ContextError::EmptyContext) => {
+                        return Err(ParseError::InternalError(
+                            "Context should not be empty when exiting a scope".to_string(),
+                        ));
+                    }
+                    Err(ContextError::NotDeclared(_)) => unreachable!(),
+                    Err(ContextError::NotUsed(v)) => {
+                        return Err(ParseError::UnusedVariable(self.clone(), v));
+                    }
+                }
                 let mut body_captures = body_res.captures;
                 // 移除掉模式变量，因为它们是闭包的参数，不应当被视为捕获的自由变量
                 for var in pattern_res.patterns.iter() {
@@ -892,6 +953,14 @@ impl LinearTypeAst {
                     },
                     body_captures,
                     PatternEnv::new(), // 闭包类型本身不应当把模式变量泄露出去
+                ))
+            }
+            LinearTypeAst::Literal(inner) => {
+                let inner_res = inner.flow(ctx, pattern_mode)?;
+                Ok(FlowResult::complex(
+                    LinearTypeAst::Literal(Box::new(inner_res.ty)),
+                    inner_res.captures,
+                    inner_res.patterns,
                 ))
             }
         }
@@ -1124,6 +1193,13 @@ impl LinearTypeAst {
                 Ok(BuildResult::complex(
                     Pattern::new(debruijn_index, &expr_type.ty),
                     patterns,
+                ))
+            }
+            LinearTypeAst::Literal(inner) => {
+                let inner_type = inner.to_type(ctx, pattern_mode, gc)?;
+                Ok(BuildResult::complex(
+                    Lazy::new(&inner_type.ty),
+                    inner_type.patterns,
                 ))
             }
         }

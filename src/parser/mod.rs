@@ -2,10 +2,7 @@ pub mod ast;
 pub mod lexer;
 pub use ast::TypeAst;
 
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-};
+use std::{collections::HashMap, fmt::Debug};
 
 use crate::{parser::ast::LinearTypeAst, types::Type};
 
@@ -13,43 +10,75 @@ use crate::{parser::ast::LinearTypeAst, types::Type};
 pub enum ParseError {
     UseBeforeDeclaration(LinearTypeAst, String),
     RedeclaredPattern(LinearTypeAst, String),
+    UnusedVariable(LinearTypeAst, Vec<String>),
     AmbiguousPattern(LinearTypeAst),
     PatternOutOfParameterDefinition(LinearTypeAst),
     MissingBranch(LinearTypeAst),
+    InternalError(String),
 }
 
 pub struct ParseContext {
-    pub declared_variables: Vec<HashSet<String>>,
+    pub declared_variables: Vec<HashMap<String, usize>>,
 }
-
+pub enum ContextError {
+    NotUsed(Vec<String>),
+    NotDeclared(String),
+    EmptyContext,
+}
 impl ParseContext {
+    const NOT_USED: usize = 0usize;
+
     pub fn new() -> Self {
         Self {
-            declared_variables: vec![HashSet::new()],
+            declared_variables: vec![HashMap::new()],
         }
     }
 
     pub fn enter_scope(&mut self) {
-        self.declared_variables.push(HashSet::new());
+        self.declared_variables.push(HashMap::new());
     }
 
-    pub fn exit_scope(&mut self) {
-        self.declared_variables.pop();
-    }
-
-    pub fn declare_variable(&mut self, name: String) {
-        if let Some(current_scope) = self.declared_variables.last_mut() {
-            current_scope.insert(name);
+    pub fn exit_scope(&mut self) -> Result<(), ContextError> {
+        if let Some(current_scope) = self.declared_variables.last() {
+            let unused_vars: Vec<String> = current_scope
+                .iter()
+                .filter_map(|(name, &count)| {
+                    if count == Self::NOT_USED {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !unused_vars.is_empty() {
+                return Err(ContextError::NotUsed(unused_vars));
+            }
+        } else {
+            return Err(ContextError::EmptyContext);
         }
+        self.declared_variables.pop();
+        Ok(())
     }
 
-    pub fn is_declared(&self, name: &str) -> bool {
-        for scope in self.declared_variables.iter().rev() {
-            if scope.contains(name) {
-                return true;
+    pub fn declare_variable(&mut self, name: String) -> Result<(), ContextError> {
+        if let Some(current_scope) = self.declared_variables.last_mut() {
+            if current_scope.contains_key(&name) && current_scope[&name] == Self::NOT_USED {
+                return Err(ContextError::NotUsed(vec![name]));
+            }
+            current_scope.insert(name, Self::NOT_USED);
+            return Ok(());
+        }
+        Err(ContextError::EmptyContext)
+    }
+
+    pub fn use_variable(&mut self, name: &str) -> Result<(), ContextError> {
+        for scope in self.declared_variables.iter_mut().rev() {
+            if let Some(count) = scope.get_mut(name) {
+                *count += 1;
+                return Ok(());
             }
         }
-        false
+        Err(ContextError::NotDeclared(name.to_string()))
     }
 }
 

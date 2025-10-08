@@ -2,9 +2,8 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable, StabilizedType,
-        Type, TypeError, TypeCheckContext, ReductionContext, InvokeContext,
-        fixpoint::FixPointInner,
+        CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
+        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -30,7 +29,12 @@ impl CoinductiveType<Type, StabilizedType> for Integer {
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             match other {
                 Type::Integer(_) => Ok(Some(())),
                 Type::Bound(TypeBound::Top) => Ok(Some(())),

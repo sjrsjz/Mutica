@@ -8,6 +8,7 @@ pub mod generalize;
 pub mod integer;
 pub mod integer_value;
 pub mod invoke;
+pub mod lazy;
 pub mod list;
 pub mod namespace;
 pub mod opcode;
@@ -36,6 +37,7 @@ use crate::{
         integer::Integer,
         integer_value::IntegerValue,
         invoke::Invoke,
+        lazy::Lazy,
         list::List,
         namespace::Namespace,
         opcode::Opcode,
@@ -82,6 +84,8 @@ pub enum Type {
     Namespace(Namespace),
     // 模式类型
     Pattern(Pattern),
+    // 字面量类型
+    Lazy(Lazy),
 }
 
 impl Debug for Type {
@@ -141,6 +145,7 @@ macro_rules! type_dispatch {
             Type::CharValue(v) => v.$method($($args),*),
             Type::Namespace(v) => v.$method($($args),*),
             Type::Pattern(v) => v.$method($($args),*),
+            Type::Lazy(v) => v.$method($($args),*),
         }
     };
 }

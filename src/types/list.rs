@@ -3,11 +3,10 @@ use std::sync::Arc;
 use arc_gc::traceable::GCTraceable;
 
 use crate::types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
-        StabilizedType, TaggedPtr, Type, TypeError,
-        fixpoint::FixPointInner,
-        type_bound::TypeBound,
-    };
+    AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+    Representable, Rootable, StabilizedType, TaggedPtr, Type, TypeCheckContext, TypeError,
+    fixpoint::FixPointInner, type_bound::TypeBound,
+};
 
 // 抽象链表类型，实际实现为 Vec<T>
 // 逻辑等价为 (T_1, (T_2, (T_3, ...)))
@@ -62,7 +61,12 @@ impl CoinductiveType<Type, StabilizedType> for List {
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             match other {
                 Type::List(v) => {
                     if self.len() != v.len() {

@@ -9,10 +9,9 @@ use arc_gc::{
 use crate::{
     as_type,
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, GCArcStorage, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
-        Stabilized, StabilizedType, Type, TypeError,
-        
-        type_bound::TypeBound,
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, GCArcStorage, InvokeContext,
+        ReductionContext, Representable, Rootable, Stabilized, StabilizedType, Type,
+        TypeCheckContext, TypeError, type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
 };
@@ -80,7 +79,6 @@ impl FixPointInner {
         self.inner.get()
     }
 }
-
 
 #[derive(Clone)]
 pub struct FixPoint {
@@ -175,7 +173,12 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
     /// 即：在假设 μX.S <: μY.T 的前提下，检查展开后的类型关系。
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             match other {
                 Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
                 Type::Pattern(v) => v.has(self, &mut inner_ctx),
@@ -186,13 +189,14 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
                         let self_ptr = inner.tagged_ptr();
                         let other_ptr = other.tagged_ptr();
                         let assumption_pair = (self_ptr, other_ptr);
-                        
+
                         // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
-                        let already_assumed = inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
+                        let already_assumed =
+                            inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
                         if already_assumed {
                             return Ok(Some(())); // already assumed
                         }
-                        
+
                         inner_ctx.assumptions.push(assumption_pair);
                         let result = inner.is(other, &mut inner_ctx);
                         inner_ctx.assumptions.pop();
@@ -261,7 +265,12 @@ impl CoinductiveTypeWithAny<Type, StabilizedType> for FixPoint {
         ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             match self.reference.upgrade() {
                 Some(inner) => other.is(
                     inner.as_ref().get().ok_or(TypeError::UnresolvableType)?,

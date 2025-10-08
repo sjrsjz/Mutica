@@ -5,11 +5,9 @@ use smallvec::smallvec;
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
-        StabilizedType, Type, TypeError,
-        closure::ClosureEnv,
-        fixpoint::FixPointInner,
-        type_bound::TypeBound,
+        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
+        closure::ClosureEnv, fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -94,7 +92,12 @@ impl CoinductiveType<Type, StabilizedType> for Generalize {
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             match other {
                 Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
                 Type::Specialize(v) => v.has(self, &mut inner_ctx),
@@ -142,7 +145,8 @@ impl CoinductiveTypeWithAny<Type, StabilizedType> for Generalize {
         ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, super::TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, false);
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, false);
             for sub in self.types.iter() {
                 // 我们传入 false 是因为generalize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
                 if other.is(sub, &mut inner_ctx)?.is_some() {
