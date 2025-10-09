@@ -1,4 +1,5 @@
 use crate::parser::ast::TypeAst;
+use lalrpop_util::ErrorRecovery;
 use crate::parser::lexer::{LexerToken, LexicalError};
 grammar<'input>;
 
@@ -105,7 +106,7 @@ StringLiteral: String = {
 };
 
 
-AtomType: TypeAst = {
+AtomType: TypeAst<'input> = {
     "int" => TypeAst::Int,
     "char" => TypeAst::Char,
     "true" => TypeAst::Top,
@@ -126,12 +127,12 @@ AtomType: TypeAst = {
     <id: Ident> => TypeAst::Variable(Some(id)),
     <c: CharLiteral> => TypeAst::CharLiteral(c),
     <s: StringLiteral> => {
-        let chars: Vec<TypeAst> = s.chars().map(TypeAst::CharLiteral).collect();
+        let chars: Vec<TypeAst<'input>> = s.chars().map(TypeAst::CharLiteral).collect();
         TypeAst::List(chars)
     },
 }
 
-Term: TypeAst = {
+Term: TypeAst<'input> = {
     "(" <t: Type> ")" => t,
     "[" <t: Type> "]" => t,
     "{" <t: Type> "}" => t,
@@ -139,14 +140,14 @@ Term: TypeAst = {
     <a: AtomType> => a,
 }
 
-Namespace: TypeAst = {
+Namespace: TypeAst<'input> = {
     <tag: Ident> "::" <t: Term> => TypeAst::Namespace {
         tag: tag,
         expr: Box::new(t),
     },
 }
 
-Apply: TypeAst = {
+Apply: TypeAst<'input> = {
     <obj: Apply> "." <k: Ident> => TypeAst::Apply {
         func: TypeAst::Closure {
             pattern: Box::new(TypeAst::Namespace {
@@ -173,14 +174,14 @@ Apply: TypeAst = {
     <t: Term> => t,
 }
 
-List: TypeAst = {
+List: TypeAst<'input> = {
     "@" <element: Primary> => match element {
         TypeAst::Tuple(elements) => TypeAst::List(elements),
         single => TypeAst::List(vec![single]),
     },
 }
 
-Match: TypeAst = {
+Match: TypeAst<'input> = {
     "match" <value: Primary> <branches: MatchBranch+> <else_branch: ElseBranch> => {
         TypeAst::Match {
             value: Box::new(value),
@@ -197,26 +198,26 @@ Match: TypeAst = {
     },
 }
 
-MatchBranch: (TypeAst, TypeAst) = {
+MatchBranch: (TypeAst<'input>, TypeAst<'input>) = {
     "|" <pattern: Primary> "=>" <t: Primary> => (pattern, t),
 }
 
-ElseBranch: TypeAst = {
+ElseBranch: TypeAst<'input> = {
     "|" "!" "=>" <t: Primary> => t,
 }
 
-RecursiveGen: TypeAst = {
+RecursiveGen: TypeAst<'input> = {
     "rec" <id: Ident> ":" <t: Primary> => TypeAst::FixPoint {
         param_name: id,
         expr: Box::new(t),
     },
 }
 
-FailBranch: Box<TypeAst> = {
+FailBranch: Box<TypeAst<'input>> = {
     "\\" <t: Primary> => Box::new(t),
 }
 
-Closure: TypeAst = {
+Closure: TypeAst<'input> = {
     <pattern: Factor> "->" <body: Primary> <fail_branch: FailBranch> => {
         TypeAst::Closure {
             pattern: Box::new(pattern),
@@ -233,7 +234,7 @@ Closure: TypeAst = {
     }
 }
 
-Tuple: TypeAst = {
+Tuple: TypeAst<'input> = {
     () => TypeAst::Tuple(vec![]),
     <items: Comma<TupleElement>> => TypeAst::Tuple(items),
     <item: TupleElement> => item,
@@ -255,23 +256,24 @@ Comma<T>: Vec<T> = {
 CommaSep = ","+;
 
 
-Literal: TypeAst = {
+Literal: TypeAst<'input> = {
     "#" <t: Primary> => TypeAst::Literal(Box::new(t)),
 }
 
-Primary: TypeAst = {
+Primary: TypeAst<'input> = {
     <l: Literal> => l,
     <l: List> => l,
     <r: RecursiveGen> => r,
     <c: Closure> => c,
     <m: Match> => m,
     <c: Calculate> => c,
-    <l:@L> error <r:@R> => {
-       TypeAst::Error(l..r)
-    },
+    ! => {
+        let err: ErrorRecovery<usize, LexerToken<'input>, LexicalError> = <>;
+        TypeAst::ParseError(err)
+    }
 };
 
-Factor: TypeAst = {
+Factor: TypeAst<'input> = {
     "!" <a: Factor> => TypeAst::Not {
         value: Box::new(a),
     },
@@ -285,7 +287,7 @@ Factor: TypeAst = {
 
 TupleElement = Generalize;
 
-Generalize: TypeAst = {
+Generalize: TypeAst<'input> = {
     <items: Bars<Specialize>> => TypeAst::Generalize(items),
     <e: Specialize> => e,
 }
@@ -303,7 +305,7 @@ Bars<T>: Vec<T> = {
 
 BarsSep = "|" +;
 
-Specialize: TypeAst = {
+Specialize: TypeAst<'input> = {
     <items: Ands<Primary>> => TypeAst::Specialize(items),
     <e: Primary> => e,
 }
@@ -323,9 +325,9 @@ Ands<T>: Vec<T> = {
 AndsSep = "&"+;
 
 
-Calculate: TypeAst = { Compare };
+Calculate: TypeAst<'input> = { Compare };
 
-Compare: TypeAst = {
+Compare: TypeAst<'input> = {
     <left: Compare> "==" <right: AddSub> => TypeAst::Eq {
         left: Box::new(left),
         right: Box::new(right),
@@ -369,7 +371,7 @@ Compare: TypeAst = {
     <t: AddSub> => t,
 }
 
-AddSub: TypeAst = {
+AddSub: TypeAst<'input> = {
     <left: AddSub> "+" <right: Mod> => TypeAst::Apply {
         func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
@@ -381,7 +383,7 @@ AddSub: TypeAst = {
     <t: Mod> => t,
 }
 
-Mod: TypeAst = {
+Mod: TypeAst<'input> = {
     <left: Mod> "%" <right: MulDiv> => TypeAst::Apply {
         func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
@@ -389,7 +391,7 @@ Mod: TypeAst = {
     <t: MulDiv> => t,
 }
 
-MulDiv: TypeAst = {
+MulDiv: TypeAst<'input> = {
     <left: MulDiv> "*" <right: Factor> => TypeAst::Apply {
         func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul)),
         arg: Box::new(TypeAst::Tuple(vec![left, right])),
@@ -401,23 +403,23 @@ MulDiv: TypeAst = {
     <t: Factor> => t,
 }
 
-Let: (TypeAst, TypeAst) = {
+Let: (TypeAst<'input>, TypeAst<'input>) = {
     "let" <id: Primary> "=" <value: Type> ";" => (id, value),
 }
 
-Perform: (TypeAst, TypeAst, TypeAst) = {
+Perform: (TypeAst<'input>, TypeAst<'input>, TypeAst<'input>) = {
     "perform" <id: Primary> "=" <f: Type> "with" <value: Type> ";" => (id, f, value),
 }
 
-DiscardPerform: (TypeAst, TypeAst) = {
+DiscardPerform: (TypeAst<'input>, TypeAst<'input>) = {
     "perform" <f: Type> "with"  <e: Type> ";" => (f, e),
 }
 
-Discard: TypeAst = {
+Discard: TypeAst<'input> = {
     "discard" <e: Type> ";" => e,
 }
 
-Expression: TypeAst = {
+Expression: TypeAst<'input> = {
     <let_expr: Let> <e: Type> => {
         match e {
             TypeAst::Expression {
@@ -464,7 +466,7 @@ Expression: TypeAst = {
     },
 }
 
-Effect: TypeAst = {
+Effect: TypeAst<'input> = {
     <perform_expr: Perform> <e: Type> => {
         TypeAst::Invoke {
             func: Box::new(perform_expr.1),
@@ -490,7 +492,7 @@ Effect: TypeAst = {
 }
 
 
-pub Type: TypeAst = {
+pub Type: TypeAst<'input> = {
     <e: Effect> => e,
     <e: Expression> => e,
     <t: Tuple> => t,

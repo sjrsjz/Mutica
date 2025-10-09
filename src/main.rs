@@ -29,7 +29,10 @@ fn main() {
                     process::exit(1);
                 }
             };
-            mutica_run(&code);
+            // Normalize line endings to \n to avoid Ariadne position calculation issues
+            // when handling UTF-8 multi-byte characters with \r\n line endings
+            let normalized_code = code.replace("\r\n", "\n");
+            mutica_run(&normalized_code);
         }
     }
 }

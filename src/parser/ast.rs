@@ -1,7 +1,8 @@
 use arc_gc::gc::GC;
+use lalrpop_util::ErrorRecovery;
 
 use crate::as_type;
-use crate::parser::lexer::Span;
+use crate::parser::lexer::{LexerToken, LexicalError};
 use crate::parser::{BuildContext, ContextError, ParseContext, ParseError};
 use crate::types::character::Character;
 use crate::types::character_value::CharacterValue;
@@ -40,8 +41,8 @@ pub enum AtomicOpcode {
 }
 
 #[derive(Debug, Clone)]
-pub enum TypeAst {
-    ParseError(Span),
+pub enum TypeAst<'input> {
+    ParseError(ErrorRecovery<usize, LexerToken<'input>, LexicalError>),
     Int,
     Char,
     Top,
@@ -50,59 +51,59 @@ pub enum TypeAst {
     IntLiteral(isize),
     CharLiteral(char),
     Variable(Option<String>),
-    Tuple(Vec<TypeAst>),
-    List(Vec<TypeAst>),
-    Generalize(Vec<TypeAst>),
-    Specialize(Vec<TypeAst>),
+    Tuple(Vec<TypeAst<'input>>),
+    List(Vec<TypeAst<'input>>),
+    Generalize(Vec<TypeAst<'input>>),
+    Specialize(Vec<TypeAst<'input>>),
     Invoke {
-        func: Box<TypeAst>,
-        arg: Box<TypeAst>,
-        continuation: Box<TypeAst>,
+        func: Box<TypeAst<'input>>,
+        arg: Box<TypeAst<'input>>,
+        continuation: Box<TypeAst<'input>>,
     },
     Expression {
-        binding_patterns: Vec<TypeAst>,
-        binding_types: Vec<TypeAst>,
-        body: Box<TypeAst>,
+        binding_patterns: Vec<TypeAst<'input>>,
+        binding_types: Vec<TypeAst<'input>>,
+        body: Box<TypeAst<'input>>,
     },
     Match {
-        value: Box<TypeAst>,
-        match_branch: Vec<(TypeAst, TypeAst)>,
-        else_branch: Option<Box<TypeAst>>,
+        value: Box<TypeAst<'input>>,
+        match_branch: Vec<(TypeAst<'input>, TypeAst<'input>)>,
+        else_branch: Option<Box<TypeAst<'input>>>,
     },
     Closure {
-        pattern: Box<TypeAst>,
-        body: Box<TypeAst>,
-        fail_branch: Option<Box<TypeAst>>,
+        pattern: Box<TypeAst<'input>>,
+        body: Box<TypeAst<'input>>,
+        fail_branch: Option<Box<TypeAst<'input>>>,
     },
     Apply {
-        func: Box<TypeAst>,
-        arg: Box<TypeAst>,
+        func: Box<TypeAst<'input>>,
+        arg: Box<TypeAst<'input>>,
     },
     Eq {
-        left: Box<TypeAst>,
-        right: Box<TypeAst>,
+        left: Box<TypeAst<'input>>,
+        right: Box<TypeAst<'input>>,
     },
     Neq {
-        left: Box<TypeAst>,
-        right: Box<TypeAst>,
+        left: Box<TypeAst<'input>>,
+        right: Box<TypeAst<'input>>,
     },
     Not {
-        value: Box<TypeAst>,
+        value: Box<TypeAst<'input>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
         param_name: String,
-        expr: Box<TypeAst>,
+        expr: Box<TypeAst<'input>>,
     },
     Namespace {
         tag: String,
-        expr: Box<TypeAst>,
+        expr: Box<TypeAst<'input>>,
     },
     Pattern {
         name: String,
-        expr: Box<TypeAst>,
+        expr: Box<TypeAst<'input>>,
     },
-    Literal(Box<TypeAst>),
+    Literal(Box<TypeAst<'input>>),
 }
 
 #[derive(Debug, Clone)]
@@ -420,7 +421,7 @@ pub enum LinearTypeAst {
     Literal(Box<LinearTypeAst>),
 }
 
-impl TypeAst {
+impl<'input> TypeAst<'input> {
     // 把高级抽象语法转换为基础抽象语法
     #[stacksafe::stacksafe]
     pub fn into_basic(self) -> BasicTypeAst {
@@ -601,7 +602,10 @@ impl TypeAst {
         }
     }
 
-    pub fn collect_errors(&self, errors: &mut Vec<Span>) {
+    pub fn collect_errors(
+        &self,
+        errors: &mut Vec<ErrorRecovery<usize, LexerToken<'input>, LexicalError>>,
+    ) {
         match self {
             TypeAst::ParseError(span) => {
                 errors.push(span.clone());

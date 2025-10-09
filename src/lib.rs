@@ -116,19 +116,43 @@ pub fn parse_and_reduce(expr: &str) {
     let parsed = parser.parse(spanned_lexer);
     match parsed {
         Ok(ast) => {
-            let mut gc = GC::new();
+            let mut errors = Vec::new();
+            ast.collect_errors(&mut errors);
+            if !errors.is_empty() {
+                for e in errors {
+                    parser::report_error_recovery(&e, "<input>", expr);
+                }
+                return;
+            }
             let basic = ast.into_basic();
             // println!("Basic AST: {:?}", basic);
             let linearized = basic.linearize(&mut LinearizeContext::new()).finalize();
             // println!("Linearized AST: {:?}", linearized);
-            let flowed = linearized
-                .flow(&mut ParseContext::new(), false)
-                .unwrap()
-                .ty()
-                .clone();
-            let built_type = flowed
-                .to_type(&mut BuildContext::new(), false, &mut gc)
-                .unwrap();
+            let flowed = match linearized.flow(&mut ParseContext::new(), false) {
+                Ok(result) => result.ty().clone(),
+                Err(e) => {
+                    e.report("<input>")
+                        .eprint(("<input>", ariadne::Source::from(expr)))
+                        .ok();
+                    return;
+                }
+            };
+
+            let mut gc = GC::new();
+            let built_type = match flowed.to_type(&mut BuildContext::new(), false, &mut gc) {
+                Ok(result) => result,
+                Err(Ok(type_error)) => {
+                    println!("Type building error: {:?}", type_error);
+                    return;
+                }
+                Err(Err(parse_error)) => {
+                    parse_error
+                        .report("<input>")
+                        .eprint(("<input>", ariadne::Source::from(expr)))
+                        .ok();
+                    return;
+                }
+            };
             #[cfg(debug_assertions)]
             println!(
                 "Built type: {}\n",
