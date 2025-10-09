@@ -1,6 +1,5 @@
 use crate::parser::ast::TypeAst;
 use crate::parser::lexer::{LexerToken, LexicalError};
-use std::collections::HashSet;
 grammar<'input>;
 
 
@@ -157,7 +156,6 @@ Apply: TypeAst = {
                     expr: Box::new(TypeAst::Top),
                 }),
             }),
-            auto_captures: HashSet::new(),
             body: Box::new(TypeAst::Variable(Some("projection#obj".to_string()))),
             fail_branch: None,
         }.into(),
@@ -222,7 +220,6 @@ Closure: TypeAst = {
     <pattern: Factor> "->" <body: Primary> <fail_branch: FailBranch> => {
         TypeAst::Closure {
             pattern: Box::new(pattern),
-            auto_captures: HashSet::new(),
             body: Box::new(body),
             fail_branch: Some(fail_branch),
         }
@@ -230,7 +227,6 @@ Closure: TypeAst = {
     <pattern: Factor> "|->" <body: Primary> => {
         TypeAst::Closure {
             pattern: Box::new(pattern),
-            auto_captures: HashSet::new(),
             body: Box::new(body),
             fail_branch: None,
         }
@@ -270,6 +266,9 @@ Primary: TypeAst = {
     <c: Closure> => c,
     <m: Match> => m,
     <c: Calculate> => c,
+    <l:@L> error <r:@R> => {
+       TypeAst::Error(l..r)
+    },
 };
 
 Factor: TypeAst = {
@@ -472,7 +471,6 @@ Effect: TypeAst = {
             arg: Box::new(perform_expr.2),
             continuation: Box::new(TypeAst::Closure {
                 pattern: Box::new(perform_expr.0),
-                auto_captures: HashSet::new(),
                 body: Box::new(e),
                 fail_branch: None,
             }),
@@ -484,7 +482,6 @@ Effect: TypeAst = {
             arg: Box::new(discard_perform.1),
             continuation: Box::new(TypeAst::Closure {
                 pattern: Box::new(TypeAst::DiscardPattern),
-                auto_captures: HashSet::new(),
                 body: Box::new(e),
                 fail_branch: None,
             }),

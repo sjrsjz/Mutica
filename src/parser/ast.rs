@@ -1,6 +1,7 @@
 use arc_gc::gc::GC;
 
 use crate::as_type;
+use crate::parser::lexer::Span;
 use crate::parser::{BuildContext, ContextError, ParseContext, ParseError};
 use crate::types::character::Character;
 use crate::types::character_value::CharacterValue;
@@ -40,6 +41,7 @@ pub enum AtomicOpcode {
 
 #[derive(Debug, Clone)]
 pub enum TypeAst {
+    ParseError(Span),
     Int,
     Char,
     Top,
@@ -69,7 +71,6 @@ pub enum TypeAst {
     },
     Closure {
         pattern: Box<TypeAst>,
-        auto_captures: HashSet<String>,
         body: Box<TypeAst>,
         fail_branch: Option<Box<TypeAst>>,
     },
@@ -124,7 +125,6 @@ pub enum BasicTypeAst {
     },
     Closure {
         pattern: Box<BasicTypeAst>,
-        auto_captures: HashSet<String>,
         body: Box<BasicTypeAst>,
         fail_branch: Option<Box<BasicTypeAst>>,
     },
@@ -326,14 +326,13 @@ impl BasicTypeAst {
             }
             BasicTypeAst::Closure {
                 pattern,
-                auto_captures,
                 body,
                 fail_branch,
             } => {
                 let fail_branch = fail_branch.map(|b| b.linearize(ctx).finalize().into());
                 let ty = LinearTypeAst::Closure {
                     pattern: Box::new(pattern.linearize(ctx).finalize()), // pattern 直接完整线性化
-                    auto_captures,
+                    auto_captures: HashSet::new(),
                     body: Box::new(body.linearize(ctx).finalize()),
                     fail_branch,
                 };
@@ -426,6 +425,12 @@ impl TypeAst {
     #[stacksafe::stacksafe]
     pub fn into_basic(self) -> BasicTypeAst {
         match self {
+            TypeAst::ParseError(span) => {
+                panic!(
+                    "Cannot convert TypeAst::ParseError to BasicTypeAst: {:?}",
+                    span
+                )
+            }
             TypeAst::Int => BasicTypeAst::Int,
             TypeAst::Char => BasicTypeAst::Char,
             TypeAst::Top => BasicTypeAst::Top,
@@ -470,7 +475,6 @@ impl TypeAst {
                     expr = BasicTypeAst::Apply {
                         func: Box::new(BasicTypeAst::Closure {
                             pattern: Box::new(pat.into_basic()),
-                            auto_captures: HashSet::new(),
                             body: Box::new(expr),
                             fail_branch: None,
                         }),
@@ -496,7 +500,6 @@ impl TypeAst {
                     expr = Some(Box::new(BasicTypeAst::Apply {
                         func: Box::new(BasicTypeAst::Closure {
                             pattern: Box::new(pat),
-                            auto_captures: HashSet::new(),
                             body: branch_expr.into(),
                             fail_branch: expr,
                         }),
@@ -509,7 +512,6 @@ impl TypeAst {
                             name: "match#value".to_string(),
                             expr: Box::new(BasicTypeAst::Top),
                         }),
-                        auto_captures: HashSet::new(),
                         body: expr.expect("There should be at least one branch").into(),
                         fail_branch: None,
                     }),
@@ -518,12 +520,10 @@ impl TypeAst {
             }
             TypeAst::Closure {
                 pattern,
-                auto_captures,
                 body,
                 fail_branch,
             } => BasicTypeAst::Closure {
                 pattern: Box::new(pattern.into_basic()),
-                auto_captures,
                 body: Box::new(body.into_basic()),
                 fail_branch: fail_branch.map(|b| Box::new(b.into_basic())),
             },
@@ -544,7 +544,6 @@ impl TypeAst {
                         },
                     ])
                     .into(),
-                    auto_captures: HashSet::new(),
                     body: Box::new(BasicTypeAst::Specialize(vec![
                         BasicTypeAst::Apply {
                             func: Box::new(BasicTypeAst::AtomicOpcode(AtomicOpcode::Is)),
@@ -579,7 +578,6 @@ impl TypeAst {
             TypeAst::Not { value } => BasicTypeAst::Apply {
                 func: BasicTypeAst::Closure {
                     pattern: BasicTypeAst::Bottom.into(),
-                    auto_captures: HashSet::new(),
                     body: BasicTypeAst::Top.into(),
                     fail_branch: Some(BasicTypeAst::Bottom.into()),
                 }
@@ -600,6 +598,101 @@ impl TypeAst {
                 expr: Box::new(expr.into_basic()),
             },
             TypeAst::Literal(inner) => BasicTypeAst::Literal(Box::new(inner.into_basic())),
+        }
+    }
+
+    pub fn collect_errors(&self, errors: &mut Vec<Span>) {
+        match self {
+            TypeAst::ParseError(span) => {
+                errors.push(span.clone());
+            }
+            TypeAst::Int
+            | TypeAst::Char
+            | TypeAst::Top
+            | TypeAst::Bottom
+            | TypeAst::DiscardPattern
+            | TypeAst::IntLiteral(_)
+            | TypeAst::CharLiteral(_)
+            | TypeAst::Variable(_) => {}
+            TypeAst::Tuple(elements)
+            | TypeAst::List(elements)
+            | TypeAst::Generalize(elements)
+            | TypeAst::Specialize(elements) => {
+                for elem in elements {
+                    elem.collect_errors(errors);
+                }
+            }
+            TypeAst::Invoke {
+                func,
+                arg,
+                continuation,
+            } => {
+                func.collect_errors(errors);
+                arg.collect_errors(errors);
+                continuation.collect_errors(errors);
+            }
+            TypeAst::Expression {
+                binding_patterns,
+                binding_types,
+                body,
+            } => {
+                for pat in binding_patterns {
+                    pat.collect_errors(errors);
+                }
+                for ty in binding_types {
+                    ty.collect_errors(errors);
+                }
+                body.collect_errors(errors);
+            }
+            TypeAst::Match {
+                value,
+                match_branch,
+                else_branch,
+            } => {
+                value.collect_errors(errors);
+                for (pat, expr) in match_branch {
+                    pat.collect_errors(errors);
+                    expr.collect_errors(errors);
+                }
+                if let Some(else_branch) = else_branch {
+                    else_branch.collect_errors(errors);
+                }
+            }
+            TypeAst::Closure {
+                pattern,
+                body,
+                fail_branch,
+            } => {
+                pattern.collect_errors(errors);
+                body.collect_errors(errors);
+                if let Some(fail_branch) = fail_branch {
+                    fail_branch.collect_errors(errors);
+                }
+            }
+            TypeAst::Apply { func, arg } => {
+                func.collect_errors(errors);
+                arg.collect_errors(errors);
+            }
+            TypeAst::Eq { left, right } | TypeAst::Neq { left, right } => {
+                left.collect_errors(errors);
+                right.collect_errors(errors);
+            }
+            TypeAst::Not { value } => {
+                value.collect_errors(errors);
+            }
+            TypeAst::AtomicOpcode(_) => {}
+            TypeAst::FixPoint { expr, .. } => {
+                expr.collect_errors(errors);
+            }
+            TypeAst::Namespace { expr, .. } => {
+                expr.collect_errors(errors);
+            }
+            TypeAst::Pattern { expr, .. } => {
+                expr.collect_errors(errors);
+            }
+            TypeAst::Literal(inner) => {
+                inner.collect_errors(errors);
+            }
         }
     }
 }

@@ -84,7 +84,7 @@ pub enum Type {
     Namespace(Namespace),
     // 模式类型
     Pattern(Pattern),
-    // 字面量类型
+    // 惰性包装器
     Lazy(Lazy),
 }
 

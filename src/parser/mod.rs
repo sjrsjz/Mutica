@@ -4,7 +4,7 @@ pub use ast::TypeAst;
 
 use std::{collections::HashMap, fmt::Debug};
 
-use crate::{parser::ast::LinearTypeAst, types::Type};
+use crate::{parser::{ast::LinearTypeAst, lexer::Span}, types::Type};
 
 #[derive(Debug, Clone)]
 pub enum ParseError {
@@ -15,6 +15,7 @@ pub enum ParseError {
     PatternOutOfParameterDefinition(LinearTypeAst),
     MissingBranch(LinearTypeAst),
     InternalError(String),
+    AstGenerationError(Span),
 }
 
 pub struct ParseContext {
