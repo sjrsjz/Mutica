@@ -430,17 +430,31 @@ impl BasicTypeAst {
 
 #[derive(Debug, Clone)]
 pub struct FlowedMetaData<'ast> {
-    reference: Option<WithLocation<&'ast LinearTypeAst<'ast>>>,
+    reference: Option<WithLocation<Option<&'ast LinearTypeAst<'ast>>>>,
     variable_context: Vec<WithLocation<String>>,
 }
 
 impl<'ast> FlowedMetaData<'ast> {
-    pub fn reference(&self) -> Option<&WithLocation<&'ast LinearTypeAst<'ast>>> {
+    pub fn reference(&self) -> Option<&WithLocation<Option<&'ast LinearTypeAst<'ast>>>> {
         self.reference.as_ref()
     }
 
     pub fn variable_context(&self) -> &Vec<WithLocation<String>> {
         &self.variable_context
+    }
+
+    pub fn with_reference(
+        self,
+        reference: Option<WithLocation<Option<&'ast LinearTypeAst<'ast>>>>,
+    ) -> Self {
+        Self { reference, ..self }
+    }
+
+    pub fn with_variable_context(self, variable_context: Vec<WithLocation<String>>) -> Self {
+        Self {
+            variable_context,
+            ..self
+        }
     }
 }
 
@@ -1029,30 +1043,30 @@ impl<'ast> LinearTypeAst<'ast> {
         loc: Option<&SourceLocation>,
     ) -> Result<FlowResult, ParseError> {
         match self {
-            LinearTypeAst::Int => Ok(FlowResult::simple(WithLocation::new(
-                LinearTypeAst::Int,
-                loc,
-            ))),
-            LinearTypeAst::Char => Ok(FlowResult::simple(WithLocation::new(
-                LinearTypeAst::Char,
-                loc,
-            ))),
-            LinearTypeAst::Top => Ok(FlowResult::simple(WithLocation::new(
-                LinearTypeAst::Top,
-                loc,
-            ))),
-            LinearTypeAst::Bottom => Ok(FlowResult::simple(WithLocation::new(
-                LinearTypeAst::Bottom,
-                loc,
-            ))),
-            LinearTypeAst::IntLiteral(v) => Ok(FlowResult::simple(WithLocation::new(
-                LinearTypeAst::IntLiteral(*v),
-                loc,
-            ))),
-            LinearTypeAst::CharLiteral(v) => Ok(FlowResult::simple(WithLocation::new(
-                LinearTypeAst::CharLiteral(*v),
-                loc,
-            ))),
+            LinearTypeAst::Int => Ok(FlowResult::simple(
+                WithLocation::new(LinearTypeAst::Int, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            )),
+            LinearTypeAst::Char => Ok(FlowResult::simple(
+                WithLocation::new(LinearTypeAst::Char, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            )),
+            LinearTypeAst::Top => Ok(FlowResult::simple(
+                WithLocation::new(LinearTypeAst::Top, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            )),
+            LinearTypeAst::Bottom => Ok(FlowResult::simple(
+                WithLocation::new(LinearTypeAst::Bottom, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            )),
+            LinearTypeAst::IntLiteral(v) => Ok(FlowResult::simple(
+                WithLocation::new(LinearTypeAst::IntLiteral(*v), loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            )),
+            LinearTypeAst::CharLiteral(v) => Ok(FlowResult::simple(
+                WithLocation::new(LinearTypeAst::CharLiteral(*v), loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            )),
             LinearTypeAst::Variable(Some(name)) => match ctx.use_variable(name) {
                 Ok(var_loc) => {
                     let mut captures = HashMap::new();
@@ -1061,6 +1075,11 @@ impl<'ast> LinearTypeAst<'ast> {
                         WithLocation::new(LinearTypeAst::Variable(Some(name.clone())), loc),
                         captures,
                         PatternEnv::new(),
+                    )
+                    .with_payload(
+                        FlowedMetaData::default()
+                            .with_reference(Some(var_loc.clone().map(|_| None)))
+                            .with_variable_context(ctx.capture()),
                     ))
                 }
                 Err(context_error) => match context_error {
@@ -1071,10 +1090,10 @@ impl<'ast> LinearTypeAst<'ast> {
                     _ => unreachable!(),
                 },
             },
-            LinearTypeAst::Variable(None) => Ok(FlowResult::simple(WithLocation::new(
-                LinearTypeAst::Variable(None),
-                loc,
-            ))), // None 表示续体，不会捕获任何变量（因为续体对于任何函数都是存在的）
+            LinearTypeAst::Variable(None) => Ok(FlowResult::simple(
+                WithLocation::new(LinearTypeAst::Variable(None), loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            )), // None 表示续体，不会捕获任何变量（因为续体对于任何函数都是存在的）
             LinearTypeAst::Tuple(elements) => {
                 let mut new_elements = Vec::new();
                 let mut all_captures = HashMap::new();
@@ -1100,7 +1119,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     WithLocation::new(LinearTypeAst::Tuple(new_elements), loc),
                     all_captures,
                     all_patterns,
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::List(elements) => {
                 let mut new_elements = Vec::new();
@@ -1127,7 +1147,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     WithLocation::new(LinearTypeAst::List(new_elements), loc),
                     all_captures,
                     all_patterns,
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::Generalize(types) => {
                 let mut new_types = Vec::new();
@@ -1161,7 +1182,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     WithLocation::new(LinearTypeAst::Generalize(new_types), loc),
                     all_captures,
                     all_patterns,
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::Specialize(types) => {
                 let mut new_types = Vec::new();
@@ -1195,7 +1217,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     WithLocation::new(LinearTypeAst::Specialize(new_types), loc),
                     all_captures,
                     all_patterns,
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::Invoke {
                 func,
@@ -1241,10 +1264,12 @@ impl<'ast> LinearTypeAst<'ast> {
                     ),
                     all_captures,
                     all_patterns,
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::AtomicOpcode(atomic_opcode) => Ok(FlowResult::simple(
-                WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc),
+                WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             )),
             LinearTypeAst::FixPoint { param_name, expr } => {
                 ctx.enter_scope();
@@ -1292,7 +1317,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     ),
                     expr_res.captures,
                     PatternEnv::new(), // fixpoint类型本身不应当把模式变量泄露出去
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::Namespace { tag, expr } => {
                 let expr_res = expr.flow(ctx, pattern_mode, expr.location())?;
@@ -1306,7 +1332,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     ),
                     expr_res.captures,
                     expr_res.patterns,
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::Pattern { name, expr } => {
                 if !pattern_mode {
@@ -1329,7 +1356,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     ),
                     expr_res.captures,
                     patterns,
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::Closure {
                 pattern,
@@ -1415,7 +1443,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     ),
                     body_captures,
                     PatternEnv::new(), // 闭包类型本身不应当把模式变量泄露出去
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
             LinearTypeAst::Literal(inner) => {
                 let inner_res = inner.flow(ctx, pattern_mode, inner.location())?;
@@ -1423,7 +1452,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     WithLocation::new(LinearTypeAst::Literal(Box::new(inner_res.ty)), loc),
                     inner_res.captures,
                     inner_res.patterns,
-                ))
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
             }
         }
     }
