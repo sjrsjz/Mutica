@@ -1,11 +1,12 @@
 [package]
 name = "mutica-semantic"
-version = "0.1.0"
-edition = "2024"
+
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-mutica-core = { path = "../mutica-core" }
-mutica-compiler = { path = "../mutica-compiler" }
+mutica-core = { workspace = true }
+mutica-compiler = { workspace = true }
 
 [lib]
 path = "src/lib.rs"
