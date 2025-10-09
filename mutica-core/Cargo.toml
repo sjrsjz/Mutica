@@ -1,5 +1,11 @@
 [package]
 name = "mutica-core"
+description = "Core library for the Mutica programming language"
+license = "MIT"
+authors = ["sjrsjz"]
+repository = "https://github.com/sjrsjz/Mutica"
+categories = ["programming-languages", "vm", "interpreter"] 
+
 
 version.workspace = true
 edition.workspace = true

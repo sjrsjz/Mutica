@@ -1,5 +1,10 @@
 [package]
 name = "mutica"
+description = "Mutica programming language"
+license = "MIT"
+authors = ["sjrsjz"]
+repository = "https://github.com/sjrsjz/Mutica"
+categories = ["programming-languages", "compilers", "parsers"] 
 
 edition.workspace = true
 version.workspace = true

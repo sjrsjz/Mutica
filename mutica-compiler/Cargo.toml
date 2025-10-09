@@ -1,5 +1,11 @@
 [package]
 name = "mutica-compiler"
+description = "Compiler library for the Mutica programming language"
+license = "MIT"
+authors = ["sjrsjz"]
+repository = "https://github.com/sjrsjz/Mutica"
+categories = ["programming-languages", "compilers", "parsers"] 
+
 
 version.workspace = true
 edition.workspace = true

@@ -1,5 +1,10 @@
 [package]
 name = "mutica-semantic"
+description = "Semantic analysis library for the Mutica programming language"
+license = "MIT"
+authors = ["sjrsjz"]
+repository = "https://github.com/sjrsjz/Mutica"
+categories = ["programming-languages", "semantic", "parsers"] 
 
 version.workspace = true
 edition.workspace = true
