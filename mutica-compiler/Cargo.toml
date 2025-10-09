@@ -15,7 +15,7 @@ ariadne = "0.4.1"
 lalrpop-util = "0.22.2"
 logos = "0.15.1"
 stacksafe = "0.1.4"
-mutica-core = { workspace = true }
+mutica-core = { version = "0.1.0", workspace = true }
 
 [build-dependencies]
 lalrpop = "0.22.2"
