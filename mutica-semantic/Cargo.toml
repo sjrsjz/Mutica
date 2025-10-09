@@ -10,8 +10,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-mutica-core = { version = "0.1.0", workspace = true }
-mutica-compiler = { version = "0.1.0", workspace = true }
+mutica-core = { workspace = true }
+mutica-compiler = { workspace = true }
 
 [lib]
 path = "src/lib.rs"
