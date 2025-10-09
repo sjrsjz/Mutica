@@ -405,15 +405,40 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 name = "mutica"
 version = "0.1.0"
 dependencies = [
- "ariadne",
  "clap",
+ "mutica-compiler",
+ "mutica-core",
+ "mutica-semantic",
+]
+
+[[package]]
+name = "mutica-compiler"
+version = "0.1.0"
+dependencies = [
+ "ariadne",
  "lalrpop",
  "lalrpop-util",
  "logos",
+ "mutica-core",
+ "stacksafe",
+]
+
+[[package]]
+name = "mutica-core"
+version = "0.1.0"
+dependencies = [
  "rust-arc-gc",
  "smallvec",
  "stacksafe",
  "thiserror",
+]
+
+[[package]]
+name = "mutica-semantic"
+version = "0.1.0"
+dependencies = [
+ "mutica-compiler",
+ "mutica-core",
 ]
 
 [[package]]

@@ -1,0 +1,13 @@
+[package]
+name = "mutica-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rust-arc-gc = "0.2.1"
+smallvec = "1.15.1"
+stacksafe = "0.1.4"
+thiserror = "2.0.17"
+
+[lib]
+path = "src/lib.rs"

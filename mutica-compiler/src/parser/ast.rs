@@ -1,29 +1,28 @@
-use arc_gc::gc::GC;
-use lalrpop_util::ErrorRecovery;
-
-use crate::as_type;
 use crate::parser::lexer::{LexerToken, LexicalError};
 use crate::parser::{
     BuildContext, ContextError, ParseContext, ParseError, SourceLocation, WithLocation,
 };
-use crate::types::character::Character;
-use crate::types::character_value::CharacterValue;
-use crate::types::closure::{Closure, ClosureEnv};
-use crate::types::fixpoint::{FixPoint, FixPointInner};
-use crate::types::generalize::Generalize;
-use crate::types::integer::Integer;
-use crate::types::integer_value::IntegerValue;
-use crate::types::invoke::Invoke;
-use crate::types::lazy::Lazy;
-use crate::types::list::List;
-use crate::types::namespace::Namespace;
-use crate::types::opcode::Opcode;
-use crate::types::pattern::Pattern;
-use crate::types::specialize::Specialize;
-use crate::types::tuple::Tuple;
-use crate::types::type_bound::TypeBound;
-use crate::types::variable::Variable;
-use crate::types::{Stabilized, StabilizedType, Type, TypeError};
+use lalrpop_util::ErrorRecovery;
+use mutica_core::arc_gc::gc::GC;
+use mutica_core::as_type;
+use mutica_core::types::character::Character;
+use mutica_core::types::character_value::CharacterValue;
+use mutica_core::types::closure::{Closure, ClosureEnv};
+use mutica_core::types::fixpoint::{FixPoint, FixPointInner};
+use mutica_core::types::generalize::Generalize;
+use mutica_core::types::integer::Integer;
+use mutica_core::types::integer_value::IntegerValue;
+use mutica_core::types::invoke::Invoke;
+use mutica_core::types::lazy::Lazy;
+use mutica_core::types::list::List;
+use mutica_core::types::namespace::Namespace;
+use mutica_core::types::opcode::Opcode;
+use mutica_core::types::pattern::Pattern;
+use mutica_core::types::specialize::Specialize;
+use mutica_core::types::tuple::Tuple;
+use mutica_core::types::type_bound::TypeBound;
+use mutica_core::types::variable::Variable;
+use mutica_core::types::{Stabilized, StabilizedType, Type, TypeError};
 use std::collections::HashMap;
 use std::ops::Deref;
 
@@ -175,17 +174,17 @@ impl LinearizeContext {
 }
 
 #[derive(Debug)]
-pub struct LinearizeResult {
+pub struct LinearizeResult<'ast> {
     bindings: Vec<(
-        WithLocation<LinearTypeAst>,
-        WithLocation<LinearTypeAst>,
+        WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+        WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         String,
     )>, // (func, arg, tmpvar_name)
-    tail_type: WithLocation<LinearTypeAst>,
+    tail_type: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
 }
 
-impl LinearizeResult {
-    pub fn new_simple(ty: WithLocation<LinearTypeAst>) -> Self {
+impl<'ast> LinearizeResult<'ast> {
+    pub fn new_simple(ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>) -> Self {
         Self {
             bindings: Vec::new(),
             tail_type: ty,
@@ -194,11 +193,11 @@ impl LinearizeResult {
 
     pub fn new_with_binding(
         bindings: Vec<(
-            WithLocation<LinearTypeAst>,
-            WithLocation<LinearTypeAst>,
+            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
             String,
         )>,
-        ty: WithLocation<LinearTypeAst>,
+        ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
     ) -> Self {
         Self {
             bindings,
@@ -207,8 +206,8 @@ impl LinearizeResult {
     }
 
     pub fn new_apply(
-        func: LinearizeResult,
-        arg: LinearizeResult,
+        func: LinearizeResult<'ast>,
+        arg: LinearizeResult<'ast>,
         allocated_tmpvar_name: String,
     ) -> Self {
         let mut bindings = func.bindings;
@@ -223,18 +222,18 @@ impl LinearizeResult {
     pub fn bindings(
         &self,
     ) -> &Vec<(
-        WithLocation<LinearTypeAst>,
-        WithLocation<LinearTypeAst>,
+        WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+        WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         String,
     )> {
         &self.bindings
     }
 
-    pub fn tail_type(&self) -> &WithLocation<LinearTypeAst> {
+    pub fn tail_type(&self) -> &WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
         &self.tail_type
     }
 
-    pub fn finalize(self) -> WithLocation<LinearTypeAst> {
+    pub fn finalize(self) -> WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
         let mut ty = self.tail_type;
         for (f, a, tmpvar) in self.bindings.into_iter().rev() {
             ty = WithLocation::from(LinearTypeAst::Invoke {
@@ -430,7 +429,32 @@ impl BasicTypeAst {
 }
 
 #[derive(Debug, Clone)]
-pub enum LinearTypeAst {
+pub struct FlowedMetaData<'ast> {
+    reference: Option<WithLocation<&'ast LinearTypeAst<'ast>>>,
+    variable_context: Vec<WithLocation<String>>,
+}
+
+impl<'ast> FlowedMetaData<'ast> {
+    pub fn reference(&self) -> Option<&WithLocation<&'ast LinearTypeAst<'ast>>> {
+        self.reference.as_ref()
+    }
+
+    pub fn variable_context(&self) -> &Vec<WithLocation<String>> {
+        &self.variable_context
+    }
+}
+
+impl Default for FlowedMetaData<'_> {
+    fn default() -> Self {
+        Self {
+            reference: None,
+            variable_context: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum LinearTypeAst<'ast> {
     Int,
     Char,
     Top,
@@ -438,35 +462,35 @@ pub enum LinearTypeAst {
     IntLiteral(isize),
     CharLiteral(char),
     Variable(Option<String>), // None 表示续体
-    Tuple(Vec<WithLocation<LinearTypeAst>>),
-    List(Vec<WithLocation<LinearTypeAst>>),
-    Generalize(Vec<WithLocation<LinearTypeAst>>),
-    Specialize(Vec<WithLocation<LinearTypeAst>>),
+    Tuple(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    List(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    Generalize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    Specialize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     Closure {
-        pattern: Box<WithLocation<LinearTypeAst>>,
+        pattern: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         auto_captures: HashMap<String, WithLocation<()>>,
-        body: Box<WithLocation<LinearTypeAst>>,
-        fail_branch: Option<Box<WithLocation<LinearTypeAst>>>,
+        body: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        fail_branch: Option<Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
     },
     Invoke {
-        func: Box<WithLocation<LinearTypeAst>>,
-        arg: Box<WithLocation<LinearTypeAst>>,
-        continuation: Box<WithLocation<LinearTypeAst>>,
+        func: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        arg: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        continuation: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
         param_name: String,
-        expr: Box<WithLocation<LinearTypeAst>>,
+        expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
     Namespace {
         tag: String,
-        expr: Box<WithLocation<LinearTypeAst>>,
+        expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
     Pattern {
         name: String,
-        expr: Box<WithLocation<LinearTypeAst>>,
+        expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
-    Literal(Box<WithLocation<LinearTypeAst>>),
+    Literal(Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
 }
 
 impl<'input> TypeAst<'input> {
@@ -746,7 +770,7 @@ impl<'input> TypeAst<'input> {
             ),
             TypeAst::Neq { left, right } => {
                 // a != b  ===  !(a == b)
-                WithLocation::new(
+                WithLocation::<_, ()>::new(
                     TypeAst::Not {
                         value: WithLocation::new(
                             TypeAst::Eq {
@@ -948,34 +972,34 @@ impl IntoIterator for PatternEnv {
     }
 }
 
-pub struct FlowResult {
-    ty: WithLocation<LinearTypeAst>,             // flow后的类型
-    captures: HashMap<String, WithLocation<()>>, // 该类型所捕获的自由变量
-    patterns: PatternEnv,                        // 该类型中出现的所有模式变量
+pub struct FlowResult<'ast> {
+    ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, // flow后的类型
+    captures: HashMap<String, WithLocation<()>>,                 // 该类型所捕获的自由变量
+    patterns: PatternEnv,                                        // 该类型中出现的所有模式变量
 }
 
-impl FlowResult {
-    pub fn simple(ty: WithLocation<LinearTypeAst>) -> Self {
+impl<'ast> FlowResult<'ast> {
+    pub fn simple(ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>) -> Self {
         FlowResult {
-            ty,
+            ty: ty.with_payload(FlowedMetaData::default()),
             captures: HashMap::new(),
             patterns: PatternEnv::new(),
         }
     }
 
     pub fn complex(
-        ty: WithLocation<LinearTypeAst>,
+        ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         captures: HashMap<String, WithLocation<()>>,
         patterns: PatternEnv,
     ) -> Self {
         FlowResult {
-            ty,
+            ty: ty.with_payload(FlowedMetaData::default()),
             captures,
             patterns,
         }
     }
 
-    pub fn ty(&self) -> &WithLocation<LinearTypeAst> {
+    pub fn ty(&self) -> &WithLocation<LinearTypeAst, FlowedMetaData> {
         &self.ty
     }
 
@@ -986,9 +1010,17 @@ impl FlowResult {
     pub fn patterns(&self) -> &PatternEnv {
         &self.patterns
     }
+
+    pub fn with_payload(self, payload: FlowedMetaData<'ast>) -> Self {
+        FlowResult {
+            ty: self.ty.with_payload(payload),
+            captures: self.captures,
+            patterns: self.patterns,
+        }
+    }
 }
 
-impl LinearTypeAst {
+impl<'ast> LinearTypeAst<'ast> {
     #[stacksafe::stacksafe]
     pub fn flow(
         &self,
@@ -1021,22 +1053,24 @@ impl LinearTypeAst {
                 LinearTypeAst::CharLiteral(*v),
                 loc,
             ))),
-            LinearTypeAst::Variable(Some(name)) => {
-                if ctx.use_variable(name).is_ok() {
+            LinearTypeAst::Variable(Some(name)) => match ctx.use_variable(name) {
+                Ok(var_loc) => {
                     let mut captures = HashMap::new();
-                    captures.insert(name.clone(), WithLocation::new((), loc));
+                    captures.insert(name.clone(), var_loc.clone());
                     Ok(FlowResult::complex(
                         WithLocation::new(LinearTypeAst::Variable(Some(name.clone())), loc),
                         captures,
                         PatternEnv::new(),
                     ))
-                } else {
-                    Err(ParseError::UseBeforeDeclaration(
-                        WithLocation::new(self.clone(), loc),
-                        name.clone(),
-                    ))
                 }
-            }
+                Err(context_error) => match context_error {
+                    ContextError::NotDeclared(name) => Err(ParseError::UseBeforeDeclaration(
+                        WithLocation::new(self.clone(), loc),
+                        name,
+                    )),
+                    _ => unreachable!(),
+                },
+            },
             LinearTypeAst::Variable(None) => Ok(FlowResult::simple(WithLocation::new(
                 LinearTypeAst::Variable(None),
                 loc,
@@ -1431,7 +1465,7 @@ impl BuildResult {
     }
 }
 
-impl LinearTypeAst {
+impl<'ast> LinearTypeAst<'ast> {
     #[stacksafe::stacksafe]
     pub fn to_type(
         &self,
@@ -1543,7 +1577,7 @@ impl LinearTypeAst {
                 }
                 let closure_env = ClosureEnv::new(closure_env);
 
-                let pattern_type =
+                let pattern_type: BuildResult =
                     pattern.to_type(&mut BuildContext::new(), true, gc, pattern.location())?; // 模式不应当捕获环境变量，因此传入空的BuildContext
 
                 ctx.enter_layer();

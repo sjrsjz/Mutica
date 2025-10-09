@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod lexer;
 pub use ast::TypeAst;
+use mutica_core::types::Type;
 
 use std::{collections::HashMap, fmt::Debug, ops::Deref, path::PathBuf, sync::Arc};
 
@@ -9,7 +10,7 @@ use crate::{
         ast::LinearTypeAst,
         lexer::{LexerToken, LexicalError},
     },
-    types::Type,
+    util::byte_offset_to_char_offset,
 };
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use lalrpop_util::ErrorRecovery;
@@ -37,23 +38,6 @@ fn byte_offset_to_position(source: &str, byte_offset: usize) -> (usize, usize) {
     }
 
     (line, column)
-}
-
-/// Convert byte offset to character offset
-/// This is needed because Ariadne's Span uses character offsets, not byte offsets
-fn byte_offset_to_char_offset(source: &str, byte_offset: usize) -> usize {
-    let mut char_offset = 0;
-    let mut current_byte = 0;
-
-    for ch in source.chars() {
-        if current_byte >= byte_offset {
-            break;
-        }
-        current_byte += ch.len_utf8();
-        char_offset += 1;
-    }
-
-    char_offset
 }
 
 /// Calculate the full error span including all dropped tokens
@@ -110,20 +94,20 @@ fn calculate_full_error_span(
 }
 
 #[derive(Debug, Clone)]
-pub enum ParseError {
-    UseBeforeDeclaration(WithLocation<LinearTypeAst>, String),
-    RedeclaredPattern(WithLocation<LinearTypeAst>, WithLocation<String>),
-    UnusedVariable(WithLocation<LinearTypeAst>, Vec<WithLocation<String>>),
-    AmbiguousPattern(WithLocation<LinearTypeAst>),
-    PatternOutOfParameterDefinition(WithLocation<LinearTypeAst>),
-    MissingBranch(WithLocation<LinearTypeAst>),
+pub enum ParseError<'ast> {
+    UseBeforeDeclaration(WithLocation<LinearTypeAst<'ast>>, String),
+    RedeclaredPattern(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>),
+    UnusedVariable(WithLocation<LinearTypeAst<'ast>>, Vec<WithLocation<String>>),
+    AmbiguousPattern(WithLocation<LinearTypeAst<'ast>>),
+    PatternOutOfParameterDefinition(WithLocation<LinearTypeAst<'ast>>),
+    MissingBranch(WithLocation<LinearTypeAst<'ast>>),
     InternalError(String),
 }
 
-impl ParseError {
+impl<'ast> ParseError<'ast> {
     /// 辅助函数：从 WithLocation 提取位置信息
     /// 返回 (char_start, char_end, filename_owned)
-    fn extract_location_info(ast: &WithLocation<LinearTypeAst>) -> (usize, usize, String) {
+    fn extract_location_info(ast: &WithLocation<LinearTypeAst<'ast>>) -> (usize, usize, String) {
         if let Some(location) = ast.location() {
             let source = location.source();
             let span = location.span();
@@ -499,6 +483,18 @@ impl ParseContext {
         }
     }
 
+    pub fn capture(&self) -> Vec<WithLocation<String>> {
+        let mut captured = Vec::new();
+        for scope in &self.declared_variables {
+            for (name, (count, loc)) in scope {
+                if *count > Self::NOT_USED {
+                    captured.push(loc.clone().map(|_| name.clone()));
+                }
+            }
+        }
+        captured
+    }
+
     pub fn enter_scope(&mut self) {
         self.declared_variables.push(HashMap::new());
     }
@@ -542,11 +538,11 @@ impl ParseContext {
         Err(ContextError::EmptyContext)
     }
 
-    pub fn use_variable(&mut self, name: &str) -> Result<(), ContextError> {
+    pub fn use_variable(&mut self, name: &str) -> Result<&WithLocation<()>, ContextError> {
         for scope in self.declared_variables.iter_mut().rev() {
-            if let Some((count, _)) = scope.get_mut(name) {
+            if let Some((count, loc)) = scope.get_mut(name) {
                 *count += 1;
-                return Ok(());
+                return Ok(loc);
             }
         }
         Err(ContextError::NotDeclared(name.to_string()))
@@ -671,6 +667,13 @@ pub struct SourceFile {
     path: Option<PathBuf>,
     content: String,
 }
+
+impl PartialEq for SourceFile {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path && self.content == other.content
+    }
+}
+
 impl SourceFile {
     pub fn new(path: Option<PathBuf>, content: String) -> Self {
         Self { path, content }
@@ -718,30 +721,49 @@ impl SourceLocation {
 }
 
 #[derive(Debug, Clone)]
-pub struct WithLocation<T> {
+pub struct WithLocation<T, P = ()>
+where
+    P: Clone + Debug,
+{
     value: T,
     location: Option<SourceLocation>,
+    payload: P,
 }
 
-impl<T> WithLocation<T> {
+impl<T, P> WithLocation<T, P>
+where
+    P: Clone + Debug + Default,
+{
     pub fn new<'a, I: Into<&'a SourceLocation>>(value: T, location: Option<I>) -> Self {
         Self {
             value,
             location: location.map(|l| l.into().clone()),
+            payload: Default::default(),
         }
     }
+}
 
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> WithLocation<U> {
+impl<T, P> WithLocation<T, P>
+where
+    P: Clone + Debug,
+{
+    pub fn with_payload(self, payload: P) -> Self {
+        Self { payload, ..self }
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> WithLocation<U, P> {
         WithLocation {
             value: f(self.value),
             location: self.location,
+            payload: self.payload,
         }
     }
 
-    pub fn as_ref(&self) -> WithLocation<&T> {
+    pub fn as_ref(&self) -> WithLocation<&T, P> {
         WithLocation {
             value: &self.value,
             location: self.location.clone(),
+            payload: self.payload.clone(),
         }
     }
 
@@ -756,18 +778,37 @@ impl<T> WithLocation<T> {
     pub fn location(&self) -> Option<&SourceLocation> {
         self.location.as_ref()
     }
-}
 
-impl<T> From<T> for WithLocation<T> {
-    fn from(value: T) -> WithLocation<T> {
+    pub fn payload(&self) -> &P {
+        &self.payload
+    }
+
+    pub fn map_payload<Q: Clone + Debug>(self, f: impl FnOnce(P) -> Q) -> WithLocation<T, Q> {
         WithLocation {
-            value,
-            location: None,
+            value: self.value,
+            location: self.location,
+            payload: f(self.payload),
         }
     }
 }
 
-impl<T> Deref for WithLocation<T> {
+impl<T, P> From<T> for WithLocation<T, P>
+where
+    P: Clone + Debug + Default,
+{
+    fn from(value: T) -> WithLocation<T, P> {
+        WithLocation {
+            value,
+            location: None,
+            payload: Default::default(),
+        }
+    }
+}
+
+impl<T, P> Deref for WithLocation<T, P>
+where
+    P: Clone + Debug + Default,
+{
     type Target = T;
     fn deref(&self) -> &T {
         &self.value

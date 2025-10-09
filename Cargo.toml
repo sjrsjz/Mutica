@@ -4,18 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ariadne = "0.4.1"
 clap = { version = "4.5.48", features = ["derive"] }
-lalrpop = "0.22.2"
-lalrpop-util = "0.22.2"
-logos = "0.15.1"
-rust-arc-gc = "0.2.1"
-smallvec = "1.15.1"
-stacksafe = "0.1.4"
-thiserror = "2.0.17"
-
-[build-dependencies]
-lalrpop = "0.22.2"
+mutica-core = { path = "mutica-core" }
+mutica-compiler = { path = "mutica-compiler" }
+mutica-semantic = { path = "mutica-semantic" }
 
 [[bin]]
 name = "mutica"
+
+[workspace]
+members = ["mutica-core", "mutica-compiler", "mutica-semantic", "."]
