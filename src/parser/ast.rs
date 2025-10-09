@@ -3,7 +3,9 @@ use lalrpop_util::ErrorRecovery;
 
 use crate::as_type;
 use crate::parser::lexer::{LexerToken, LexicalError};
-use crate::parser::{BuildContext, ContextError, ParseContext, ParseError};
+use crate::parser::{
+    BuildContext, ContextError, ParseContext, ParseError, SourceLocation, WithLocation,
+};
 use crate::types::character::Character;
 use crate::types::character_value::CharacterValue;
 use crate::types::closure::{Closure, ClosureEnv};
@@ -22,7 +24,7 @@ use crate::types::tuple::Tuple;
 use crate::types::type_bound::TypeBound;
 use crate::types::variable::Variable;
 use crate::types::{Stabilized, StabilizedType, Type, TypeError};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ops::Deref;
 
 #[derive(Debug, Clone)]
@@ -51,59 +53,59 @@ pub enum TypeAst<'input> {
     IntLiteral(isize),
     CharLiteral(char),
     Variable(Option<String>),
-    Tuple(Vec<TypeAst<'input>>),
-    List(Vec<TypeAst<'input>>),
-    Generalize(Vec<TypeAst<'input>>),
-    Specialize(Vec<TypeAst<'input>>),
+    Tuple(Vec<WithLocation<TypeAst<'input>>>),
+    List(Vec<WithLocation<TypeAst<'input>>>),
+    Generalize(Vec<WithLocation<TypeAst<'input>>>),
+    Specialize(Vec<WithLocation<TypeAst<'input>>>),
     Invoke {
-        func: Box<TypeAst<'input>>,
-        arg: Box<TypeAst<'input>>,
-        continuation: Box<TypeAst<'input>>,
+        func: Box<WithLocation<TypeAst<'input>>>,
+        arg: Box<WithLocation<TypeAst<'input>>>,
+        continuation: Box<WithLocation<TypeAst<'input>>>,
     },
     Expression {
-        binding_patterns: Vec<TypeAst<'input>>,
-        binding_types: Vec<TypeAst<'input>>,
-        body: Box<TypeAst<'input>>,
+        binding_patterns: Vec<WithLocation<TypeAst<'input>>>,
+        binding_types: Vec<WithLocation<TypeAst<'input>>>,
+        body: Box<WithLocation<TypeAst<'input>>>,
     },
     Match {
-        value: Box<TypeAst<'input>>,
-        match_branch: Vec<(TypeAst<'input>, TypeAst<'input>)>,
-        else_branch: Option<Box<TypeAst<'input>>>,
+        value: Box<WithLocation<TypeAst<'input>>>,
+        match_branch: Vec<(WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>)>,
+        else_branch: Option<Box<WithLocation<TypeAst<'input>>>>,
     },
     Closure {
-        pattern: Box<TypeAst<'input>>,
-        body: Box<TypeAst<'input>>,
-        fail_branch: Option<Box<TypeAst<'input>>>,
+        pattern: Box<WithLocation<TypeAst<'input>>>,
+        body: Box<WithLocation<TypeAst<'input>>>,
+        fail_branch: Option<Box<WithLocation<TypeAst<'input>>>>,
     },
     Apply {
-        func: Box<TypeAst<'input>>,
-        arg: Box<TypeAst<'input>>,
+        func: Box<WithLocation<TypeAst<'input>>>,
+        arg: Box<WithLocation<TypeAst<'input>>>,
     },
     Eq {
-        left: Box<TypeAst<'input>>,
-        right: Box<TypeAst<'input>>,
+        left: Box<WithLocation<TypeAst<'input>>>,
+        right: Box<WithLocation<TypeAst<'input>>>,
     },
     Neq {
-        left: Box<TypeAst<'input>>,
-        right: Box<TypeAst<'input>>,
+        left: Box<WithLocation<TypeAst<'input>>>,
+        right: Box<WithLocation<TypeAst<'input>>>,
     },
     Not {
-        value: Box<TypeAst<'input>>,
+        value: Box<WithLocation<TypeAst<'input>>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
         param_name: String,
-        expr: Box<TypeAst<'input>>,
+        expr: Box<WithLocation<TypeAst<'input>>>,
     },
     Namespace {
         tag: String,
-        expr: Box<TypeAst<'input>>,
+        expr: Box<WithLocation<TypeAst<'input>>>,
     },
     Pattern {
         name: String,
-        expr: Box<TypeAst<'input>>,
+        expr: Box<WithLocation<TypeAst<'input>>>,
     },
-    Literal(Box<TypeAst<'input>>),
+    Literal(Box<WithLocation<TypeAst<'input>>>),
 }
 
 #[derive(Debug, Clone)]
@@ -115,38 +117,38 @@ pub enum BasicTypeAst {
     IntLiteral(isize),
     CharLiteral(char),
     Variable(Option<String>), // None 表示续体
-    Tuple(Vec<BasicTypeAst>),
-    List(Vec<BasicTypeAst>),
-    Generalize(Vec<BasicTypeAst>),
-    Specialize(Vec<BasicTypeAst>),
+    Tuple(Vec<WithLocation<BasicTypeAst>>),
+    List(Vec<WithLocation<BasicTypeAst>>),
+    Generalize(Vec<WithLocation<BasicTypeAst>>),
+    Specialize(Vec<WithLocation<BasicTypeAst>>),
     Invoke {
-        func: Box<BasicTypeAst>,
-        arg: Box<BasicTypeAst>,
-        continuation: Box<BasicTypeAst>,
+        func: Box<WithLocation<BasicTypeAst>>,
+        arg: Box<WithLocation<BasicTypeAst>>,
+        continuation: Box<WithLocation<BasicTypeAst>>,
     },
     Closure {
-        pattern: Box<BasicTypeAst>,
-        body: Box<BasicTypeAst>,
-        fail_branch: Option<Box<BasicTypeAst>>,
+        pattern: Box<WithLocation<BasicTypeAst>>,
+        body: Box<WithLocation<BasicTypeAst>>,
+        fail_branch: Option<Box<WithLocation<BasicTypeAst>>>,
     },
     Apply {
-        func: Box<BasicTypeAst>,
-        arg: Box<BasicTypeAst>,
+        func: Box<WithLocation<BasicTypeAst>>,
+        arg: Box<WithLocation<BasicTypeAst>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
         param_name: String,
-        expr: Box<BasicTypeAst>,
+        expr: Box<WithLocation<BasicTypeAst>>,
     },
     Namespace {
         tag: String,
-        expr: Box<BasicTypeAst>,
+        expr: Box<WithLocation<BasicTypeAst>>,
     },
     Pattern {
         name: String,
-        expr: Box<BasicTypeAst>,
+        expr: Box<WithLocation<BasicTypeAst>>,
     },
-    Literal(Box<BasicTypeAst>),
+    Literal(Box<WithLocation<BasicTypeAst>>),
 }
 
 pub struct LinearizeContext {
@@ -174,12 +176,16 @@ impl LinearizeContext {
 
 #[derive(Debug)]
 pub struct LinearizeResult {
-    bindings: Vec<(LinearTypeAst, LinearTypeAst, String)>, // (func, arg, tmpvar_name)
-    tail_type: LinearTypeAst,
+    bindings: Vec<(
+        WithLocation<LinearTypeAst>,
+        WithLocation<LinearTypeAst>,
+        String,
+    )>, // (func, arg, tmpvar_name)
+    tail_type: WithLocation<LinearTypeAst>,
 }
 
 impl LinearizeResult {
-    pub fn new_simple(ty: LinearTypeAst) -> Self {
+    pub fn new_simple(ty: WithLocation<LinearTypeAst>) -> Self {
         Self {
             bindings: Vec::new(),
             tail_type: ty,
@@ -187,8 +193,12 @@ impl LinearizeResult {
     }
 
     pub fn new_with_binding(
-        bindings: Vec<(LinearTypeAst, LinearTypeAst, String)>,
-        ty: LinearTypeAst,
+        bindings: Vec<(
+            WithLocation<LinearTypeAst>,
+            WithLocation<LinearTypeAst>,
+            String,
+        )>,
+        ty: WithLocation<LinearTypeAst>,
     ) -> Self {
         Self {
             bindings,
@@ -210,32 +220,38 @@ impl LinearizeResult {
         }
     }
 
-    pub fn bindings(&self) -> &Vec<(LinearTypeAst, LinearTypeAst, String)> {
+    pub fn bindings(
+        &self,
+    ) -> &Vec<(
+        WithLocation<LinearTypeAst>,
+        WithLocation<LinearTypeAst>,
+        String,
+    )> {
         &self.bindings
     }
 
-    pub fn tail_type(&self) -> &LinearTypeAst {
+    pub fn tail_type(&self) -> &WithLocation<LinearTypeAst> {
         &self.tail_type
     }
 
-    pub fn finalize(self) -> LinearTypeAst {
+    pub fn finalize(self) -> WithLocation<LinearTypeAst> {
         let mut ty = self.tail_type;
         for (f, a, tmpvar) in self.bindings.into_iter().rev() {
-            ty = LinearTypeAst::Invoke {
+            ty = WithLocation::from(LinearTypeAst::Invoke {
                 func: Box::new(f),
                 arg: Box::new(a),
-                continuation: LinearTypeAst::Closure {
-                    pattern: LinearTypeAst::Pattern {
+                continuation: WithLocation::from(LinearTypeAst::Closure {
+                    pattern: WithLocation::from(LinearTypeAst::Pattern {
                         name: tmpvar,
-                        expr: Box::new(LinearTypeAst::Top),
-                    }
+                        expr: Box::new(WithLocation::from(LinearTypeAst::Top)),
+                    })
                     .into(),
-                    auto_captures: HashSet::new(),
+                    auto_captures: HashMap::new(),
                     body: Box::new(ty),
                     fail_branch: None,
-                }
+                })
                 .into(),
-            }
+            })
         }
         ty
     }
@@ -243,21 +259,39 @@ impl LinearizeResult {
 
 impl BasicTypeAst {
     #[stacksafe::stacksafe]
-    pub fn linearize(self, ctx: &mut LinearizeContext) -> LinearizeResult {
+    pub fn linearize(
+        &self,
+        ctx: &mut LinearizeContext,
+        loc: Option<&SourceLocation>,
+    ) -> LinearizeResult {
         match self {
-            BasicTypeAst::Int => LinearizeResult::new_simple(LinearTypeAst::Int),
-            BasicTypeAst::Char => LinearizeResult::new_simple(LinearTypeAst::Char),
-            BasicTypeAst::Top => LinearizeResult::new_simple(LinearTypeAst::Top),
-            BasicTypeAst::Bottom => LinearizeResult::new_simple(LinearTypeAst::Bottom),
+            BasicTypeAst::Int => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Int, loc))
+            }
+            BasicTypeAst::Char => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Char, loc))
+            }
+            BasicTypeAst::Top => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Top, loc))
+            }
+            BasicTypeAst::Bottom => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Bottom, loc))
+            }
             BasicTypeAst::IntLiteral(v) => {
-                LinearizeResult::new_simple(LinearTypeAst::IntLiteral(v))
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::IntLiteral(*v), loc))
             }
             BasicTypeAst::CharLiteral(v) => {
-                LinearizeResult::new_simple(LinearTypeAst::CharLiteral(v))
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::CharLiteral(*v), loc))
             }
-            BasicTypeAst::Variable(v) => LinearizeResult::new_simple(LinearTypeAst::Variable(v)),
+            BasicTypeAst::Variable(v) => LinearizeResult::new_simple(WithLocation::new(
+                LinearTypeAst::Variable(v.clone()),
+                loc,
+            )),
             BasicTypeAst::Tuple(v) => {
-                let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
+                let elements = v
+                    .into_iter()
+                    .map(|e| e.linearize(ctx, e.location()))
+                    .collect::<Vec<_>>();
                 let ty =
                     LinearTypeAst::Tuple(elements.iter().map(|e| e.tail_type().clone()).collect());
 
@@ -266,11 +300,14 @@ impl BasicTypeAst {
                         .into_iter()
                         .flat_map(|e| e.bindings.into_iter())
                         .collect(),
-                    ty,
+                    WithLocation::new(ty, loc),
                 )
             }
             BasicTypeAst::List(v) => {
-                let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
+                let elements = v
+                    .into_iter()
+                    .map(|e| e.linearize(ctx, e.location()))
+                    .collect::<Vec<_>>();
                 let ty =
                     LinearTypeAst::List(elements.iter().map(|e| e.tail_type().clone()).collect());
                 LinearizeResult::new_with_binding(
@@ -278,11 +315,14 @@ impl BasicTypeAst {
                         .into_iter()
                         .flat_map(|e| e.bindings.into_iter())
                         .collect(),
-                    ty,
+                    WithLocation::new(ty, loc),
                 )
             }
             BasicTypeAst::Generalize(v) => {
-                let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
+                let elements = v
+                    .into_iter()
+                    .map(|e| e.linearize(ctx, e.location()))
+                    .collect::<Vec<_>>();
                 let ty = LinearTypeAst::Generalize(
                     elements.iter().map(|e| e.tail_type().clone()).collect(),
                 );
@@ -291,11 +331,14 @@ impl BasicTypeAst {
                         .into_iter()
                         .flat_map(|e| e.bindings.into_iter())
                         .collect(),
-                    ty,
+                    WithLocation::new(ty, loc),
                 )
             }
             BasicTypeAst::Specialize(v) => {
-                let elements = v.into_iter().map(|e| e.linearize(ctx)).collect::<Vec<_>>();
+                let elements = v
+                    .into_iter()
+                    .map(|e| e.linearize(ctx, e.location()))
+                    .collect::<Vec<_>>();
                 let ty = LinearTypeAst::Specialize(
                     elements.iter().map(|e| e.tail_type().clone()).collect(),
                 );
@@ -304,7 +347,7 @@ impl BasicTypeAst {
                         .into_iter()
                         .flat_map(|e| e.bindings.into_iter())
                         .collect(),
-                    ty,
+                    WithLocation::new(ty, loc),
                 )
             }
             BasicTypeAst::Invoke {
@@ -312,9 +355,9 @@ impl BasicTypeAst {
                 arg,
                 continuation,
             } => {
-                let func = func.linearize(ctx);
-                let arg = arg.linearize(ctx);
-                let continuation = continuation.linearize(ctx);
+                let func = func.linearize(ctx, func.location());
+                let arg = arg.linearize(ctx, arg.location());
+                let continuation = continuation.linearize(ctx, continuation.location());
                 let ty = LinearTypeAst::Invoke {
                     func: func.tail_type().clone().into(),
                     arg: arg.tail_type().clone().into(),
@@ -323,59 +366,64 @@ impl BasicTypeAst {
                 let mut bindings = func.bindings;
                 bindings.extend(arg.bindings);
                 bindings.extend(continuation.bindings);
-                LinearizeResult::new_with_binding(bindings, ty)
+                LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Closure {
                 pattern,
                 body,
                 fail_branch,
             } => {
-                let fail_branch = fail_branch.map(|b| b.linearize(ctx).finalize().into());
+                let fail_branch = fail_branch
+                    .as_ref()
+                    .map(|b| b.linearize(ctx, b.location()).finalize().into());
                 let ty = LinearTypeAst::Closure {
-                    pattern: Box::new(pattern.linearize(ctx).finalize()), // pattern 直接完整线性化
-                    auto_captures: HashSet::new(),
-                    body: Box::new(body.linearize(ctx).finalize()),
+                    pattern: Box::new(pattern.linearize(ctx, pattern.location()).finalize()), // pattern 直接完整线性化
+                    auto_captures: HashMap::new(),
+                    body: Box::new(body.linearize(ctx, body.location()).finalize()),
                     fail_branch,
                 };
-                LinearizeResult::new_simple(ty)
+                LinearizeResult::new_simple(WithLocation::new(ty, loc))
             }
             BasicTypeAst::Apply { func, arg } => {
-                let func = func.linearize(ctx);
-                let arg = arg.linearize(ctx);
+                let func = func.linearize(ctx, func.location());
+                let arg = arg.linearize(ctx, arg.location());
                 let allocated_tmpvar_name = ctx.allocate_tmpvar_name();
                 LinearizeResult::new_apply(func, arg, allocated_tmpvar_name)
             }
-            BasicTypeAst::AtomicOpcode(atomic_opcode) => {
-                LinearizeResult::new_simple(LinearTypeAst::AtomicOpcode(atomic_opcode))
-            }
+            BasicTypeAst::AtomicOpcode(atomic_opcode) => LinearizeResult::new_simple(
+                WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc),
+            ),
             BasicTypeAst::FixPoint { param_name, expr } => {
-                let expr = expr.linearize(ctx);
+                let expr = expr.linearize(ctx, expr.location());
                 let ty = LinearTypeAst::FixPoint {
-                    param_name,
+                    param_name: param_name.clone(),
                     expr: Box::new(expr.tail_type().clone()),
                 };
-                LinearizeResult::new_with_binding(expr.bindings, ty)
+                LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Namespace { tag, expr } => {
-                let expr = expr.linearize(ctx);
+                let expr = expr.linearize(ctx, expr.location());
                 let ty = LinearTypeAst::Namespace {
-                    tag,
+                    tag: tag.clone(),
                     expr: Box::new(expr.tail_type().clone()),
                 };
-                LinearizeResult::new_with_binding(expr.bindings, ty)
+                LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Pattern { name, expr } => {
-                let expr = expr.linearize(ctx);
+                let expr = expr.linearize(ctx, expr.location());
                 let ty = LinearTypeAst::Pattern {
-                    name,
+                    name: name.clone(),
                     expr: Box::new(expr.tail_type().clone()),
                 };
-                LinearizeResult::new_with_binding(expr.bindings, ty)
+                LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Literal(inner) => {
                 // 我们直接认为字面量类型的内部类型已经是线性化的
-                let inner = inner.linearize(ctx).finalize();
-                LinearizeResult::new_simple(LinearTypeAst::Literal(Box::new(inner)))
+                let inner = inner.linearize(ctx, inner.location()).finalize();
+                LinearizeResult::new_simple(WithLocation::new(
+                    LinearTypeAst::Literal(Box::new(inner)),
+                    loc,
+                ))
             }
         }
     }
@@ -390,41 +438,41 @@ pub enum LinearTypeAst {
     IntLiteral(isize),
     CharLiteral(char),
     Variable(Option<String>), // None 表示续体
-    Tuple(Vec<LinearTypeAst>),
-    List(Vec<LinearTypeAst>),
-    Generalize(Vec<LinearTypeAst>),
-    Specialize(Vec<LinearTypeAst>),
+    Tuple(Vec<WithLocation<LinearTypeAst>>),
+    List(Vec<WithLocation<LinearTypeAst>>),
+    Generalize(Vec<WithLocation<LinearTypeAst>>),
+    Specialize(Vec<WithLocation<LinearTypeAst>>),
     Closure {
-        pattern: Box<LinearTypeAst>,
-        auto_captures: HashSet<String>,
-        body: Box<LinearTypeAst>,
-        fail_branch: Option<Box<LinearTypeAst>>,
+        pattern: Box<WithLocation<LinearTypeAst>>,
+        auto_captures: HashMap<String, WithLocation<()>>,
+        body: Box<WithLocation<LinearTypeAst>>,
+        fail_branch: Option<Box<WithLocation<LinearTypeAst>>>,
     },
     Invoke {
-        func: Box<LinearTypeAst>,
-        arg: Box<LinearTypeAst>,
-        continuation: Box<LinearTypeAst>,
+        func: Box<WithLocation<LinearTypeAst>>,
+        arg: Box<WithLocation<LinearTypeAst>>,
+        continuation: Box<WithLocation<LinearTypeAst>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
         param_name: String,
-        expr: Box<LinearTypeAst>,
+        expr: Box<WithLocation<LinearTypeAst>>,
     },
     Namespace {
         tag: String,
-        expr: Box<LinearTypeAst>,
+        expr: Box<WithLocation<LinearTypeAst>>,
     },
     Pattern {
         name: String,
-        expr: Box<LinearTypeAst>,
+        expr: Box<WithLocation<LinearTypeAst>>,
     },
-    Literal(Box<LinearTypeAst>),
+    Literal(Box<WithLocation<LinearTypeAst>>),
 }
 
 impl<'input> TypeAst<'input> {
     // 把高级抽象语法转换为基础抽象语法
     #[stacksafe::stacksafe]
-    pub fn into_basic(self) -> BasicTypeAst {
+    pub fn into_basic(&self, loc: Option<&SourceLocation>) -> WithLocation<BasicTypeAst> {
         match self {
             TypeAst::ParseError(span) => {
                 panic!(
@@ -432,55 +480,88 @@ impl<'input> TypeAst<'input> {
                     span
                 )
             }
-            TypeAst::Int => BasicTypeAst::Int,
-            TypeAst::Char => BasicTypeAst::Char,
-            TypeAst::Top => BasicTypeAst::Top,
-            TypeAst::Bottom => BasicTypeAst::Bottom,
-            TypeAst::DiscardPattern => BasicTypeAst::Tuple(vec![]), // discard 只允许丢弃unit
-            TypeAst::IntLiteral(v) => BasicTypeAst::IntLiteral(v),
-            TypeAst::CharLiteral(v) => BasicTypeAst::CharLiteral(v),
-            TypeAst::Variable(name) => BasicTypeAst::Variable(name),
-            TypeAst::Tuple(elements) => {
-                BasicTypeAst::Tuple(elements.into_iter().map(|e| e.into_basic()).collect())
-            }
-            TypeAst::List(elements) => {
-                BasicTypeAst::List(elements.into_iter().map(|e| e.into_basic()).collect())
-            }
-            TypeAst::Generalize(elements) => {
-                BasicTypeAst::Generalize(elements.into_iter().map(|e| e.into_basic()).collect())
-            }
-            TypeAst::Specialize(elements) => {
-                BasicTypeAst::Specialize(elements.into_iter().map(|e| e.into_basic()).collect())
-            }
+            TypeAst::Int => WithLocation::new(BasicTypeAst::Int, loc),
+            TypeAst::Char => WithLocation::new(BasicTypeAst::Char, loc),
+            TypeAst::Top => WithLocation::new(BasicTypeAst::Top, loc),
+            TypeAst::Bottom => WithLocation::new(BasicTypeAst::Bottom, loc),
+            TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // discard 只允许丢弃unit
+            TypeAst::IntLiteral(v) => WithLocation::new(BasicTypeAst::IntLiteral(*v), loc),
+            TypeAst::CharLiteral(v) => WithLocation::new(BasicTypeAst::CharLiteral(*v), loc),
+            TypeAst::Variable(name) => WithLocation::new(BasicTypeAst::Variable(name.clone()), loc),
+            TypeAst::Tuple(elements) => WithLocation::new(
+                BasicTypeAst::Tuple(
+                    elements
+                        .into_iter()
+                        .map(|e| e.into_basic(e.location()))
+                        .collect(),
+                ),
+                loc,
+            ),
+            TypeAst::List(elements) => WithLocation::new(
+                BasicTypeAst::List(
+                    elements
+                        .into_iter()
+                        .map(|e| e.into_basic(e.location()))
+                        .collect(),
+                ),
+                loc,
+            ),
+            TypeAst::Generalize(elements) => WithLocation::new(
+                BasicTypeAst::Generalize(
+                    elements
+                        .into_iter()
+                        .map(|e| e.into_basic(e.location()))
+                        .collect(),
+                ),
+                loc,
+            ),
+            TypeAst::Specialize(elements) => WithLocation::new(
+                BasicTypeAst::Specialize(
+                    elements
+                        .into_iter()
+                        .map(|e| e.into_basic(e.location()))
+                        .collect(),
+                ),
+                loc,
+            ),
             TypeAst::Invoke {
                 func,
                 arg,
                 continuation,
-            } => BasicTypeAst::Invoke {
-                func: Box::new(func.into_basic()),
-                arg: Box::new(arg.into_basic()),
-                continuation: Box::new(continuation.into_basic()),
-            },
+            } => WithLocation::new(
+                BasicTypeAst::Invoke {
+                    func: Box::new(func.into_basic(func.location())),
+                    arg: Box::new(arg.into_basic(arg.location())),
+                    continuation: Box::new(continuation.into_basic(continuation.location())),
+                },
+                loc,
+            ),
             TypeAst::Expression {
                 binding_patterns,
                 binding_types,
                 body,
             } => {
                 // 转换为嵌套的闭包和应用
-                let mut expr = body.into_basic();
+                let mut expr = body.into_basic(body.location());
                 for (pat, ty) in binding_patterns
                     .into_iter()
                     .rev()
                     .zip(binding_types.into_iter().rev())
                 {
-                    expr = BasicTypeAst::Apply {
-                        func: Box::new(BasicTypeAst::Closure {
-                            pattern: Box::new(pat.into_basic()),
-                            body: Box::new(expr),
-                            fail_branch: None,
-                        }),
-                        arg: Box::new(ty.into_basic()),
-                    };
+                    expr = WithLocation::new(
+                        BasicTypeAst::Apply {
+                            func: Box::new(WithLocation::new(
+                                BasicTypeAst::Closure {
+                                    pattern: Box::new(pat.into_basic(pat.location())),
+                                    body: Box::new(expr),
+                                    fail_branch: None,
+                                },
+                                pat.location(),
+                            )),
+                            arg: Box::new(ty.into_basic(ty.location())),
+                        },
+                        ty.location(),
+                    ); // 应用的位置信息不重要
                 }
                 expr
             }
@@ -489,116 +570,240 @@ impl<'input> TypeAst<'input> {
                 match_branch,
                 else_branch,
             } => {
-                let value = value.into_basic();
+                let value = value.into_basic(value.location());
                 let mut branches = Vec::new();
                 for (pat, expr) in match_branch {
-                    branches.push((pat.into_basic(), expr.into_basic()));
+                    branches.push((
+                        pat.into_basic(pat.location()),
+                        expr.into_basic(expr.location()),
+                    ));
                 }
-                let else_branch = else_branch.map(|b| Box::new(b.into_basic()));
+                let else_branch = else_branch
+                    .as_ref()
+                    .map(|b| Box::new(b.into_basic(b.location())));
                 // 把match转换为一系列的Apply和Closure
                 let mut expr = else_branch;
                 for (pat, branch_expr) in branches.into_iter().rev() {
-                    expr = Some(Box::new(BasicTypeAst::Apply {
-                        func: Box::new(BasicTypeAst::Closure {
-                            pattern: Box::new(pat),
-                            body: branch_expr.into(),
-                            fail_branch: expr,
-                        }),
-                        arg: Box::new(BasicTypeAst::Variable(Some("match#value".to_string()))),
-                    }));
+                    expr = Some(Box::new(WithLocation::new(
+                        BasicTypeAst::Apply {
+                            func: Box::new(WithLocation::new(
+                                BasicTypeAst::Closure {
+                                    pattern: Box::new(pat),
+                                    body: branch_expr.into(),
+                                    fail_branch: expr,
+                                },
+                                loc,
+                            )),
+                            arg: Box::new(WithLocation::new(
+                                BasicTypeAst::Variable(Some("match#value".to_string())),
+                                loc,
+                            )),
+                        },
+                        loc,
+                    )));
                 }
-                BasicTypeAst::Apply {
-                    func: Box::new(BasicTypeAst::Closure {
-                        pattern: Box::new(BasicTypeAst::Pattern {
-                            name: "match#value".to_string(),
-                            expr: Box::new(BasicTypeAst::Top),
-                        }),
-                        body: expr.expect("There should be at least one branch").into(),
-                        fail_branch: None,
-                    }),
-                    arg: Box::new(value),
-                }
+                WithLocation::new(
+                    BasicTypeAst::Apply {
+                        func: Box::new(WithLocation::new(
+                            BasicTypeAst::Closure {
+                                pattern: Box::new(WithLocation::new(
+                                    BasicTypeAst::Pattern {
+                                        name: "match#value".to_string(),
+                                        expr: Box::new(WithLocation::new(BasicTypeAst::Top, loc)),
+                                    },
+                                    loc,
+                                )),
+                                body: expr.expect("There should be at least one branch").into(),
+                                fail_branch: None,
+                            },
+                            loc,
+                        )),
+                        arg: Box::new(value),
+                    },
+                    loc,
+                )
             }
             TypeAst::Closure {
                 pattern,
                 body,
                 fail_branch,
-            } => BasicTypeAst::Closure {
-                pattern: Box::new(pattern.into_basic()),
-                body: Box::new(body.into_basic()),
-                fail_branch: fail_branch.map(|b| Box::new(b.into_basic())),
-            },
-            TypeAst::Apply { func, arg } => BasicTypeAst::Apply {
-                func: Box::new(func.into_basic()),
-                arg: Box::new(arg.into_basic()),
-            },
-            TypeAst::Eq { left, right } => BasicTypeAst::Apply {
-                func: BasicTypeAst::Closure {
-                    pattern: BasicTypeAst::Tuple(vec![
-                        BasicTypeAst::Pattern {
-                            name: "eq#left".to_string(),
-                            expr: Box::new(BasicTypeAst::Top),
+            } => WithLocation::new(
+                BasicTypeAst::Closure {
+                    pattern: Box::new(pattern.into_basic(pattern.location())),
+                    body: Box::new(body.into_basic(body.location())),
+                    fail_branch: fail_branch
+                        .as_ref()
+                        .map(|b| Box::new(b.into_basic(b.location()))),
+                },
+                loc,
+            ),
+            TypeAst::Apply { func, arg } => WithLocation::new(
+                BasicTypeAst::Apply {
+                    func: Box::new(func.into_basic(func.location())),
+                    arg: Box::new(arg.into_basic(arg.location())),
+                },
+                loc,
+            ),
+            TypeAst::Eq { left, right } => WithLocation::new(
+                BasicTypeAst::Apply {
+                    func: Box::new(WithLocation::new(
+                        BasicTypeAst::Closure {
+                            pattern: Box::new(WithLocation::new(
+                                BasicTypeAst::Tuple(vec![
+                                    WithLocation::new(
+                                        BasicTypeAst::Pattern {
+                                            name: "eq#left".to_string(),
+                                            expr: Box::new(WithLocation::new(
+                                                BasicTypeAst::Top,
+                                                loc,
+                                            )),
+                                        },
+                                        loc,
+                                    ),
+                                    WithLocation::new(
+                                        BasicTypeAst::Pattern {
+                                            name: "eq#right".to_string(),
+                                            expr: Box::new(WithLocation::new(
+                                                BasicTypeAst::Top,
+                                                loc,
+                                            )),
+                                        },
+                                        loc,
+                                    ),
+                                ]),
+                                loc,
+                            )),
+                            body: Box::new(WithLocation::new(
+                                BasicTypeAst::Specialize(vec![
+                                    WithLocation::new(
+                                        BasicTypeAst::Apply {
+                                            func: Box::new(WithLocation::new(
+                                                BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
+                                                loc,
+                                            )),
+                                            arg: Box::new(WithLocation::new(
+                                                BasicTypeAst::Tuple(vec![
+                                                    WithLocation::new(
+                                                        BasicTypeAst::Variable(Some(
+                                                            "eq#left".to_string(),
+                                                        )),
+                                                        loc,
+                                                    ),
+                                                    WithLocation::new(
+                                                        BasicTypeAst::Variable(Some(
+                                                            "eq#right".to_string(),
+                                                        )),
+                                                        loc,
+                                                    ),
+                                                ]),
+                                                loc,
+                                            )),
+                                        },
+                                        loc,
+                                    ),
+                                    WithLocation::new(
+                                        BasicTypeAst::Apply {
+                                            func: Box::new(WithLocation::new(
+                                                BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
+                                                loc,
+                                            )),
+                                            arg: Box::new(WithLocation::new(
+                                                BasicTypeAst::Tuple(vec![
+                                                    WithLocation::new(
+                                                        BasicTypeAst::Variable(Some(
+                                                            "eq#right".to_string(),
+                                                        )),
+                                                        loc,
+                                                    ),
+                                                    WithLocation::new(
+                                                        BasicTypeAst::Variable(Some(
+                                                            "eq#left".to_string(),
+                                                        )),
+                                                        loc,
+                                                    ),
+                                                ]),
+                                                loc,
+                                            )),
+                                        },
+                                        loc,
+                                    ),
+                                ]),
+                                loc,
+                            )),
+                            fail_branch: None,
                         },
-                        BasicTypeAst::Pattern {
-                            name: "eq#right".to_string(),
-                            expr: Box::new(BasicTypeAst::Top),
-                        },
-                    ])
-                    .into(),
-                    body: Box::new(BasicTypeAst::Specialize(vec![
-                        BasicTypeAst::Apply {
-                            func: Box::new(BasicTypeAst::AtomicOpcode(AtomicOpcode::Is)),
-                            arg: Box::new(BasicTypeAst::Tuple(vec![
-                                BasicTypeAst::Variable(Some("eq#left".to_string())),
-                                BasicTypeAst::Variable(Some("eq#right".to_string())),
-                            ])),
-                        }
-                        .into(),
-                        BasicTypeAst::Apply {
-                            func: Box::new(BasicTypeAst::AtomicOpcode(AtomicOpcode::Is)),
-                            arg: Box::new(BasicTypeAst::Tuple(vec![
-                                BasicTypeAst::Variable(Some("eq#right".to_string())),
-                                BasicTypeAst::Variable(Some("eq#left".to_string())),
-                            ])),
-                        }
-                        .into(),
-                    ]))
-                    .into(),
-                    fail_branch: None,
-                }
-                .into(),
-                arg: BasicTypeAst::Tuple(vec![left.into_basic(), right.into_basic()]).into(),
-            },
+                        loc,
+                    )),
+                    arg: Box::new(WithLocation::new(
+                        BasicTypeAst::Tuple(vec![
+                            left.into_basic(left.location()),
+                            right.into_basic(right.location()),
+                        ]),
+                        loc,
+                    )),
+                },
+                loc,
+            ),
             TypeAst::Neq { left, right } => {
                 // a != b  ===  !(a == b)
-                TypeAst::Not {
-                    value: TypeAst::Eq { left, right }.into(),
-                }
-                .into_basic()
+                WithLocation::new(
+                    TypeAst::Not {
+                        value: WithLocation::new(
+                            TypeAst::Eq {
+                                left: left.clone(),
+                                right: right.clone(),
+                            },
+                            loc,
+                        )
+                        .into(),
+                    },
+                    loc,
+                )
+                .into_basic(loc)
             }
-            TypeAst::Not { value } => BasicTypeAst::Apply {
-                func: BasicTypeAst::Closure {
-                    pattern: BasicTypeAst::Bottom.into(),
-                    body: BasicTypeAst::Top.into(),
-                    fail_branch: Some(BasicTypeAst::Bottom.into()),
-                }
-                .into(),
-                arg: value.into_basic().into(),
-            },
-            TypeAst::AtomicOpcode(binary_op) => BasicTypeAst::AtomicOpcode(binary_op),
-            TypeAst::FixPoint { param_name, expr } => BasicTypeAst::FixPoint {
-                param_name,
-                expr: Box::new(expr.into_basic()),
-            },
-            TypeAst::Namespace { tag, expr } => BasicTypeAst::Namespace {
-                tag,
-                expr: Box::new(expr.into_basic()),
-            },
-            TypeAst::Pattern { name, expr } => BasicTypeAst::Pattern {
-                name,
-                expr: Box::new(expr.into_basic()),
-            },
-            TypeAst::Literal(inner) => BasicTypeAst::Literal(Box::new(inner.into_basic())),
+            TypeAst::Not { value } => WithLocation::new(
+                BasicTypeAst::Apply {
+                    func: WithLocation::new(
+                        BasicTypeAst::Closure {
+                            pattern: WithLocation::new(BasicTypeAst::Bottom, loc).into(),
+                            body: WithLocation::new(BasicTypeAst::Top, loc).into(),
+                            fail_branch: Some(WithLocation::new(BasicTypeAst::Bottom, loc).into()),
+                        },
+                        loc,
+                    )
+                    .into(),
+                    arg: value.into_basic(value.location()).into(),
+                },
+                loc,
+            ),
+            TypeAst::AtomicOpcode(binary_op) => {
+                WithLocation::new(BasicTypeAst::AtomicOpcode(binary_op.clone()), loc)
+            }
+            TypeAst::FixPoint { param_name, expr } => WithLocation::new(
+                BasicTypeAst::FixPoint {
+                    param_name: param_name.clone(),
+                    expr: Box::new(expr.into_basic(expr.location())),
+                },
+                loc,
+            ),
+            TypeAst::Namespace { tag, expr } => WithLocation::new(
+                BasicTypeAst::Namespace {
+                    tag: tag.clone(),
+                    expr: Box::new(expr.into_basic(expr.location())),
+                },
+                loc,
+            ),
+            TypeAst::Pattern { name, expr } => WithLocation::new(
+                BasicTypeAst::Pattern {
+                    name: name.clone(),
+                    expr: Box::new(expr.into_basic(expr.location())),
+                },
+                loc,
+            ),
+            TypeAst::Literal(inner) => WithLocation::new(
+                BasicTypeAst::Literal(Box::new(inner.into_basic(inner.location()))),
+                loc,
+            ),
         }
     }
 
@@ -702,12 +907,11 @@ impl<'input> TypeAst<'input> {
 }
 
 pub struct PatternEnv {
-    declared: HashSet<String>, // 已声明的模式变量
+    declared: HashMap<String, WithLocation<()>>, // 已声明的模式变量
 }
 
 impl Deref for PatternEnv {
-    type Target = HashSet<String>;
-
+    type Target = HashMap<String, WithLocation<()>>;
     fn deref(&self) -> &Self::Target {
         &self.declared
     }
@@ -716,24 +920,28 @@ impl Deref for PatternEnv {
 impl PatternEnv {
     pub fn new() -> Self {
         PatternEnv {
-            declared: HashSet::new(),
+            declared: HashMap::new(),
         }
     }
 
-    pub fn extend(&mut self, names: impl IntoIterator<Item = String>) -> Result<(), String> {
+    pub fn extend(
+        &mut self,
+        names: impl IntoIterator<Item = WithLocation<String>>,
+    ) -> Result<(), WithLocation<String>> {
         for name in names {
-            if self.declared.contains(&name) {
-                return Err(name);
+            if self.declared.contains_key(name.value()) {
+                return Err(name.clone());
             }
-            self.declared.insert(name);
+            self.declared
+                .insert(name.value().clone(), WithLocation::new((), name.location()));
         }
         Ok(())
     }
 }
 
 impl IntoIterator for PatternEnv {
-    type Item = String;
-    type IntoIter = std::collections::hash_set::IntoIter<String>;
+    type Item = (String, WithLocation<()>);
+    type IntoIter = std::collections::hash_map::IntoIter<String, WithLocation<()>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.declared.into_iter()
@@ -741,21 +949,25 @@ impl IntoIterator for PatternEnv {
 }
 
 pub struct FlowResult {
-    ty: LinearTypeAst,         // flow后的类型
-    captures: HashSet<String>, // 该类型所捕获的自由变量
-    patterns: PatternEnv,      // 该类型中出现的所有模式变量
+    ty: WithLocation<LinearTypeAst>,             // flow后的类型
+    captures: HashMap<String, WithLocation<()>>, // 该类型所捕获的自由变量
+    patterns: PatternEnv,                        // 该类型中出现的所有模式变量
 }
 
 impl FlowResult {
-    pub fn simple(ty: LinearTypeAst) -> Self {
+    pub fn simple(ty: WithLocation<LinearTypeAst>) -> Self {
         FlowResult {
             ty,
-            captures: HashSet::new(),
+            captures: HashMap::new(),
             patterns: PatternEnv::new(),
         }
     }
 
-    pub fn complex(ty: LinearTypeAst, captures: HashSet<String>, patterns: PatternEnv) -> Self {
+    pub fn complex(
+        ty: WithLocation<LinearTypeAst>,
+        captures: HashMap<String, WithLocation<()>>,
+        patterns: PatternEnv,
+    ) -> Self {
         FlowResult {
             ty,
             captures,
@@ -763,11 +975,11 @@ impl FlowResult {
         }
     }
 
-    pub fn ty(&self) -> &LinearTypeAst {
+    pub fn ty(&self) -> &WithLocation<LinearTypeAst> {
         &self.ty
     }
 
-    pub fn captures(&self) -> &HashSet<String> {
+    pub fn captures(&self) -> &HashMap<String, WithLocation<()>> {
         &self.captures
     }
 
@@ -782,104 +994,171 @@ impl LinearTypeAst {
         &self,
         ctx: &mut ParseContext,
         pattern_mode: bool,
+        loc: Option<&SourceLocation>,
     ) -> Result<FlowResult, ParseError> {
         match self {
-            LinearTypeAst::Int => Ok(FlowResult::simple(LinearTypeAst::Int)),
-            LinearTypeAst::Char => Ok(FlowResult::simple(LinearTypeAst::Char)),
-            LinearTypeAst::Top => Ok(FlowResult::simple(LinearTypeAst::Top)),
-            LinearTypeAst::Bottom => Ok(FlowResult::simple(LinearTypeAst::Bottom)),
-            LinearTypeAst::IntLiteral(v) => Ok(FlowResult::simple(LinearTypeAst::IntLiteral(*v))),
-            LinearTypeAst::CharLiteral(v) => Ok(FlowResult::simple(LinearTypeAst::CharLiteral(*v))),
+            LinearTypeAst::Int => Ok(FlowResult::simple(WithLocation::new(
+                LinearTypeAst::Int,
+                loc,
+            ))),
+            LinearTypeAst::Char => Ok(FlowResult::simple(WithLocation::new(
+                LinearTypeAst::Char,
+                loc,
+            ))),
+            LinearTypeAst::Top => Ok(FlowResult::simple(WithLocation::new(
+                LinearTypeAst::Top,
+                loc,
+            ))),
+            LinearTypeAst::Bottom => Ok(FlowResult::simple(WithLocation::new(
+                LinearTypeAst::Bottom,
+                loc,
+            ))),
+            LinearTypeAst::IntLiteral(v) => Ok(FlowResult::simple(WithLocation::new(
+                LinearTypeAst::IntLiteral(*v),
+                loc,
+            ))),
+            LinearTypeAst::CharLiteral(v) => Ok(FlowResult::simple(WithLocation::new(
+                LinearTypeAst::CharLiteral(*v),
+                loc,
+            ))),
             LinearTypeAst::Variable(Some(name)) => {
                 if ctx.use_variable(name).is_ok() {
-                    let mut captures = HashSet::new();
-                    captures.insert(name.clone());
+                    let mut captures = HashMap::new();
+                    captures.insert(name.clone(), WithLocation::new((), loc));
                     Ok(FlowResult::complex(
-                        LinearTypeAst::Variable(Some(name.clone())),
+                        WithLocation::new(LinearTypeAst::Variable(Some(name.clone())), loc),
                         captures,
                         PatternEnv::new(),
                     ))
                 } else {
-                    Err(ParseError::UseBeforeDeclaration(self.clone(), name.clone()))
+                    Err(ParseError::UseBeforeDeclaration(
+                        WithLocation::new(self.clone(), loc),
+                        name.clone(),
+                    ))
                 }
             }
-            LinearTypeAst::Variable(None) => Ok(FlowResult::simple(LinearTypeAst::Variable(None))), // None 表示续体，不会捕获任何变量（因为续体对于任何函数都是存在的）
+            LinearTypeAst::Variable(None) => Ok(FlowResult::simple(WithLocation::new(
+                LinearTypeAst::Variable(None),
+                loc,
+            ))), // None 表示续体，不会捕获任何变量（因为续体对于任何函数都是存在的）
             LinearTypeAst::Tuple(elements) => {
                 let mut new_elements = Vec::new();
-                let mut all_captures = HashSet::new();
+                let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
                 for elem in elements {
-                    let res = elem.flow(ctx, pattern_mode)?;
+                    let res = elem.flow(ctx, pattern_mode, elem.location())?;
                     new_elements.push(res.ty);
                     all_captures.extend(res.captures);
                     all_patterns
-                        .extend(res.patterns)
-                        .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
+                        .extend(
+                            res.patterns
+                                .into_iter()
+                                .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                        )
+                        .map_err(|name| {
+                            ParseError::RedeclaredPattern(
+                                WithLocation::new(self.clone(), loc),
+                                name,
+                            )
+                        })?;
                 }
                 Ok(FlowResult::complex(
-                    LinearTypeAst::Tuple(new_elements),
+                    WithLocation::new(LinearTypeAst::Tuple(new_elements), loc),
                     all_captures,
                     all_patterns,
                 ))
             }
             LinearTypeAst::List(elements) => {
                 let mut new_elements = Vec::new();
-                let mut all_captures = HashSet::new();
+                let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
                 for elem in elements {
-                    let res = elem.flow(ctx, pattern_mode)?;
+                    let res = elem.flow(ctx, pattern_mode, elem.location())?;
                     new_elements.push(res.ty);
                     all_captures.extend(res.captures);
                     all_patterns
-                        .extend(res.patterns)
-                        .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
+                        .extend(
+                            res.patterns
+                                .into_iter()
+                                .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                        )
+                        .map_err(|name| {
+                            ParseError::RedeclaredPattern(
+                                WithLocation::new(self.clone(), loc),
+                                name,
+                            )
+                        })?;
                 }
                 Ok(FlowResult::complex(
-                    LinearTypeAst::List(new_elements),
+                    WithLocation::new(LinearTypeAst::List(new_elements), loc),
                     all_captures,
                     all_patterns,
                 ))
             }
             LinearTypeAst::Generalize(types) => {
                 let mut new_types = Vec::new();
-                let mut all_captures = HashSet::new();
+                let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
                 for ty in types {
-                    let res = ty.flow(ctx, pattern_mode)?;
+                    let res = ty.flow(ctx, pattern_mode, ty.location())?;
                     new_types.push(res.ty);
                     all_captures.extend(res.captures);
                     all_patterns
-                        .extend(res.patterns)
-                        .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
+                        .extend(
+                            res.patterns
+                                .into_iter()
+                                .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                        )
+                        .map_err(|name| {
+                            ParseError::RedeclaredPattern(
+                                WithLocation::new(self.clone(), loc),
+                                name,
+                            )
+                        })?;
                 }
                 if !all_patterns.is_empty() {
                     // 泛化类型中不允许出现模式变量，因为泛化类型是乱序的
-                    return Err(ParseError::AmbiguousPattern(self.clone()));
+                    return Err(ParseError::AmbiguousPattern(WithLocation::new(
+                        self.clone(),
+                        loc,
+                    )));
                 }
                 Ok(FlowResult::complex(
-                    LinearTypeAst::Generalize(new_types),
+                    WithLocation::new(LinearTypeAst::Generalize(new_types), loc),
                     all_captures,
                     all_patterns,
                 ))
             }
             LinearTypeAst::Specialize(types) => {
                 let mut new_types = Vec::new();
-                let mut all_captures = HashSet::new();
+                let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
                 for ty in types {
-                    let res = ty.flow(ctx, pattern_mode)?;
+                    let res = ty.flow(ctx, pattern_mode, ty.location())?;
                     new_types.push(res.ty);
                     all_captures.extend(res.captures);
                     all_patterns
-                        .extend(res.patterns)
-                        .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
+                        .extend(
+                            res.patterns
+                                .into_iter()
+                                .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                        )
+                        .map_err(|name| {
+                            ParseError::RedeclaredPattern(
+                                WithLocation::new(self.clone(), loc),
+                                name,
+                            )
+                        })?;
                 }
                 if !all_patterns.is_empty() {
                     // 专化类型中不允许出现模式变量，因为专化类型是乱序的
-                    return Err(ParseError::AmbiguousPattern(self.clone()));
+                    return Err(ParseError::AmbiguousPattern(WithLocation::new(
+                        self.clone(),
+                        loc,
+                    )));
                 }
                 Ok(FlowResult::complex(
-                    LinearTypeAst::Specialize(new_types),
+                    WithLocation::new(LinearTypeAst::Specialize(new_types), loc),
                     all_captures,
                     all_patterns,
                 ))
@@ -889,36 +1168,53 @@ impl LinearTypeAst {
                 arg,
                 continuation,
             } => {
-                let func_res = func.flow(ctx, pattern_mode)?;
-                let arg_res = arg.flow(ctx, pattern_mode)?;
-                let cont_res = continuation.flow(ctx, pattern_mode)?;
+                let func_res = func.flow(ctx, pattern_mode, func.location())?;
+                let arg_res = arg.flow(ctx, pattern_mode, arg.location())?;
+                let cont_res = continuation.flow(ctx, pattern_mode, continuation.location())?;
                 let mut all_captures = func_res.captures;
                 all_captures.extend(arg_res.captures);
                 all_captures.extend(cont_res.captures.clone());
 
                 let mut all_patterns = func_res.patterns;
                 all_patterns
-                    .extend(arg_res.patterns)
-                    .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
+                    .extend(
+                        arg_res
+                            .patterns
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    )
+                    .map_err(|name| {
+                        ParseError::RedeclaredPattern(WithLocation::new(self.clone(), loc), name)
+                    })?;
                 all_patterns
-                    .extend(cont_res.patterns.clone())
-                    .map_err(|name| ParseError::RedeclaredPattern(self.clone(), name))?;
+                    .extend(
+                        cont_res
+                            .patterns
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    )
+                    .map_err(|name| {
+                        ParseError::RedeclaredPattern(WithLocation::new(self.clone(), loc), name)
+                    })?;
                 Ok(FlowResult::complex(
-                    LinearTypeAst::Invoke {
-                        func: Box::new(func_res.ty),
-                        arg: Box::new(arg_res.ty),
-                        continuation: Box::new(cont_res.ty),
-                    },
+                    WithLocation::new(
+                        LinearTypeAst::Invoke {
+                            func: Box::new(func_res.ty),
+                            arg: Box::new(arg_res.ty),
+                            continuation: Box::new(cont_res.ty),
+                        },
+                        loc,
+                    ),
                     all_captures,
                     all_patterns,
                 ))
             }
             LinearTypeAst::AtomicOpcode(atomic_opcode) => Ok(FlowResult::simple(
-                LinearTypeAst::AtomicOpcode(atomic_opcode.clone()),
+                WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc),
             )),
             LinearTypeAst::FixPoint { param_name, expr } => {
                 ctx.enter_scope();
-                match ctx.declare_variable(param_name.clone()) {
+                match ctx.declare_variable(param_name.clone(), loc) {
                     Ok(_) => {}
                     Err(ContextError::EmptyContext) => {
                         return Err(ParseError::InternalError(
@@ -927,11 +1223,14 @@ impl LinearTypeAst {
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        return Err(ParseError::UnusedVariable(self.clone(), v));
+                        return Err(ParseError::UnusedVariable(
+                            WithLocation::new(self.clone(), loc),
+                            v,
+                        ));
                     }
                 }
                 // 递归函数的表达式中不允许出现模式变量
-                let mut expr_res = expr.flow(ctx, false)?;
+                let mut expr_res = expr.flow(ctx, false, expr.location())?;
                 match ctx.exit_scope() {
                     Ok(_) => {}
                     Err(ContextError::EmptyContext) => {
@@ -941,43 +1240,59 @@ impl LinearTypeAst {
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        return Err(ParseError::UnusedVariable(self.clone(), v));
+                        return Err(ParseError::UnusedVariable(
+                            WithLocation::new(self.clone(), loc),
+                            v,
+                        ));
                     }
                 }
                 // 移除掉param_name，因为它是递归函数的参数，不应当被视为捕获的自由变量
                 expr_res.captures.remove(param_name);
                 Ok(FlowResult::complex(
-                    LinearTypeAst::FixPoint {
-                        param_name: param_name.clone(),
-                        expr: Box::new(expr_res.ty),
-                    },
+                    WithLocation::new(
+                        LinearTypeAst::FixPoint {
+                            param_name: param_name.clone(),
+                            expr: Box::new(expr_res.ty),
+                        },
+                        loc,
+                    ),
                     expr_res.captures,
                     PatternEnv::new(), // fixpoint类型本身不应当把模式变量泄露出去
                 ))
             }
             LinearTypeAst::Namespace { tag, expr } => {
-                let expr_res = expr.flow(ctx, pattern_mode)?;
+                let expr_res = expr.flow(ctx, pattern_mode, expr.location())?;
                 Ok(FlowResult::complex(
-                    LinearTypeAst::Namespace {
-                        tag: tag.clone(),
-                        expr: Box::new(expr_res.ty),
-                    },
+                    WithLocation::new(
+                        LinearTypeAst::Namespace {
+                            tag: tag.clone(),
+                            expr: Box::new(expr_res.ty),
+                        },
+                        loc,
+                    ),
                     expr_res.captures,
                     expr_res.patterns,
                 ))
             }
             LinearTypeAst::Pattern { name, expr } => {
                 if !pattern_mode {
-                    return Err(ParseError::PatternOutOfParameterDefinition(self.clone()));
+                    return Err(ParseError::PatternOutOfParameterDefinition(
+                        WithLocation::new(self.clone(), loc),
+                    ));
                 }
-                let expr_res = expr.flow(ctx, pattern_mode)?;
+                let expr_res = expr.flow(ctx, pattern_mode, expr.location())?;
                 let mut patterns = PatternEnv::new();
-                patterns.extend(vec![name.clone()]).unwrap();
+                patterns
+                    .extend(vec![WithLocation::new(name.clone(), loc)])
+                    .unwrap();
                 Ok(FlowResult::complex(
-                    LinearTypeAst::Pattern {
-                        name: name.clone(),
-                        expr: Box::new(expr_res.ty),
-                    },
+                    WithLocation::new(
+                        LinearTypeAst::Pattern {
+                            name: name.clone(),
+                            expr: Box::new(expr_res.ty),
+                        },
+                        loc,
+                    ),
                     expr_res.captures,
                     patterns,
                 ))
@@ -989,10 +1304,11 @@ impl LinearTypeAst {
                 fail_branch,
             } => {
                 // 模式不应当捕获环境变量，因此直接传入空的环境
-                let pattern_res = pattern.flow(&mut ParseContext::new(), true)?;
+                let pattern_res =
+                    pattern.flow(&mut ParseContext::new(), true, pattern.location())?;
                 ctx.enter_scope();
-                for var in auto_captures {
-                    match ctx.declare_variable(var.clone()) {
+                for (var, loc) in auto_captures {
+                    match ctx.declare_variable(var.clone(), loc.location()) {
                         Ok(_) => {}
                         Err(ContextError::EmptyContext) => {
                             return Err(ParseError::InternalError(
@@ -1001,12 +1317,15 @@ impl LinearTypeAst {
                         }
                         Err(ContextError::NotDeclared(_)) => unreachable!(),
                         Err(ContextError::NotUsed(v)) => {
-                            return Err(ParseError::UnusedVariable(self.clone(), v));
+                            return Err(ParseError::UnusedVariable(
+                                WithLocation::new(self.clone(), loc.location()),
+                                v,
+                            ));
                         }
                     }
                 }
-                for var in pattern_res.patterns.iter() {
-                    match ctx.declare_variable(var.clone()) {
+                for (var, var_loc) in pattern_res.patterns.iter() {
+                    match ctx.declare_variable(var.clone(), var_loc.location()) {
                         Ok(_) => {}
                         Err(ContextError::EmptyContext) => {
                             return Err(ParseError::InternalError(
@@ -1015,11 +1334,14 @@ impl LinearTypeAst {
                         }
                         Err(ContextError::NotDeclared(_)) => unreachable!(),
                         Err(ContextError::NotUsed(v)) => {
-                            return Err(ParseError::UnusedVariable(self.clone(), v));
+                            return Err(ParseError::UnusedVariable(
+                                WithLocation::new(self.clone(), loc),
+                                v,
+                            ));
                         }
                     }
                 }
-                let body_res = body.flow(ctx, false)?; // 闭包体不允许出现模式变量
+                let body_res = body.flow(ctx, false, body.location())?; // 闭包体不允许出现模式变量
                 match ctx.exit_scope() {
                     Ok(_) => {}
                     Err(ContextError::EmptyContext) => {
@@ -1029,36 +1351,42 @@ impl LinearTypeAst {
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        return Err(ParseError::UnusedVariable(self.clone(), v));
+                        return Err(ParseError::UnusedVariable(
+                            WithLocation::new(self.clone(), loc),
+                            v,
+                        ));
                     }
                 }
                 let mut body_captures = body_res.captures;
                 // 移除掉模式变量，因为它们是闭包的参数，不应当被视为捕获的自由变量
-                for var in pattern_res.patterns.iter() {
+                for (var, _) in pattern_res.patterns.iter() {
                     body_captures.remove(var);
                 }
                 let fail_branch = if let Some(fb) = fail_branch {
-                    let fb_res = fb.flow(ctx, false)?; // 失败分支不允许出现模式变量
+                    let fb_res = fb.flow(ctx, false, fb.location())?; // 失败分支不允许出现模式变量
                     body_captures.extend(fb_res.captures);
                     Some(fb_res.ty)
                 } else {
                     None
                 };
                 Ok(FlowResult::complex(
-                    LinearTypeAst::Closure {
-                        pattern: Box::new(pattern_res.ty),
-                        auto_captures: body_captures.clone(),
-                        body: Box::new(body_res.ty),
-                        fail_branch: fail_branch.map(Box::new),
-                    },
+                    WithLocation::new(
+                        LinearTypeAst::Closure {
+                            pattern: Box::new(pattern_res.ty),
+                            auto_captures: body_captures.clone(),
+                            body: Box::new(body_res.ty),
+                            fail_branch: fail_branch.map(Box::new),
+                        },
+                        loc,
+                    ),
                     body_captures,
                     PatternEnv::new(), // 闭包类型本身不应当把模式变量泄露出去
                 ))
             }
             LinearTypeAst::Literal(inner) => {
-                let inner_res = inner.flow(ctx, pattern_mode)?;
+                let inner_res = inner.flow(ctx, pattern_mode, inner.location())?;
                 Ok(FlowResult::complex(
-                    LinearTypeAst::Literal(Box::new(inner_res.ty)),
+                    WithLocation::new(LinearTypeAst::Literal(Box::new(inner_res.ty)), loc),
                     inner_res.captures,
                     inner_res.patterns,
                 ))
@@ -1069,7 +1397,7 @@ impl LinearTypeAst {
 
 pub struct BuildResult {
     ty: StabilizedType,
-    patterns: Vec<String>, // 按照de Bruijn索引顺序排列的模式变量
+    patterns: Vec<WithLocation<String>>, // 按照de Bruijn索引顺序排列的模式变量
 }
 
 impl BuildResult {
@@ -1080,11 +1408,11 @@ impl BuildResult {
         }
     }
 
-    pub fn complex(ty: StabilizedType, patterns: Vec<String>) -> Self {
+    pub fn complex(ty: StabilizedType, patterns: Vec<WithLocation<String>>) -> Self {
         BuildResult { ty, patterns }
     }
 
-    pub fn fold(results: Vec<Self>) -> (Vec<StabilizedType>, Vec<String>) {
+    pub fn fold(results: Vec<Self>) -> (Vec<StabilizedType>, Vec<WithLocation<String>>) {
         let mut types = Vec::new();
         let mut patterns = Vec::new();
         for res in results {
@@ -1098,7 +1426,7 @@ impl BuildResult {
         &self.ty
     }
 
-    pub fn patterns(&self) -> &Vec<String> {
+    pub fn patterns(&self) -> &Vec<WithLocation<String>> {
         &self.patterns
     }
 }
@@ -1110,6 +1438,7 @@ impl LinearTypeAst {
         ctx: &mut BuildContext,
         pattern_mode: bool,
         gc: &mut GC<FixPointInner>,
+        loc: Option<&SourceLocation>,
     ) -> Result<BuildResult, Result<TypeError, ParseError>> {
         match self {
             LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
@@ -1126,7 +1455,7 @@ impl LinearTypeAst {
                     }
                 } else {
                     Err(Err(ParseError::UseBeforeDeclaration(
-                        self.clone(),
+                        WithLocation::new(self.clone(), loc),
                         var.clone(),
                     )))
                 }
@@ -1135,7 +1464,7 @@ impl LinearTypeAst {
             LinearTypeAst::Tuple(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, pattern_mode, gc)?);
+                    types.push(bta.to_type(ctx, pattern_mode, gc, bta.location())?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
                 Ok(BuildResult::complex(Tuple::new(&types), patterns))
@@ -1143,7 +1472,7 @@ impl LinearTypeAst {
             LinearTypeAst::List(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, pattern_mode, gc)?);
+                    types.push(bta.to_type(ctx, pattern_mode, gc, bta.location())?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
                 Ok(BuildResult::complex(List::new(&types), patterns))
@@ -1151,7 +1480,7 @@ impl LinearTypeAst {
             LinearTypeAst::Generalize(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, pattern_mode, gc)?);
+                    types.push(bta.to_type(ctx, pattern_mode, gc, bta.location())?);
                 }
                 // 我们无法计算出泛化类型的闭包环境，因此传入一个空的闭包环境
                 let (types, patterns) = BuildResult::fold(types);
@@ -1160,12 +1489,15 @@ impl LinearTypeAst {
             LinearTypeAst::Specialize(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, false, gc)?);
+                    types.push(bta.to_type(ctx, false, gc, bta.location())?);
                 }
                 // 我们无法计算出专化类型的闭包环境，因此传入一个空的闭包环境
                 let (types, patterns) = BuildResult::fold(types);
                 if !patterns.is_empty() {
-                    return Err(Err(ParseError::AmbiguousPattern(self.clone())));
+                    return Err(Err(ParseError::AmbiguousPattern(WithLocation::new(
+                        self.clone(),
+                        loc,
+                    ))));
                 }
                 Ok(BuildResult::complex(Specialize::new_raw(&types), patterns))
             }
@@ -1174,9 +1506,10 @@ impl LinearTypeAst {
                 arg,
                 continuation,
             } => {
-                let func_type = func.to_type(ctx, false, gc)?;
-                let arg_type = arg.to_type(ctx, pattern_mode, gc)?;
-                let continuation_type = continuation.to_type(ctx, false, gc)?;
+                let func_type = func.to_type(ctx, false, gc, func.location())?;
+                let arg_type = arg.to_type(ctx, pattern_mode, gc, arg.location())?;
+                let continuation_type =
+                    continuation.to_type(ctx, false, gc, continuation.location())?;
                 let (types, patterns) =
                     BuildResult::fold(vec![func_type, arg_type, continuation_type]);
                 Ok(BuildResult::complex(
@@ -1190,9 +1523,12 @@ impl LinearTypeAst {
                 body,
                 fail_branch,
             } => {
-                let auto_captures = auto_captures.iter().cloned().collect::<Vec<String>>();
+                let auto_captures = auto_captures
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect::<Vec<(String, WithLocation<()>)>>();
                 let mut closure_env = Vec::new();
-                for var in &auto_captures {
+                for (var, loc) in &auto_captures {
                     if let Some(ty) = ctx.current_layer().get(var) {
                         match ty {
                             Ok(t) => closure_env.push(t.clone().stabilize()), // fixpoint类型
@@ -1200,37 +1536,42 @@ impl LinearTypeAst {
                         }
                     } else {
                         return Err(Err(ParseError::UseBeforeDeclaration(
-                            self.clone(),
+                            WithLocation::new(self.clone(), loc.location()),
                             var.clone(),
                         )));
                     }
                 }
                 let closure_env = ClosureEnv::new(closure_env);
 
-                let pattern_type = pattern.to_type(&mut BuildContext::new(), true, gc)?; // 模式不应当捕获环境变量，因此传入空的BuildContext
+                let pattern_type =
+                    pattern.to_type(&mut BuildContext::new(), true, gc, pattern.location())?; // 模式不应当捕获环境变量，因此传入空的BuildContext
 
                 ctx.enter_layer();
-                for var in auto_captures {
+                for (var, var_loc) in auto_captures {
                     if ctx.current_layer_mut().push_captured(var.clone()).is_none() {
                         return Err(Err(ParseError::RedeclaredPattern(
-                            self.clone(),
-                            var.clone(),
+                            WithLocation::new(self.clone(), loc),
+                            var_loc.map(|_| var),
                         )));
                     }
                 }
                 // 把模式变量加入到当前作用域
                 for var in pattern_type.patterns.iter() {
-                    if ctx.current_layer_mut().push_pattern(var.clone()).is_none() {
+                    if ctx
+                        .current_layer_mut()
+                        .push_pattern(var.value().clone())
+                        .is_none()
+                    {
                         return Err(Err(ParseError::RedeclaredPattern(
-                            self.clone(),
+                            WithLocation::new(self.clone(), loc),
                             var.clone(),
                         )));
                     }
                 }
-                let body_type = body.to_type(ctx, pattern_mode, gc)?;
+                let body_type = body.to_type(ctx, pattern_mode, gc, body.location())?;
                 ctx.exit_layer();
                 let fail_branch_type = if let Some(fb) = fail_branch {
-                    Some(fb.to_type(ctx, pattern_mode, gc)?)
+                    Some(fb.to_type(ctx, pattern_mode, gc, fb.location())?)
                 } else {
                     None
                 };
@@ -1261,7 +1602,7 @@ impl LinearTypeAst {
                 let placeholder = FixPoint::new_placeholder(gc);
                 ctx.current_layer_mut()
                     .enter_fixpoint(param_name.clone(), placeholder.weak().clone());
-                let expr_type = expr.to_type(ctx, false, gc)?;
+                let expr_type = expr.to_type(ctx, false, gc, expr.location())?;
                 ctx.current_layer_mut().exit_fixpoint();
                 as_type!(placeholder.weak(), Type::FixPoint)
                     .set(expr_type.ty)
@@ -1269,7 +1610,7 @@ impl LinearTypeAst {
                 Ok(BuildResult::simple(placeholder))
             }
             LinearTypeAst::Namespace { tag, expr } => {
-                let expr_type = expr.to_type(ctx, pattern_mode, gc)?;
+                let expr_type = expr.to_type(ctx, pattern_mode, gc, expr.location())?;
                 Ok(BuildResult::complex(
                     Namespace::new(tag.clone(), &expr_type.ty),
                     expr_type.patterns,
@@ -1278,26 +1619,28 @@ impl LinearTypeAst {
             LinearTypeAst::Pattern { name, expr } => {
                 if !pattern_mode {
                     return Err(Err(ParseError::PatternOutOfParameterDefinition(
-                        self.clone(),
+                        WithLocation::new(self.clone(), loc),
                     )));
                 }
-                let expr_type = expr.to_type(ctx, pattern_mode, gc)?;
+                let expr_type = expr.to_type(ctx, pattern_mode, gc, expr.location())?;
                 let mut patterns = expr_type.patterns;
-                if patterns.contains(name) {
-                    return Err(Err(ParseError::RedeclaredPattern(
-                        self.clone(),
-                        name.clone(),
-                    )));
+                for var in &patterns {
+                    if var.value() == name {
+                        return Err(Err(ParseError::RedeclaredPattern(
+                            WithLocation::new(self.clone(), loc),
+                            var.clone(),
+                        )));
+                    }
                 }
                 let debruijn_index = ctx.current_layer_mut().inc_pattern_count();
-                patterns.extend(vec![name.clone()]);
+                patterns.extend(vec![WithLocation::new(name.clone(), loc)]);
                 Ok(BuildResult::complex(
                     Pattern::new(debruijn_index, &expr_type.ty),
                     patterns,
                 ))
             }
             LinearTypeAst::Literal(inner) => {
-                let inner_type = inner.to_type(ctx, pattern_mode, gc)?;
+                let inner_type = inner.to_type(ctx, pattern_mode, gc, inner.location())?;
                 Ok(BuildResult::complex(
                     Lazy::new(&inner_type.ty),
                     inner_type.patterns,

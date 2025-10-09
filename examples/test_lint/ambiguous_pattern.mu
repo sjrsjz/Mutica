@@ -1,0 +1,1 @@
+let (x: int | y: int, (z: int, x: int)) = (1, (2, 3));

@@ -3,6 +3,8 @@
 //! 支持结构化子类型判定，支持alpha等价，支持递归类型等。
 //! 本项目仅考虑可实现性和类型系统的表达能力，性能并非首要目标。
 
+use std::sync::Arc;
+
 use lalrpop_util::lalrpop_mod;
 
 pub mod parser;
@@ -17,7 +19,7 @@ use logos::Logos;
 
 use crate::{
     parser::{
-        BuildContext, ParseContext,
+        BuildContext, ParseContext, SourceFile,
         ast::LinearizeContext,
         lexer::{LexerToken, LexicalError},
     },
@@ -104,6 +106,8 @@ fn print_parse_error(expr: &str, e: lalrpop_util::ParseError<usize, LexerToken, 
 }
 
 pub fn parse_and_reduce(expr: &str) {
+    let source_file = Arc::new(SourceFile::new(None, expr.into()));
+
     #[cfg(debug_assertions)]
     println!("Parsing expression:\n{}\n", expr);
     let lexer = LexerToken::lexer(expr);
@@ -113,7 +117,7 @@ pub fn parse_and_reduce(expr: &str) {
     });
 
     let parser = crate::grammar::TypeParser::new();
-    let parsed = parser.parse(spanned_lexer);
+    let parsed = parser.parse(&source_file, spanned_lexer);
     match parsed {
         Ok(ast) => {
             let mut errors = Vec::new();
@@ -124,35 +128,53 @@ pub fn parse_and_reduce(expr: &str) {
                 }
                 return;
             }
-            let basic = ast.into_basic();
+            let basic = ast.into_basic(ast.location());
             // println!("Basic AST: {:?}", basic);
-            let linearized = basic.linearize(&mut LinearizeContext::new()).finalize();
+            let linearized = basic
+                .linearize(&mut LinearizeContext::new(), basic.location())
+                .finalize();
             // println!("Linearized AST: {:?}", linearized);
-            let flowed = match linearized.flow(&mut ParseContext::new(), false) {
-                Ok(result) => result.ty().clone(),
-                Err(e) => {
-                    e.report("<input>")
-                        .eprint(("<input>", ariadne::Source::from(expr)))
-                        .ok();
-                    return;
-                }
-            };
+            let flowed =
+                match linearized.flow(&mut ParseContext::new(), false, linearized.location()) {
+                    Ok(result) => result.ty().clone(),
+                    Err(e) => {
+                        // 获取源文件信息用于错误报告
+                        let (filename, source_content) = if let Some(location) = linearized.location() {
+                            let source = location.source();
+                            (source.filename(), source.content().to_string())
+                        } else {
+                            ("<input>".to_string(), expr.to_string())
+                        };
+                        e.report()
+                            .eprint((filename, ariadne::Source::from(source_content)))
+                            .ok();
+                        return;
+                    }
+                };
 
             let mut gc = GC::new();
-            let built_type = match flowed.to_type(&mut BuildContext::new(), false, &mut gc) {
-                Ok(result) => result,
-                Err(Ok(type_error)) => {
-                    println!("Type building error: {:?}", type_error);
-                    return;
-                }
-                Err(Err(parse_error)) => {
-                    parse_error
-                        .report("<input>")
-                        .eprint(("<input>", ariadne::Source::from(expr)))
-                        .ok();
-                    return;
-                }
-            };
+            let built_type =
+                match flowed.to_type(&mut BuildContext::new(), false, &mut gc, flowed.location()) {
+                    Ok(result) => result,
+                    Err(Ok(type_error)) => {
+                        println!("Type building error: {:?}", type_error);
+                        return;
+                    }
+                    Err(Err(parse_error)) => {
+                        // 获取源文件信息用于错误报告
+                        let (filename, source_content) = if let Some(location) = flowed.location() {
+                            let source = location.source();
+                            (source.filename(), source.content().to_string())
+                        } else {
+                            ("<input>".to_string(), expr.to_string())
+                        };
+                        parse_error
+                            .report()
+                            .eprint((filename, ariadne::Source::from(source_content)))
+                            .ok();
+                        return;
+                    }
+                };
             #[cfg(debug_assertions)]
             println!(
                 "Built type: {}\n",

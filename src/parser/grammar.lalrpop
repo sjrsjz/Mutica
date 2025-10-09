@@ -1,7 +1,11 @@
 use crate::parser::ast::TypeAst;
 use lalrpop_util::ErrorRecovery;
 use crate::parser::lexer::{LexerToken, LexicalError};
-grammar<'input>;
+use crate::parser::SourceFile;
+use crate::parser::SourceLocation;
+use crate::parser::WithLocation;
+use std::sync::Arc;
+grammar<'input>(source: &Arc<SourceFile>);
 
 
 
@@ -106,33 +110,33 @@ StringLiteral: String = {
 };
 
 
-AtomType: TypeAst<'input> = {
-    "int" => TypeAst::Int,
-    "char" => TypeAst::Char,
-    "true" => TypeAst::Top,
-    "false" => TypeAst::Bottom,
-    "any" => TypeAst::Top,
-    "none" => TypeAst::Bottom,
-    "__add" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add),
-    "__sub" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub),
-    "__mul" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul),
-    "__div" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div),
-    "__mod" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod),
-    "__is" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is),
-    "__opcode" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode),
-    "input" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Input),
-    "print" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Print),
-    "__continuation" => TypeAst::Variable(None),
-    <n: Num> => TypeAst::IntLiteral(n),
-    <id: Ident> => TypeAst::Variable(Some(id)),
-    <c: CharLiteral> => TypeAst::CharLiteral(c),
-    <s: StringLiteral> => {
-        let chars: Vec<TypeAst<'input>> = s.chars().map(TypeAst::CharLiteral).collect();
-        TypeAst::List(chars)
+AtomType: WithLocation<TypeAst<'input>> = {
+    <l:@L> "int" <r:@R> => WithLocation::new(TypeAst::Int, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "char" <r:@R> => WithLocation::new(TypeAst::Char, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "true" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "false" <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "any" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "none" <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "__add" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "__sub" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "__mul" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "__div" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "__mod" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "__is" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "__opcode" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "input" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Input), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "print" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Print), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "__continuation" <r:@R> => WithLocation::new(TypeAst::Variable(None), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(n), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(Some(id)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <s: StringLiteral> <r:@R> => {
+        let chars: Vec<WithLocation<TypeAst<'input>>> = s.chars().map(|ch| WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref())).collect();
+        WithLocation::new(TypeAst::List(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
 
-Term: TypeAst<'input> = {
+Term: WithLocation<TypeAst<'input>> = {
     "(" <t: Type> ")" => t,
     "[" <t: Type> "]" => t,
     "{" <t: Type> "}" => t,
@@ -140,103 +144,103 @@ Term: TypeAst<'input> = {
     <a: AtomType> => a,
 }
 
-Namespace: TypeAst<'input> = {
-    <tag: Ident> "::" <t: Term> => TypeAst::Namespace {
+Namespace: WithLocation<TypeAst<'input>> = {
+    <l:@L> <tag: Ident> "::" <t: Term> <r:@R> => WithLocation::new(TypeAst::Namespace {
         tag: tag,
         expr: Box::new(t),
-    },
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
-Apply: TypeAst<'input> = {
-    <obj: Apply> "." <k: Ident> => TypeAst::Apply {
-        func: TypeAst::Closure {
-            pattern: Box::new(TypeAst::Namespace {
+Apply: WithLocation<TypeAst<'input>> = {
+    <l:@L> <obj: Apply> "." <k: Ident> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::Closure {
+            pattern: Box::new(WithLocation::new(TypeAst::Namespace {
                 tag: k,
-                expr: Box::new(TypeAst::Pattern {
+                expr: Box::new(WithLocation::new(TypeAst::Pattern {
                     name: "projection#obj".to_string(),
-                    expr: Box::new(TypeAst::Top),
-                }),
-            }),
-            body: Box::new(TypeAst::Variable(Some("projection#obj".to_string()))),
+                    expr: Box::new(WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            body: Box::new(WithLocation::new(TypeAst::Variable(Some("projection#obj".to_string())), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             fail_branch: None,
-        }.into(),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         arg: Box::new(obj),
-    },
-    <f: Apply> <x: Term> "|>" <k: Term> => TypeAst::Invoke {
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <f: Apply> <x: Term> "|>" <k: Term> <r:@R> => WithLocation::new(TypeAst::Invoke {
         func: Box::new(f),
         arg: Box::new(x),
         continuation: Box::new(k),
-    },
-    <f: Apply> <x: Term> => TypeAst::Apply {
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <f: Apply> <x: Term> <r:@R> => WithLocation::new(TypeAst::Apply {
         func: Box::new(f),
         arg: Box::new(x),
-    },
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <t: Term> => t,
 }
 
-List: TypeAst<'input> = {
-    "@" <element: Primary> => match element {
-        TypeAst::Tuple(elements) => TypeAst::List(elements),
-        single => TypeAst::List(vec![single]),
+List: WithLocation<TypeAst<'input>> = {
+    <l:@L> "@" <element: Primary> <r:@R> => match element.value() {
+        TypeAst::Tuple(elements) => WithLocation::new(TypeAst::List(elements.clone()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        single => WithLocation::new(TypeAst::List(vec![WithLocation::new(single.clone(), element.location())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     },
 }
 
-Match: TypeAst<'input> = {
-    "match" <value: Primary> <branches: MatchBranch+> <else_branch: ElseBranch> => {
-        TypeAst::Match {
+Match: WithLocation<TypeAst<'input>> = {
+    <l:@L> "match" <value: Primary> <branches: MatchBranch+> <else_branch: ElseBranch> <r:@R> => {
+        WithLocation::new(TypeAst::Match {
             value: Box::new(value),
             match_branch: branches,
             else_branch: Some(Box::new(else_branch)),
-        }
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    "match" <value: Primary> <branches: MatchBranch+> "|" "panic" => {
-        TypeAst::Match {
+    <l:@L> "match" <value: Primary> <branches: MatchBranch+> "|" "panic" <r:@R> => {
+        WithLocation::new(TypeAst::Match {
             value: Box::new(value),
             match_branch: branches,
             else_branch: None,
-        }
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
 
-MatchBranch: (TypeAst<'input>, TypeAst<'input>) = {
+MatchBranch: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
     "|" <pattern: Primary> "=>" <t: Primary> => (pattern, t),
 }
 
-ElseBranch: TypeAst<'input> = {
+ElseBranch: WithLocation<TypeAst<'input>> = {
     "|" "!" "=>" <t: Primary> => t,
 }
 
-RecursiveGen: TypeAst<'input> = {
-    "rec" <id: Ident> ":" <t: Primary> => TypeAst::FixPoint {
+RecursiveGen: WithLocation<TypeAst<'input>> = {
+    <l:@L> "rec" <id: Ident> ":" <t: Primary> <r:@R> => WithLocation::new(TypeAst::FixPoint {
         param_name: id,
         expr: Box::new(t),
-    },
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
-FailBranch: Box<TypeAst<'input>> = {
+FailBranch: Box<WithLocation<TypeAst<'input>>> = {
     "\\" <t: Primary> => Box::new(t),
 }
 
-Closure: TypeAst<'input> = {
-    <pattern: Factor> "->" <body: Primary> <fail_branch: FailBranch> => {
-        TypeAst::Closure {
+Closure: WithLocation<TypeAst<'input>> = {
+    <l:@L> <pattern: Factor> "->" <body: Primary> <fail_branch: FailBranch> <r:@R> => {
+        WithLocation::new(TypeAst::Closure {
             pattern: Box::new(pattern),
             body: Box::new(body),
             fail_branch: Some(fail_branch),
-        }
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <pattern: Factor> "|->" <body: Primary> => {
-        TypeAst::Closure {
+    <l:@L> <pattern: Factor> "|->" <body: Primary> <r:@R> => {
+        WithLocation::new(TypeAst::Closure {
             pattern: Box::new(pattern),
             body: Box::new(body),
             fail_branch: None,
-        }
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     }
 }
 
-Tuple: TypeAst<'input> = {
-    () => TypeAst::Tuple(vec![]),
-    <items: Comma<TupleElement>> => TypeAst::Tuple(items),
+Tuple: WithLocation<TypeAst<'input>> = {
+    <l:@L> <r:@R> => WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <items: Comma<TupleElement>> <r:@R> => WithLocation::new(TypeAst::Tuple(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <item: TupleElement> => item,
 }
 
@@ -256,11 +260,11 @@ Comma<T>: Vec<T> = {
 CommaSep = ","+;
 
 
-Literal: TypeAst<'input> = {
-    "#" <t: Primary> => TypeAst::Literal(Box::new(t)),
+Literal: WithLocation<TypeAst<'input>> = {
+    <l:@L> "#" <t: Primary> <r:@R> => WithLocation::new(TypeAst::Literal(Box::new(t)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
-Primary: TypeAst<'input> = {
+Primary: WithLocation<TypeAst<'input>> = {
     <l: Literal> => l,
     <l: List> => l,
     <r: RecursiveGen> => r,
@@ -269,26 +273,26 @@ Primary: TypeAst<'input> = {
     <c: Calculate> => c,
     ! => {
         let err: ErrorRecovery<usize, LexerToken<'input>, LexicalError> = <>;
-        TypeAst::ParseError(err)
+        WithLocation::new(TypeAst::ParseError(err), None::<&SourceLocation>)
     }
 };
 
-Factor: TypeAst<'input> = {
-    "!" <a: Factor> => TypeAst::Not {
+Factor: WithLocation<TypeAst<'input>> = {
+    <l:@L> "!" <a: Factor> <r:@R> => WithLocation::new(TypeAst::Not {
         value: Box::new(a),
-    },
-    <id: Ident> ":" <a: Factor> => TypeAst::Pattern {
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <id: Ident> ":" <a: Factor> <r:@R> => WithLocation::new(TypeAst::Pattern {
         name: id,
         expr: Box::new(a),
-    },
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <a: Apply> => a,
 }
 
 
 TupleElement = Generalize;
 
-Generalize: TypeAst<'input> = {
-    <items: Bars<Specialize>> => TypeAst::Generalize(items),
+Generalize: WithLocation<TypeAst<'input>> = {
+    <l:@L> <items: Bars<Specialize>> <r:@R> => WithLocation::new(TypeAst::Generalize(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <e: Specialize> => e,
 }
 
@@ -305,8 +309,8 @@ Bars<T>: Vec<T> = {
 
 BarsSep = "|" +;
 
-Specialize: TypeAst<'input> = {
-    <items: Ands<Primary>> => TypeAst::Specialize(items),
+Specialize: WithLocation<TypeAst<'input>> = {
+    <l:@L> <items: Ands<Primary>> <r:@R> => WithLocation::new(TypeAst::Specialize(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <e: Primary> => e,
 }
 
@@ -325,174 +329,178 @@ Ands<T>: Vec<T> = {
 AndsSep = "&"+;
 
 
-Calculate: TypeAst<'input> = { Compare };
+Calculate: WithLocation<TypeAst<'input>> = { Compare };
 
-Compare: TypeAst<'input> = {
-    <left: Compare> "==" <right: AddSub> => TypeAst::Eq {
+Compare: WithLocation<TypeAst<'input>> = {
+    <l:@L> <left: Compare> "==" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Eq {
         left: Box::new(left),
         right: Box::new(right),
-    },
-    <left: Compare> "!=" <right: AddSub> => TypeAst::Neq {
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: Compare> "!=" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Neq {
         left: Box::new(left),
         right: Box::new(right),
-    },
-    <left: Compare> "<" <right: AddSub> => TypeAst::Apply {
-        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less)),
-        arg: Box::new(TypeAst::Tuple(vec![left, right])),
-    },
-    <left: Compare> "<=" <right: AddSub> => TypeAst::Generalize(vec![
-        TypeAst::Apply {
-            func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less)),
-            arg: Box::new(TypeAst::Tuple(vec![left.clone(), right.clone()])),
-        },
-        TypeAst::Eq {
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: Compare> "<" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: Compare> "<=" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Generalize(vec![
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left.clone(), right.clone()]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        WithLocation::new(TypeAst::Eq {
             left: Box::new(left),
             right: Box::new(right),
-        },
-    ]),
-    <left: Compare> ">" <right: AddSub> => TypeAst::Apply {
-        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater)),
-        arg: Box::new(TypeAst::Tuple(vec![left, right])),
-    },
-    <left: Compare> ">=" <right: AddSub> => TypeAst::Generalize(vec![
-        TypeAst::Apply {
-            func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater)),
-            arg: Box::new(TypeAst::Tuple(vec![left.clone(), right.clone()])),
-        },
-        TypeAst::Eq {
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: Compare> ">" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: Compare> ">=" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Generalize(vec![
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left.clone(), right.clone()]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        WithLocation::new(TypeAst::Eq {
             left: Box::new(left),
             right: Box::new(right),
-        },
-    ]),
-    <left: Compare> "<:" <right: AddSub> => TypeAst::Apply {
-        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is)),
-        arg: Box::new(TypeAst::Tuple(vec![left, right])),
-    },
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: Compare> "<:" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <t: AddSub> => t,
 }
 
-AddSub: TypeAst<'input> = {
-    <left: AddSub> "+" <right: Mod> => TypeAst::Apply {
-        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add)),
-        arg: Box::new(TypeAst::Tuple(vec![left, right])),
-    },
-    <left: AddSub> "-" <right: Mod> => TypeAst::Apply {
-        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub)),
-        arg: Box::new(TypeAst::Tuple(vec![left, right])),
-    },
+AddSub: WithLocation<TypeAst<'input>> = {
+    <l:@L> <left: AddSub> "+" <right: Mod> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: AddSub> "-" <right: Mod> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <t: Mod> => t,
 }
 
-Mod: TypeAst<'input> = {
-    <left: Mod> "%" <right: MulDiv> => TypeAst::Apply {
-        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod)),
-        arg: Box::new(TypeAst::Tuple(vec![left, right])),
-    },
+Mod: WithLocation<TypeAst<'input>> = {
+    <l:@L> <left: Mod> "%" <right: MulDiv> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <t: MulDiv> => t,
 }
 
-MulDiv: TypeAst<'input> = {
-    <left: MulDiv> "*" <right: Factor> => TypeAst::Apply {
-        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul)),
-        arg: Box::new(TypeAst::Tuple(vec![left, right])),
-    },
-    <left: MulDiv> "/" <right: Factor> => TypeAst::Apply {
-        func: Box::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div)),
-        arg: Box::new(TypeAst::Tuple(vec![left, right])),
-    },
+MulDiv: WithLocation<TypeAst<'input>> = {
+    <l:@L> <left: MulDiv> "*" <right: Factor> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: MulDiv> "/" <right: Factor> <r:@R> => WithLocation::new(TypeAst::Apply {
+        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <t: Factor> => t,
 }
 
-Let: (TypeAst<'input>, TypeAst<'input>) = {
+Let: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
     "let" <id: Primary> "=" <value: Type> ";" => (id, value),
 }
 
-Perform: (TypeAst<'input>, TypeAst<'input>, TypeAst<'input>) = {
+Perform: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
     "perform" <id: Primary> "=" <f: Type> "with" <value: Type> ";" => (id, f, value),
 }
 
-DiscardPerform: (TypeAst<'input>, TypeAst<'input>) = {
+DiscardPerform: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
     "perform" <f: Type> "with"  <e: Type> ";" => (f, e),
 }
 
-Discard: TypeAst<'input> = {
+Discard: WithLocation<TypeAst<'input>> = {
     "discard" <e: Type> ";" => e,
 }
 
-Expression: TypeAst<'input> = {
-    <let_expr: Let> <e: Type> => {
-        match e {
+Expression: WithLocation<TypeAst<'input>> = {
+    <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
+        match e.value() {
             TypeAst::Expression {
-                mut binding_patterns,
-                mut binding_types,
+                binding_patterns,
+                binding_types,
                 body,
             } => {
-                binding_patterns.insert(0, let_expr.0);
-                binding_types.insert(0, let_expr.1);
-                TypeAst::Expression {
-                    binding_patterns,
-                    binding_types,
-                    body,
-                }
+                let mut new_patterns = binding_patterns.clone();
+                let mut new_types = binding_types.clone();
+                new_patterns.insert(0, let_expr.0);
+                new_types.insert(0, let_expr.1);
+                WithLocation::new(TypeAst::Expression {
+                    binding_patterns: new_patterns,
+                    binding_types: new_types,
+                    body: body.clone(),
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
             }
-            _ => TypeAst::Expression {
+            _ => WithLocation::new(TypeAst::Expression {
                 binding_patterns: vec![let_expr.0],
                 binding_types: vec![let_expr.1],
                 body: Box::new(e),
-            },
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
         }
     },
-    <discard_expr: Discard> <e: Type> => {
-        match e {
+    <l:@L> <discard_expr: Discard> <e: Type> <r:@R> => {
+        match e.value() {
             TypeAst::Expression {
-                mut binding_patterns,
-                mut binding_types,
+                binding_patterns,
+                binding_types,
                 body,
             } => {
-                binding_patterns.insert(0, TypeAst::DiscardPattern);
-                binding_types.insert(0, discard_expr);
-                TypeAst::Expression {
-                    binding_patterns,
-                    binding_types,
-                    body,
-                }
+                let mut new_patterns = binding_patterns.clone();
+                let mut new_types = binding_types.clone();
+                new_patterns.insert(0, WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()));
+                new_types.insert(0, discard_expr);
+                WithLocation::new(TypeAst::Expression {
+                    binding_patterns: new_patterns,
+                    binding_types: new_types,
+                    body: body.clone(),
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
             }
-            _ => TypeAst::Expression {
-                binding_patterns: vec![TypeAst::DiscardPattern],
+            _ => WithLocation::new(TypeAst::Expression {
+                binding_patterns: vec![WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())],
                 binding_types: vec![discard_expr],
                 body: Box::new(e),
-            },
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
         }
     },
 }
 
-Effect: TypeAst<'input> = {
-    <perform_expr: Perform> <e: Type> => {
-        TypeAst::Invoke {
+Effect: WithLocation<TypeAst<'input>> = {
+    <l:@L> <perform_expr: Perform> <e: Type> <r:@R> => {
+        WithLocation::new(TypeAst::Invoke {
             func: Box::new(perform_expr.1),
             arg: Box::new(perform_expr.2),
-            continuation: Box::new(TypeAst::Closure {
+            continuation: Box::new(WithLocation::new(TypeAst::Closure {
                 pattern: Box::new(perform_expr.0),
                 body: Box::new(e),
                 fail_branch: None,
-            }),
-        }
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <discard_perform: DiscardPerform> <e: Type> => {
-        TypeAst::Invoke {
+    <l:@L> <discard_perform: DiscardPerform> <e: Type> <r:@R> => {
+        WithLocation::new(TypeAst::Invoke {
             func: Box::new(discard_perform.0),
             arg: Box::new(discard_perform.1),
-            continuation: Box::new(TypeAst::Closure {
-                pattern: Box::new(TypeAst::DiscardPattern),
+            continuation: Box::new(WithLocation::new(TypeAst::Closure {
+                pattern: Box::new(WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                 body: Box::new(e),
                 fail_branch: None,
-            }),
-        }
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
 
 
-pub Type: TypeAst<'input> = {
+pub Type: WithLocation<TypeAst<'input>> = {
     <e: Effect> => e,
     <e: Expression> => e,
     <t: Tuple> => t,
