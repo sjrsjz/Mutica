@@ -622,23 +622,16 @@ impl<'input> TypeAst<'input> {
                 // 把match转换为一系列的Apply和Closure
                 let mut expr = else_branch;
                 for (pat, branch_expr) in branches.into_iter().rev() {
-                    expr = Some(Box::new(WithLocation::new(
-                        BasicTypeAst::Apply {
-                            func: Box::new(WithLocation::new(
-                                BasicTypeAst::Closure {
-                                    pattern: Box::new(pat),
-                                    body: branch_expr.into(),
-                                    fail_branch: expr,
-                                },
-                                loc,
-                            )),
-                            arg: Box::new(WithLocation::new(
-                                BasicTypeAst::Variable(Some("match#value".to_string())),
-                                loc,
-                            )),
-                        },
-                        loc,
-                    )));
+                    expr = Some(Box::new(WithLocation::from(BasicTypeAst::Apply {
+                        func: Box::new(WithLocation::from(BasicTypeAst::Closure {
+                            pattern: Box::new(pat.clone()),
+                            body: branch_expr.into(),
+                            fail_branch: expr,
+                        })),
+                        arg: Box::new(WithLocation::from(BasicTypeAst::Variable(Some(
+                            "match#value".to_string(),
+                        )))),
+                    })));
                 }
                 WithLocation::new(
                     BasicTypeAst::Apply {
