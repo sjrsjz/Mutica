@@ -186,16 +186,16 @@ List: WithLocation<TypeAst<'input>> = {
 }
 
 Match: WithLocation<TypeAst<'input>> = {
-    <l:@L> "match" <value: Primary> <branches: MatchBranch+> <else_branch: ElseBranch> <r:@R> => {
+    <l:@L> "match" <value: Primary?> <branches: MatchBranch+> <else_branch: ElseBranch> <r:@R> => {
         WithLocation::new(TypeAst::Match {
-            value: Box::new(value),
+            value: value.map(Box::new),
             match_branch: branches,
             else_branch: Some(Box::new(else_branch)),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> "match" <value: Primary> <branches: MatchBranch+> "|" "panic" <r:@R> => {
+    <l:@L> "match" <value: Primary?> <branches: MatchBranch+> "|" "panic" <r:@R> => {
         WithLocation::new(TypeAst::Match {
-            value: Box::new(value),
+            value: value.map(Box::new),
             match_branch: branches,
             else_branch: None,
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())

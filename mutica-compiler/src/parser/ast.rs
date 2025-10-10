@@ -67,7 +67,7 @@ pub enum TypeAst<'input> {
         body: Box<WithLocation<TypeAst<'input>>>,
     },
     Match {
-        value: Box<WithLocation<TypeAst<'input>>>,
+        value: Option<Box<WithLocation<TypeAst<'input>>>>,
         match_branch: Vec<(WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>)>,
         else_branch: Option<Box<WithLocation<TypeAst<'input>>>>,
     },
@@ -608,7 +608,6 @@ impl<'input> TypeAst<'input> {
                 match_branch,
                 else_branch,
             } => {
-                let value = value.into_basic(value.location());
                 let mut branches = Vec::new();
                 for (pat, expr) in match_branch {
                     branches.push((
@@ -633,26 +632,45 @@ impl<'input> TypeAst<'input> {
                         )))),
                     })));
                 }
-                WithLocation::new(
-                    BasicTypeAst::Apply {
-                        func: Box::new(WithLocation::new(
-                            BasicTypeAst::Closure {
-                                pattern: Box::new(WithLocation::new(
-                                    BasicTypeAst::Pattern {
-                                        name: "match#value".to_string(),
-                                        expr: Box::new(WithLocation::new(BasicTypeAst::Top, loc)),
-                                    },
-                                    loc,
-                                )),
-                                body: expr.expect("There should be at least one branch").into(),
-                                fail_branch: None,
-                            },
-                            loc,
-                        )),
-                        arg: Box::new(value),
-                    },
-                    loc,
-                )
+                match value {
+                    Some(value) => WithLocation::new(
+                        BasicTypeAst::Apply {
+                            func: Box::new(WithLocation::new(
+                                BasicTypeAst::Closure {
+                                    pattern: Box::new(WithLocation::new(
+                                        BasicTypeAst::Pattern {
+                                            name: "match#value".to_string(),
+                                            expr: Box::new(WithLocation::new(
+                                                BasicTypeAst::Top,
+                                                loc,
+                                            )),
+                                        },
+                                        loc,
+                                    )),
+                                    body: expr.expect("There should be at least one branch").into(),
+                                    fail_branch: None,
+                                },
+                                loc,
+                            )),
+                            arg: Box::new(value.into_basic(value.location())),
+                        },
+                        loc,
+                    ),
+                    None => WithLocation::new(
+                        BasicTypeAst::Closure {
+                            pattern: Box::new(WithLocation::new(
+                                BasicTypeAst::Pattern {
+                                    name: "match#value".to_string(),
+                                    expr: Box::new(WithLocation::new(BasicTypeAst::Top, loc)),
+                                },
+                                loc,
+                            )),
+                            body: expr.expect("There should be at least one branch").into(),
+                            fail_branch: None,
+                        },
+                        loc,
+                    ),
+                }
             }
             TypeAst::Closure {
                 pattern,
@@ -889,7 +907,9 @@ impl<'input> TypeAst<'input> {
                 match_branch,
                 else_branch,
             } => {
-                value.collect_errors(errors);
+                if let Some(value) = value {
+                    value.collect_errors(errors);
+                }
                 for (pat, expr) in match_branch {
                     pat.collect_errors(errors);
                     expr.collect_errors(errors);
