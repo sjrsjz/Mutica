@@ -403,7 +403,7 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
 name = "mutica"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "mutica-compiler",
@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "mutica-compiler"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ariadne",
  "lalrpop",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "mutica-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rust-arc-gc",
  "smallvec",
@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "mutica-semantic"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "mutica-compiler",
  "mutica-core",

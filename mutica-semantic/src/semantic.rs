@@ -170,6 +170,12 @@ impl<'ast> SourceMapping<'ast> {
 
         result
     }
+
+    pub fn mapping(
+        &self,
+    ) -> &Vec<Option<&'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>> {
+        &self.mapping
+    }
 }
 
 #[cfg(test)]
