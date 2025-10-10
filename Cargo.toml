@@ -10,7 +10,7 @@ edition.workspace = true
 version.workspace = true
 
 [workspace.package]
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 
 [dependencies]
@@ -20,9 +20,9 @@ mutica-compiler = { workspace = true }
 mutica-semantic = { workspace = true }
 
 [workspace.dependencies]
-mutica-core = { version = "0.1.5", path = "mutica-core" }
-mutica-compiler = { version = "0.1.5", path = "mutica-compiler" }
-mutica-semantic = { version = "0.1.5", path = "mutica-semantic" }
+mutica-core = { version = "0.1.6", path = "mutica-core" }
+mutica-compiler = { version = "0.1.6", path = "mutica-compiler" }
+mutica-semantic = { version = "0.1.6", path = "mutica-semantic" }
 
 [[bin]]
 name = "mutica"

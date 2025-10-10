@@ -23,7 +23,7 @@ impl<'input> SyntaxError<'input> {
     /// 生成美观的 ariadne 错误报告
     pub fn report(
         &self,
-        filename: String,
+        filepath: String,
         source: &str,
     ) -> Report<'static, (String, std::ops::Range<usize>)> {
         use lalrpop_util::ParseError::*;
@@ -31,10 +31,10 @@ impl<'input> SyntaxError<'input> {
         match &self.0 {
             InvalidToken { location } => {
                 let char_pos = byte_offset_to_char_offset(source, *location);
-                Report::build(ReportKind::Error, filename.clone(), char_pos)
+                Report::build(ReportKind::Error, filepath.clone(), char_pos)
                     .with_message("Invalid token")
                     .with_label(
-                        Label::new((filename, char_pos..char_pos + 1))
+                        Label::new((filepath, char_pos..char_pos + 1))
                             .with_message("Invalid token found here")
                             .with_color(Color::Red),
                     )
@@ -46,10 +46,10 @@ impl<'input> SyntaxError<'input> {
             } => {
                 let char_start = byte_offset_to_char_offset(source, *start);
                 let char_end = byte_offset_to_char_offset(source, *end);
-                let mut report = Report::build(ReportKind::Error, filename.clone(), char_start)
+                let mut report = Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message(format!("Unrecognized token: {:?}", token))
                     .with_label(
-                        Label::new((filename.clone(), char_start..char_end))
+                        Label::new((filepath.clone(), char_start..char_end))
                             .with_message("Unexpected token")
                             .with_color(Color::Red),
                     );
@@ -62,10 +62,10 @@ impl<'input> SyntaxError<'input> {
             }
             UnrecognizedEof { location, expected } => {
                 let char_pos = byte_offset_to_char_offset(source, *location);
-                let mut report = Report::build(ReportKind::Error, filename.clone(), char_pos)
+                let mut report = Report::build(ReportKind::Error, filepath.clone(), char_pos)
                     .with_message("Unexpected end of input")
                     .with_label(
-                        Label::new((filename.clone(), char_pos..char_pos))
+                        Label::new((filepath.clone(), char_pos..char_pos))
                             .with_message("Expected more input here")
                             .with_color(Color::Red),
                     );
@@ -81,10 +81,10 @@ impl<'input> SyntaxError<'input> {
             } => {
                 let char_start = byte_offset_to_char_offset(source, *start);
                 let char_end = byte_offset_to_char_offset(source, *end);
-                Report::build(ReportKind::Error, filename.clone(), char_start)
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message(format!("Extra token: {:?}", token))
                     .with_label(
-                        Label::new((filename, char_start..char_end))
+                        Label::new((filepath, char_start..char_end))
                             .with_message("This token should not be here")
                             .with_color(Color::Red),
                     )
@@ -93,10 +93,10 @@ impl<'input> SyntaxError<'input> {
             User { error } => {
                 let char_start = byte_offset_to_char_offset(source, error.span.start);
                 let char_end = byte_offset_to_char_offset(source, error.span.end);
-                Report::build(ReportKind::Error, filename.clone(), char_start)
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message("Lexical error")
                     .with_label(
-                        Label::new((filename, char_start..char_end))
+                        Label::new((filepath, char_start..char_end))
                             .with_message(format!("{:?}", error))
                             .with_color(Color::Red),
                     )

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::{fs, process, sync::Arc};
+use std::{fs, path::PathBuf, process, sync::Arc};
 
 use mutica_compiler::{
     SyntaxError, ariadne,
@@ -8,7 +8,10 @@ use mutica_compiler::{
     parser::{BuildContext, ParseContext, SourceFile, ast::LinearizeContext, lexer::LexerToken},
 };
 use mutica_core::{
-    arc_gc::gc::GC, scheduler, types::Representable, util::cycle_detector::FastCycleDetector,
+    arc_gc::gc::GC,
+    scheduler,
+    types::{Representable, Type},
+    util::cycle_detector::FastCycleDetector,
 };
 
 #[derive(Parser)]
@@ -39,16 +42,13 @@ fn main() {
                     process::exit(1);
                 }
             };
-            // Normalize line endings to \n to avoid Ariadne position calculation issues
-            // when handling UTF-8 multi-byte characters with \r\n line endings
-            let normalized_code = code.replace("\r\n", "\n");
-            parse_and_reduce(&normalized_code);
+            parse_and_reduce(&code, PathBuf::from(file));
         }
     }
 }
 
-pub fn parse_and_reduce(expr: &str) {
-    let source_file = Arc::new(SourceFile::new(None, expr.into()));
+pub fn parse_and_reduce(expr: &str, path: PathBuf) {
+    let source_file = Arc::new(SourceFile::new(Some(path), expr.into()));
 
     #[cfg(debug_assertions)]
     println!("Parsing expression:\n{}\n", expr);
@@ -66,9 +66,12 @@ pub fn parse_and_reduce(expr: &str) {
             ast.collect_errors(&mut errors);
             if !errors.is_empty() {
                 for e in errors {
+                    let filepath = source_file.filepath();
                     let report =
-                        mutica_compiler::parser::report_error_recovery(&e, "<input>", expr);
-                    report.eprint(("<input>", ariadne::Source::from(expr))).ok();
+                        mutica_compiler::parser::report_error_recovery(&e, &filepath, expr);
+                    let cache: (&str, ariadne::Source) =
+                        (&filepath, ariadne::Source::from(expr.to_string()));
+                    report.eprint(cache).ok();
                 }
                 return;
             }
@@ -84,14 +87,14 @@ pub fn parse_and_reduce(expr: &str) {
                 Ok(result) => result.ty().clone(),
                 Err(e) => {
                     // 获取源文件信息用于错误报告
-                    let (filename, source_content) = if let Some(location) = linearized.location() {
+                    let (filepath, source_content) = if let Some(location) = linearized.location() {
                         let source = location.source();
-                        (source.filename(), source.content().to_string())
+                        (source.filepath(), source.content().to_string())
                     } else {
-                        ("<input>".to_string(), expr.to_string())
+                        (source_file.filepath(), expr.to_string())
                     };
                     e.report()
-                        .eprint((filename, ariadne::Source::from(source_content)))
+                        .eprint((filepath, ariadne::Source::from(source_content)))
                         .ok();
                     return;
                 }
@@ -107,15 +110,15 @@ pub fn parse_and_reduce(expr: &str) {
                     }
                     Err(Err(parse_error)) => {
                         // 获取源文件信息用于错误报告
-                        let (filename, source_content) = if let Some(location) = flowed.location() {
+                        let (filepath, source_content) = if let Some(location) = flowed.location() {
                             let source = location.source();
-                            (source.filename(), source.content().to_string())
+                            (source.filepath(), source.content().to_string())
                         } else {
                             ("<input>".to_string(), expr.to_string())
                         };
                         parse_error
                             .report()
-                            .eprint((filename, ariadne::Source::from(source_content)))
+                            .eprint((filepath, ariadne::Source::from(source_content)))
                             .ok();
                         return;
                     }
@@ -134,21 +137,31 @@ pub fn parse_and_reduce(expr: &str) {
                 }
             };
             match result {
-                Ok(v) => println!("{}", v.display(&mut FastCycleDetector::new())),
+                Ok(v) => v
+                    .map(&mut FastCycleDetector::new(), |_, ty| match ty {
+                        Type::Tuple(tuple) if tuple.is_empty() => (),
+                        _ => {
+                            println!("{}", v.display(&mut FastCycleDetector::new()));
+                            ()
+                        }
+                    })
+                    .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e)),
                 Err(e) => println!("Failed: {:?}", e),
             }
         }
         Err(e) => {
             let syntax_error = SyntaxError::new(e);
-            let filename = "<input>".to_string();
-            let report = syntax_error.report(filename.clone(), expr);
-            report.eprint((filename, ariadne::Source::from(expr))).ok();
+            let filepath = source_file.filepath();
+            let report = syntax_error.report(filepath.clone(), expr);
+            report.eprint((filepath, ariadne::Source::from(expr))).ok();
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::parse_and_reduce;
     // use super::parse_and_reduce_with_io;
     #[test]
@@ -158,14 +171,14 @@ mod tests {
         let B: any = a: any -> b: any -> (a, b) \ false \ false;
         A == B
         "#; // 测试函数α等价
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_alpha_equivalence.mutica"));
 
         let expr = r#"
         let A: any = x: any -> y: any -> (x, y) \ false \ false;
         let B: any = a: any -> b: any -> (b, a) \ false \ false;
         A == B
         "#; // 测试函数不等价
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_alpha_equivalence.mutica"));
     }
 
     #[test]
@@ -176,7 +189,7 @@ mod tests {
         let my_list2: any = (1, (2, @(3, 4)));
         my_list <: int_list, my_list2 <: int_list, my_list2 <: my_list
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_list_advanced.mutica"));
     }
 
     #[test]
@@ -184,7 +197,7 @@ mod tests {
         let expr = r#"
         (1 & 2) <: false, false <: (1 & 2)
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_specialize_generalize.mutica"));
     }
 
     #[test]
@@ -192,7 +205,7 @@ mod tests {
         let expr = r#"
         "Hello, world!"
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_char.mutica"));
     }
 
     #[test]
@@ -203,7 +216,7 @@ mod tests {
         let np: any = MyNamespace::any;
         v1, v2, np, v1 == v2, v1 <: np, v2 <: np
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_namespace.mutica"));
     }
 
     #[test]
@@ -223,7 +236,7 @@ mod tests {
                 | panic;
         get_value(safe_div(42, 0)), get_value(safe_div(42, 2))
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_optional.mutica"));
     }
 
     #[test]
@@ -237,7 +250,7 @@ mod tests {
             \ false;
         fib(10)
         "#; // 测试递归函数
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_rec.mutica"));
     }
 
     #[test]
@@ -247,7 +260,7 @@ mod tests {
         let f: any = x: any -> x + y \ false;
         f(1)
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_fn.mutica"));
     }
 
     #[test]
@@ -259,7 +272,7 @@ mod tests {
         let (x: int, y: int) = C;
         x + y
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_pattern.mutica"));
 
         let expr = r#"
         let A : any = (1, (2, 3));
@@ -268,7 +281,7 @@ mod tests {
             | (x: int, y: int) => x + y
             | ! => 42
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_pattern.mutica"));
 
         let expr = r#"
         let A : any = (1, 2);
@@ -277,7 +290,7 @@ mod tests {
             | (x: int, y: int) => x + y
             | ! => 42
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_pattern.mutica"));
 
         let expr = r#"
         let A: int = 1;
@@ -285,7 +298,7 @@ mod tests {
         let C: any = () -> (A, B) \ false;
         C()
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_pattern.mutica"));
     }
 
     #[test]
@@ -295,19 +308,19 @@ mod tests {
         let (x: int, y: int) = (1, 2, 3);
         x + y
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_assert_failed.mutica"));
 
         let expr = r#"
         let f: any = (x: int, y: int) -> (x, y) \ false;
         f(1), f(1, 2), f(1, 2, 3)
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_assert_failed.mutica"));
 
         let expr = r#"
         let (x: int | y: int) = 1;
         x + y
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_assert_failed.mutica"));
     }
 
     #[test]
@@ -319,7 +332,7 @@ mod tests {
             | (x: int, y: int) => x + y
             | ! => 0
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_ambiguous.mutica"));
 
         let expr = r#"
         match 42
@@ -327,7 +340,7 @@ mod tests {
             | (x: int, y: int) => x + y
             | ! => 0
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_ambiguous.mutica"));
     }
 
     #[test]
@@ -338,7 +351,7 @@ mod tests {
         let C: any = int -> (char | int) \ false;
         A <: B, B <: A, A <: C, C <: A, B <: C, C <: B
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_fn_2.mutica"));
     }
 
     #[test]
@@ -360,7 +373,7 @@ mod tests {
             \ false;
         add(three, two), add(four, one), add(five, zero)
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_nat.mutica"));
     }
     #[test]
     fn test_iter() {
@@ -382,7 +395,7 @@ mod tests {
                 | panic;
         iter(sum)(0, list)
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_iter.mutica"));
     }
 
     #[test]
@@ -393,7 +406,7 @@ mod tests {
                 | (x: int, y: int, z: int) => x + y + z
                 | panic
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_missing_pattern.mutica"));
     }
 
     #[test]
@@ -410,7 +423,7 @@ mod tests {
         let lst3: any = append(lst1, lst2);
         lst3, lst3 <: int_list
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_list_append.mutica"));
     }
 
     #[test]
@@ -419,7 +432,7 @@ mod tests {
         discard ();
         1
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_discard.mutica"));
     }
 
     #[test]
@@ -435,7 +448,7 @@ mod tests {
         let A::(x: any) = simple_dict;
         simple_dict, x, simple_dict.A
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_dict.mutica"));
     }
 
     #[test]
@@ -444,7 +457,7 @@ mod tests {
         let P0: ((a: 0, b: 1) |-> a + b) = (x: int, y: 1) |-> x + y;
         P0
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_coinductive.mutica"));
     }
 
     #[test]
@@ -456,7 +469,7 @@ mod tests {
             | ! => f(x - 2);
         f(11)
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_simple_fn.mutica"));
     }
 
     #[test]
@@ -473,7 +486,7 @@ mod tests {
         let p_list: any = @(p, p2, p3); 
         p, p.x, p.y, get(p_list, 0), get(p_list, 1), get(p_list, 2)
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_struct.mutica"));
     }
 
     #[test]
@@ -486,7 +499,7 @@ mod tests {
                 | panic;
         print_chars("Hello, world!\n")
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_io.mutica"));
     }
 
     #[test]
@@ -497,6 +510,6 @@ mod tests {
         let h: any = (#lazy_cps:any) |-> lazy_cps;
         h(g), g
         "#;
-        parse_and_reduce(expr);
+        parse_and_reduce(expr, PathBuf::from("test_literal.mutica"));
     }
 }

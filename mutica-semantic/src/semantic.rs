@@ -231,15 +231,15 @@ mod test {
                     Ok(result) => result.ty().clone(),
                     Err(e) => {
                         // 获取源文件信息用于错误报告
-                        let (filename, source_content) =
+                        let (filepath, source_content) =
                             if let Some(location) = linearized.location() {
                                 let source = location.source();
-                                (source.filename(), source.content().to_string())
+                                (source.filepath(), source.content().to_string())
                             } else {
                                 ("<input>".to_string(), expr.to_string())
                             };
                         e.report()
-                            .eprint((filename, ariadne::Source::from(source_content)))
+                            .eprint((filepath, ariadne::Source::from(source_content)))
                             .ok();
                         return;
                     }
@@ -276,9 +276,9 @@ mod test {
             }
             Err(e) => {
                 let syntax_error = SyntaxError::new(e);
-                let filename = "<input>".to_string();
-                let report = syntax_error.report(filename.clone(), expr);
-                report.eprint((filename, ariadne::Source::from(expr))).ok();
+                let filepath = "<input>".to_string();
+                let report = syntax_error.report(filepath.clone(), expr);
+                report.eprint((filepath, ariadne::Source::from(expr))).ok();
             }
         }
     }
@@ -365,15 +365,15 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
                 let flowed = match &flow_result {
                     Ok(result) => result.ty().clone(),
                     Err(e) => {
-                        let (filename, source_content) =
+                        let (filepath, source_content) =
                             if let Some(location) = linearized.location() {
                                 let source = location.source();
-                                (source.filename(), source.content().to_string())
+                                (source.filepath(), source.content().to_string())
                             } else {
                                 ("<input>".to_string(), expr.to_string())
                             };
                         e.report()
-                            .eprint((filename, ariadne::Source::from(source_content)))
+                            .eprint((filepath, ariadne::Source::from(source_content)))
                             .ok();
                         return;
                     }
@@ -464,9 +464,9 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
             }
             Err(e) => {
                 let syntax_error = SyntaxError::new(e);
-                let filename = "<input>".to_string();
-                let report = syntax_error.report(filename.clone(), expr);
-                report.eprint((filename, ariadne::Source::from(expr))).ok();
+                let filepath = "<input>".to_string();
+                let report = syntax_error.report(filepath.clone(), expr);
+                report.eprint((filepath, ariadne::Source::from(expr))).ok();
             }
         }
     }

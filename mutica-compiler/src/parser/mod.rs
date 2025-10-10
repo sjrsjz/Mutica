@@ -81,7 +81,7 @@ pub enum ParseError<'ast> {
 
 impl<'ast> ParseError<'ast> {
     /// 辅助函数：从 WithLocation 提取位置信息
-    /// 返回 (char_start, char_end, filename_owned)
+    /// 返回 (char_start, char_end, filepath_owned)
     fn extract_location_info(ast: &WithLocation<LinearTypeAst<'ast>>) -> (usize, usize, String) {
         if let Some(location) = ast.location() {
             let source = location.source();
@@ -89,8 +89,8 @@ impl<'ast> ParseError<'ast> {
             let content = source.content();
             let char_start = byte_offset_to_char_offset(content, span.start);
             let char_end = byte_offset_to_char_offset(content, span.end);
-            let filename = source.filename();
-            (char_start, char_end, filename)
+            let filepath = source.filepath();
+            (char_start, char_end, filepath)
         } else {
             // 如果没有位置信息，使用默认值
             (0, 1, "<unknown>".to_string())
@@ -101,11 +101,11 @@ impl<'ast> ParseError<'ast> {
     pub fn report(&self) -> Report<'static, (String, std::ops::Range<usize>)> {
         match self {
             ParseError::UseBeforeDeclaration(ast, name) => {
-                let (char_start, char_end, filename) = Self::extract_location_info(ast);
-                Report::build(ReportKind::Error, filename.clone(), char_start)
+                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message(format!("Use of undeclared variable '{}'", name))
                     .with_label(
-                        Label::new((filename, char_start..char_end))
+                        Label::new((filepath, char_start..char_end))
                             .with_message(format!("Variable '{}' is used before declaration", name))
                             .with_color(Color::Red),
                     )
@@ -114,19 +114,19 @@ impl<'ast> ParseError<'ast> {
             }
             ParseError::RedeclaredPattern(ast, name) => {
                 // 优先使用 name 的位置信息
-                let (report_start, report_filename) = if let Some(name_location) = name.location() {
+                let (report_start, report_filepath) = if let Some(name_location) = name.location() {
                     let source = name_location.source();
                     let span = name_location.span();
                     let content = source.content();
                     let char_start = byte_offset_to_char_offset(content, span.start);
-                    (char_start, source.filename())
+                    (char_start, source.filepath())
                 } else {
-                    let (char_start, _, filename) = Self::extract_location_info(ast);
-                    (char_start, filename)
+                    let (char_start, _, filepath) = Self::extract_location_info(ast);
+                    (char_start, filepath)
                 };
 
                 let mut report =
-                    Report::build(ReportKind::Error, report_filename.clone(), report_start)
+                    Report::build(ReportKind::Error, report_filepath.clone(), report_start)
                         .with_message(format!("Redeclared pattern variable '{}'", name.value()));
 
                 // 如果 name 有位置信息，为其添加 Label
@@ -136,10 +136,10 @@ impl<'ast> ParseError<'ast> {
                     let content = source.content();
                     let char_start = byte_offset_to_char_offset(content, span.start);
                     let char_end = byte_offset_to_char_offset(content, span.end);
-                    let filename = source.filename();
+                    let filepath = source.filepath();
 
                     report = report.with_label(
-                        Label::new((filename, char_start..char_end))
+                        Label::new((filepath, char_start..char_end))
                             .with_message(format!(
                                 "Pattern variable '{}' is redeclared here",
                                 name.value()
@@ -155,10 +155,10 @@ impl<'ast> ParseError<'ast> {
                     let content = source.content();
                     let ast_start = byte_offset_to_char_offset(content, span.start);
                     let ast_end = byte_offset_to_char_offset(content, span.end);
-                    let ast_filename = source.filename();
+                    let ast_filepath = source.filepath();
 
                     report = report.with_label(
-                        Label::new((ast_filename, ast_start..ast_end))
+                        Label::new((ast_filepath, ast_start..ast_end))
                             .with_message("The variable was already declared in this pattern")
                             .with_color(Color::Yellow),
                     );
@@ -180,10 +180,10 @@ impl<'ast> ParseError<'ast> {
                         let content = source.content();
                         let char_start = byte_offset_to_char_offset(content, span.start);
                         let char_end = byte_offset_to_char_offset(content, span.end);
-                        let filename = source.filename();
+                        let filepath = source.filepath();
 
                         labels.push(
-                            Label::new((filename, char_start..char_end))
+                            Label::new((filepath, char_start..char_end))
                                 .with_message(format!(
                                     "Variable '{}' is declared but never used",
                                     name_with_loc.value()
@@ -195,11 +195,11 @@ impl<'ast> ParseError<'ast> {
 
                 // 如果没有任何变量有位置信息，使用简化报告
                 if labels.is_empty() {
-                    let filename = "<unknown>".to_string();
-                    return Report::build(ReportKind::Warning, filename.clone(), 0)
+                    let filepath = "<unknown>".to_string();
+                    return Report::build(ReportKind::Warning, filepath.clone(), 0)
                         .with_message(format!("Unused variables: {}", var_names.join(", ")))
                         .with_label(
-                            Label::new((filename, 0..1))
+                            Label::new((filepath, 0..1))
                                 .with_message("Unable to locate source positions for unused variables")
                                 .with_color(Color::Yellow),
                         )
@@ -208,18 +208,18 @@ impl<'ast> ParseError<'ast> {
                 }
 
                 // 确定报告的起始位置和文件名（优先使用ast，否则用0）
-                let (report_filename, report_start) = if let Some(ast_location) = ast.location() {
+                let (report_filepath, report_start) = if let Some(ast_location) = ast.location() {
                     let source = ast_location.source();
                     let span = ast_location.span();
                     let content = source.content();
                     let char_start = byte_offset_to_char_offset(content, span.start);
-                    (source.filename(), char_start)
+                    (source.filepath(), char_start)
                 } else {
                     ("<unknown>".to_string(), 0)
                 };
 
                 let mut report =
-                    Report::build(ReportKind::Error, report_filename.clone(), report_start)
+                    Report::build(ReportKind::Error, report_filepath.clone(), report_start)
                         .with_message(format!("Unused variables: {}", var_names.join(", ")));
 
                 // 添加所有变量的 Label
@@ -234,10 +234,10 @@ impl<'ast> ParseError<'ast> {
                     let content = source.content();
                     let ast_start = byte_offset_to_char_offset(content, span.start);
                     let ast_end = byte_offset_to_char_offset(content, span.end);
-                    let ast_filename = source.filename();
+                    let ast_filepath = source.filepath();
 
                     report = report.with_label(
-                        Label::new((ast_filename, ast_start..ast_end))
+                        Label::new((ast_filepath, ast_start..ast_end))
                             .with_message("Analyzer detected unused variables in this scope")
                             .with_color(Color::Cyan),
                     );
@@ -248,22 +248,22 @@ impl<'ast> ParseError<'ast> {
                     .finish()
             }
             ParseError::AmbiguousPattern(ast) => {
-                let (char_start, char_end, filename) = Self::extract_location_info(ast);
-                Report::build(ReportKind::Error, filename.clone(), char_start)
+                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message("Ambiguous pattern")
                     .with_label(
-                        Label::new((filename, char_start..char_end))
+                        Label::new((filepath, char_start..char_end))
                             .with_message("Here: pattern variables are not allowed within generalized/specialized types. Pattern variables may only be used in ordered contexts (e.g., tuples, lists)")
                             .with_color(Color::Red),
                     )
                     .finish()
             }
             ParseError::PatternOutOfParameterDefinition(ast) => {
-                let (char_start, char_end, filename) = Self::extract_location_info(ast);
-                Report::build(ReportKind::Error, filename.clone(), char_start)
+                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message("Pattern definition appears in an invalid location")
                     .with_label(
-                        Label::new((filename, char_start..char_end))
+                        Label::new((filepath, char_start..char_end))
                             .with_message("Patterns can only be used in parameter definitions")
                             .with_color(Color::Red),
                     )
@@ -271,11 +271,11 @@ impl<'ast> ParseError<'ast> {
                     .finish()
             }
             ParseError::MissingBranch(ast) => {
-                let (char_start, char_end, filename) = Self::extract_location_info(ast);
-                Report::build(ReportKind::Error, filename.clone(), char_start)
+                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message("Missing required branch")
                     .with_label(
-                        Label::new((filename, char_start..char_end))
+                        Label::new((filepath, char_start..char_end))
                             .with_message("A match expression requires at least one branch")
                             .with_color(Color::Red),
                     )
@@ -283,11 +283,11 @@ impl<'ast> ParseError<'ast> {
             }
             ParseError::InternalError(msg) => {
                 // InternalError 没有 AST，使用默认位置
-                let filename = "<unknown>".to_string();
-                Report::build(ReportKind::Error, filename.clone(), 0)
+                let filepath = "<unknown>".to_string();
+                Report::build(ReportKind::Error, filepath.clone(), 0)
                     .with_message("Internal compiler error")
                     .with_label(
-                        Label::new((filename, 0..1))
+                        Label::new((filepath, 0..1))
                             .with_message(msg.clone())
                             .with_color(Color::Magenta),
                     )
@@ -301,7 +301,7 @@ impl<'ast> ParseError<'ast> {
 /// 为 lalrpop 的 ErrorRecovery 生成美观的错误报告
 pub fn report_error_recovery<'input, 'a>(
     error: &ErrorRecovery<usize, LexerToken<'input>, LexicalError>,
-    filename: &'a str,
+    filepath: &'a str,
     source: &str,
 ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
     use lalrpop_util::ParseError::*;
@@ -315,10 +315,10 @@ pub fn report_error_recovery<'input, 'a>(
         InvalidToken { location } => {
             let (line, col) = byte_offset_to_position(source, *location);
             let char_offset = byte_offset_to_char_offset(source, *location);
-            Report::build(ReportKind::Error, filename, char_offset)
+            Report::build(ReportKind::Error, filepath, char_offset)
                 .with_message(format!("Invalid token at line {}, column {}", line, col))
                 .with_label(
-                    Label::new((filename, span_start_char..span_end_char))
+                    Label::new((filepath, span_start_char..span_end_char))
                         .with_message("The token at this position is not recognized")
                         .with_color(Color::Red),
                 )
@@ -331,13 +331,13 @@ pub fn report_error_recovery<'input, 'a>(
             let char_start = byte_offset_to_char_offset(source, *start);
             let char_end = byte_offset_to_char_offset(source, *end);
 
-            let mut report_builder = Report::build(ReportKind::Error, filename, char_start)
+            let mut report_builder = Report::build(ReportKind::Error, filepath, char_start)
                 .with_message(format!(
                     "Unrecognized token {:?} at line {}, column {}",
                     token, line, col
                 ))
                 .with_label(
-                    Label::new((filename, char_start..char_end))
+                    Label::new((filepath, char_start..char_end))
                         .with_message({
                             if !expected.is_empty() {
                                 let expected_str = expected.join(", ");
@@ -354,7 +354,7 @@ pub fn report_error_recovery<'input, 'a>(
                 && (span_start_char < char_start || span_end_char > char_end)
             {
                 report_builder = report_builder.with_label(
-                    Label::new((filename, span_start_char..span_end_char))
+                    Label::new((filepath, span_start_char..span_end_char))
                         .with_message("Full error region (including skipped tokens)")
                         .with_color(Color::Yellow),
                 );
@@ -365,13 +365,13 @@ pub fn report_error_recovery<'input, 'a>(
         UnrecognizedEof { location, expected } => {
             let (line, col) = byte_offset_to_position(source, *location);
             let char_offset = byte_offset_to_char_offset(source, *location);
-            Report::build(ReportKind::Error, filename, char_offset)
+            Report::build(ReportKind::Error, filepath, char_offset)
                 .with_message(format!(
                     "Unexpected end of file at line {}, column {}",
                     line, col
                 ))
                 .with_label(
-                    Label::new((filename, span_start_char..span_end_char.max(1)))
+                    Label::new((filepath, span_start_char..span_end_char.max(1)))
                         .with_message({
                             if !expected.is_empty() {
                                 let expected_str = expected.join(", ");
@@ -389,13 +389,13 @@ pub fn report_error_recovery<'input, 'a>(
             let (line, col) = byte_offset_to_position(source, *start);
             let char_start = byte_offset_to_char_offset(source, *start);
             let char_end = byte_offset_to_char_offset(source, *end);
-            let mut report_builder = Report::build(ReportKind::Error, filename, char_start)
+            let mut report_builder = Report::build(ReportKind::Error, filepath, char_start)
                 .with_message(format!(
                     "Extra token {:?} at line {}, column {}",
                     token, line, col
                 ))
                 .with_label(
-                    Label::new((filename, char_start..char_end))
+                    Label::new((filepath, char_start..char_end))
                         .with_message("Try removing this token")
                         .with_color(Color::Yellow),
                 );
@@ -405,7 +405,7 @@ pub fn report_error_recovery<'input, 'a>(
                 && (span_start_char < char_start || span_end_char > char_end)
             {
                 report_builder = report_builder.with_label(
-                    Label::new((filename, span_start_char..span_end_char))
+                    Label::new((filepath, span_start_char..span_end_char))
                         .with_message("Full error region (including skipped tokens)")
                         .with_color(Color::Cyan),
                 );
@@ -417,10 +417,10 @@ pub fn report_error_recovery<'input, 'a>(
             let (line, col) = byte_offset_to_position(source, lex_error.span.start);
             let char_start = byte_offset_to_char_offset(source, lex_error.span.start);
             let char_end = byte_offset_to_char_offset(source, lex_error.span.end);
-            Report::build(ReportKind::Error, filename, char_start)
+            Report::build(ReportKind::Error, filepath, char_start)
                 .with_message(format!("Lexical error at line {}, column {}", line, col))
                 .with_label(
-                    Label::new((filename, char_start..char_end))
+                    Label::new((filepath, char_start..char_end))
                         .with_message("There is a lexical error here")
                         .with_color(Color::Red),
                 )
@@ -642,13 +642,9 @@ impl SourceFile {
         Self { path, content }
     }
 
-    pub fn filename(&self) -> String {
+    pub fn filepath(&self) -> String {
         if let Some(path) = &self.path {
-            if let Some(name) = path.file_name() {
-                if let Some(name_str) = name.to_str() {
-                    return name_str.to_string();
-                }
-            }
+            // 优先返回完整路径，这样 ariadne 的 cache 才能正确匹配
             return path.to_string_lossy().to_string();
         }
         "<input>".to_string()
