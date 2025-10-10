@@ -10,39 +10,14 @@ use crate::{
         ast::LinearTypeAst,
         lexer::{LexerToken, LexicalError},
     },
-    util::byte_offset_to_char_offset,
+    util::{byte_offset_to_char_offset, byte_offset_to_position},
 };
-use ariadne::{Color, Label, Report, ReportKind, Source};
+use ariadne::{Color, Label, Report, ReportKind};
 use lalrpop_util::ErrorRecovery;
-
-/// Convert byte offset to line and column numbers
-/// Correctly handles UTF-8 multi-byte characters and different line endings
-fn byte_offset_to_position(source: &str, byte_offset: usize) -> (usize, usize) {
-    let mut line = 1;
-    let mut column = 1;
-    let mut current_offset = 0;
-
-    for ch in source.chars() {
-        if current_offset >= byte_offset {
-            break;
-        }
-
-        if ch == '\n' {
-            line += 1;
-            column = 1;
-        } else if ch != '\r' {
-            column += 1;
-        }
-
-        current_offset += ch.len_utf8();
-    }
-
-    (line, column)
-}
 
 /// Calculate the full error span including all dropped tokens
 /// Returns (byte_start, byte_end) tuple
-fn calculate_full_error_span(
+pub fn calculate_full_error_span(
     error: &ErrorRecovery<usize, LexerToken, LexicalError>,
 ) -> (usize, usize) {
     use lalrpop_util::ParseError::*;
@@ -324,11 +299,11 @@ impl<'ast> ParseError<'ast> {
 }
 
 /// 为 lalrpop 的 ErrorRecovery 生成美观的错误报告
-pub fn report_error_recovery<'input>(
+pub fn report_error_recovery<'input, 'a>(
     error: &ErrorRecovery<usize, LexerToken<'input>, LexicalError>,
-    filename: &str,
+    filename: &'a str,
     source: &str,
-) {
+) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
     use lalrpop_util::ParseError::*;
 
     // Calculate the full error span including dropped tokens
@@ -336,7 +311,7 @@ pub fn report_error_recovery<'input>(
     let span_start_char = byte_offset_to_char_offset(source, span_start_byte);
     let span_end_char = byte_offset_to_char_offset(source, span_end_byte);
 
-    let mut report = match &error.error {
+    match &error.error {
         InvalidToken { location } => {
             let (line, col) = byte_offset_to_position(source, *location);
             let char_offset = byte_offset_to_char_offset(source, *location);
@@ -450,20 +425,8 @@ pub fn report_error_recovery<'input>(
                         .with_color(Color::Red),
                 )
         }
-    };
-
-    // Add note about dropped tokens if any
-    if !error.dropped_tokens.is_empty() {
-        report = report.with_note(format!(
-            "Parser skipped {} token(s) while recovering from this error",
-            error.dropped_tokens.len()
-        ));
     }
-
-    report
-        .finish()
-        .eprint((filename, Source::from(source)))
-        .unwrap();
+    .finish()
 }
 
 pub struct ParseContext {

@@ -66,7 +66,9 @@ pub fn parse_and_reduce(expr: &str) {
             ast.collect_errors(&mut errors);
             if !errors.is_empty() {
                 for e in errors {
-                    mutica_compiler::parser::report_error_recovery(&e, "<input>", expr);
+                    let report =
+                        mutica_compiler::parser::report_error_recovery(&e, "<input>", expr);
+                    report.eprint(("<input>", ariadne::Source::from(expr))).ok();
                 }
                 return;
             }

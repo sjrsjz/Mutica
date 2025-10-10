@@ -5,6 +5,7 @@ pub mod parser;
 pub mod util;
 pub use ariadne;
 pub use logos;
+pub use lalrpop_util;
 
 use ariadne::{Color, Label, Report, ReportKind};
 
