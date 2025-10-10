@@ -98,7 +98,9 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::Pattern { expr, .. } => {
                 Self::build_mapping(expr, mapping, source_file);
             }
-            LinearTypeAst::Literal(_) => todo!(),
+            LinearTypeAst::Literal(expr) => {
+                Self::build_mapping(expr, mapping, source_file);
+            }
         }
     }
 }
