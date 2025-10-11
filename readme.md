@@ -65,6 +65,11 @@ let value: (int | char) = 42;
 
 // Specialized type (note it's not an intersection of values, 1 & 2 != false)
 let labeled: { x::int & y::int } = { x::1 & y::2 };
+
+// Wildcard type
+let x: any = 42; // `any` is the supertype of all types
+let x: _ = 42;   // `_` is an alias for `any`
+let _ = 42;     // type can be used directly without binding, acts like assert(42 <: any)
 ```
 
 ### Function definitions
@@ -74,11 +79,11 @@ let labeled: { x::int & y::int } = { x::1 & y::2 };
 let add_one: any = (x: int) |-> x + 1; // `|->` means input type must be a subtype described by the parameter pattern
 
 // Recursive function
-let fib: any = rec f: (n: int) |-> 
-    match n
-        | 0 => 0
-        | 1 => 1
-        | ! => f(n - 1) + f(n - 2); // `!` is the default branch
+let fib: any = rec f: match // when matching without an input variable, `match` will be compiled into a chain of function calls
+    | 0 => 0
+    | 1 => 1
+    | _ => f(n - 1) + f(n - 2) // `_` is the wildcard pattern (alias for `any`)
+    | panic;                  // `panic` asserts that all input patterns are covered
 
 // Total function
 let safe_div: any = (x: int, y: int) -> x / y \ "Invalid Input Type"; // `\` denotes a branch when pattern match fails
@@ -160,7 +165,8 @@ let fib: any = rec f: (n: int) |->
     match n
         | 0 => 0
         | 1 => 1
-        | ! => f(n - 1) + f(n - 2);
+        | _ => f(n - 1) + f(n - 2)
+        | panic;
 fib(10)
 ```
 

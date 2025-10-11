@@ -70,7 +70,6 @@ pub enum TypeAst<'input> {
     Match {
         value: Option<Box<WithLocation<TypeAst<'input>>>>,
         match_branch: Vec<(WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>)>,
-        else_branch: Option<Box<WithLocation<TypeAst<'input>>>>,
     },
     Closure {
         pattern: Box<WithLocation<TypeAst<'input>>>,
@@ -614,7 +613,6 @@ impl<'input> TypeAst<'input> {
             TypeAst::Match {
                 value,
                 match_branch,
-                else_branch,
             } => {
                 let mut branches = Vec::new();
                 for (pat, expr) in match_branch {
@@ -623,11 +621,8 @@ impl<'input> TypeAst<'input> {
                         expr.into_basic(expr.location()),
                     ));
                 }
-                let else_branch = else_branch
-                    .as_ref()
-                    .map(|b| Box::new(b.into_basic(b.location())));
                 // 把match转换为一系列的Apply和Closure
-                let mut expr = else_branch;
+                let mut expr = None;
                 for (pat, branch_expr) in branches.into_iter().rev() {
                     expr = Some(Box::new(WithLocation::from(BasicTypeAst::Apply {
                         func: Box::new(WithLocation::from(BasicTypeAst::Closure {
@@ -913,7 +908,6 @@ impl<'input> TypeAst<'input> {
             TypeAst::Match {
                 value,
                 match_branch,
-                else_branch,
             } => {
                 if let Some(value) = value {
                     value.collect_errors(errors);
@@ -921,9 +915,6 @@ impl<'input> TypeAst<'input> {
                 for (pat, expr) in match_branch {
                     pat.collect_errors(errors);
                     expr.collect_errors(errors);
-                }
-                if let Some(else_branch) = else_branch {
-                    else_branch.collect_errors(errors);
                 }
             }
             TypeAst::Closure {

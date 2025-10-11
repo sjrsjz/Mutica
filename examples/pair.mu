@@ -2,25 +2,22 @@
 let Pair: any = fst: any |-> snd: any |-> Pair::(fst, snd);
 
 // 获取第一个元素
-let fst: any = pair: Pair::(any, any) |->
-    match pair
-        | Pair::(first: any, any) => first
-        | panic;
+let fst: any = match
+    | Pair::(first: any, any) => first
+    | panic;
 
 // 获取第二个元素
-let snd: any = pair: Pair::(any, any) |->
-    match pair
-        | Pair::(any, second: any) => second
-        | panic;
+let snd: any = match 
+    | Pair::(any, second: any) => second
+    | panic;
 
 // 交换元素
-let swap: any = pair: Pair::(any, any) |->
-    match pair
-        | Pair::(first: any, second: any) => Pair(second)(first)
-        | panic;
+let swap: any = match
+    | Pair::(first: any, second: any) => Pair(second)(first)
+    | panic;
 
 // 对两个元素应用函数
-let map_both: any = pair: Pair::(any, any) |-> f: any |->
+let map_both: any = pair: Pair(any)(any) |-> f: any |->
     match pair
         | Pair::(first: any, second: any) => Pair(f(first))(f(second))
         | panic;

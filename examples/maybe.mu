@@ -1,7 +1,7 @@
 let Just: any = T: any |-> Just::T;
 let Nothing: any = Nothing::();
-// let Maybe: any = T: any |-> (Just T | Nothing);
-let map: any = v: (Nothing::() | Just::any) |-> f: any |-> 
+let Maybe: any = T: any |-> (Just T | Nothing);
+let map: any = v: Maybe(any) |-> f: any |-> 
     match v
         | Just::(x: any) => Just(f(x))
         | Nothing::() => Nothing

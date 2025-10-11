@@ -1,23 +1,22 @@
 // Either 类型示例 (用于错误处理)
 let Left: any = value: any |-> Left::value;
 let Right: any = value: any |-> Right::value;
-
+let Either: any = (T: any, U: any) |-> (Left T | Right U);
 // map_right: 只对 Right 值进行映射
-let map_right: any = either: (Left::any | Right::any) |-> f: any |->
+let map_right: any = either: Either(any, any) |-> f: any |->
     match either
         | Left::(err: any) => Left(err)
         | Right::(val: any) => Right(f(val))
         | panic;
 
 // 安全除法
-let safe_div: any = a: int |-> b: int |->
-    match b
-        | 0 => Left("Division by zero")
-        | b_val: int => Right(a / b_val)
-        | panic;
+let safe_div: any = a: int |-> match
+    | 0 => Left("Division by zero")
+    | b_val: int => Right(a / b_val)
+    | panic;
 
 // 链式操作
-let bind: any = either: (Left::any | Right::any) |-> f: any |->
+let bind: any = either: Either(any, any) |-> f: any |->
     match either
         | Left::(err: any) => Left(err)
         | Right::(val: any) => f(val)

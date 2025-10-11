@@ -6,7 +6,8 @@ let factorial: any =
         match n
             | 0 => 1
             | 1 => 1
-            | ! => n * fact(n - 1);
+            | _ => n * fact(n - 1)
+            | panic;
 
 // 尾递归阶乘
 let factorial_tail: any = n: int |-> [
@@ -14,7 +15,8 @@ let factorial_tail: any = n: int |-> [
             match n
                 | 0 => acc
                 | 1 => acc
-                | ! => h(acc * n)(n - 1);
+                | _ => h(acc * n)(n - 1)
+                | panic;
         helper(1)(n)
     ];
 
@@ -24,14 +26,16 @@ let fibonacci: any =
         match n
             | 0 => 0
             | 1 => 1
-            | ! => fib(n - 1) + fib(n - 2);
+            | _ => fib(n - 1) + fib(n - 2)
+            | panic;
 
 // 尾递归斐波那契
 let fibonacci_tail: any = n: int |-> [
     let helper: any = rec helper: a: int |-> b: int |-> n: int |->
         match n
             | 0 => a
-            | ! => helper(b)(a + b)(n - 1);
+            | _ => helper(b)(a + b)(n - 1)
+            | panic;
         helper(0)(1)(n)
     ];
 

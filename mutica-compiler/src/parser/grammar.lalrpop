@@ -14,6 +14,7 @@ extern {
     type Error = LexicalError;
 
     enum LexerToken<'input> {
+        "_" => LexerToken::Wildcard,
         r"[0-9]+" => LexerToken::Num(<&'input str>),
         r"[a-zA-Z_][a-zA-Z0-9_]*" => LexerToken::Ident(<&'input str>),
         r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'" => LexerToken::CharLit(<&'input str>),
@@ -21,9 +22,7 @@ extern {
 
         "let" => LexerToken::Let,
         "perform" => LexerToken::Perform,
-        "do" => LexerToken::Do,
         "with" => LexerToken::With,
-        "as" => LexerToken::As,
         "match" => LexerToken::Match,
         "rec" => LexerToken::Rec,
         "panic" => LexerToken::Panic,
@@ -116,6 +115,7 @@ AtomType: WithLocation<TypeAst<'input>> = {
     <l:@L> "true" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "false" <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "any" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "_" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "none" <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "__add" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "__sub" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -186,18 +186,10 @@ List: WithLocation<TypeAst<'input>> = {
 }
 
 Match: WithLocation<TypeAst<'input>> = {
-    <l:@L> "match" <value: Primary?> <branches: MatchBranch+> <else_branch: ElseBranch> <r:@R> => {
-        WithLocation::new(TypeAst::Match {
-            value: value.map(Box::new),
-            match_branch: branches,
-            else_branch: Some(Box::new(else_branch)),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
     <l:@L> "match" <value: Primary?> <branches: MatchBranch+> "|" "panic" <r:@R> => {
         WithLocation::new(TypeAst::Match {
             value: value.map(Box::new),
             match_branch: branches,
-            else_branch: None,
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
@@ -206,9 +198,9 @@ MatchBranch: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
     "|" <pattern: Primary> "=>" <t: Primary> => (pattern, t),
 }
 
-ElseBranch: WithLocation<TypeAst<'input>> = {
-    "|" "!" "=>" <t: Primary> => t,
-}
+// ElseBranch: WithLocation<TypeAst<'input>> = {
+//     "|" "!" "=>" <t: Primary> => t,
+// }
 
 RecursiveGen: WithLocation<TypeAst<'input>> = {
     <l:@L> "rec" <id: Ident> ":" <t: Primary> <r:@R> => WithLocation::new(TypeAst::FixPoint {

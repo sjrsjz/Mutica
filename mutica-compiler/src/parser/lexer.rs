@@ -22,7 +22,8 @@ impl Default for LexicalError {
 pub enum LexerToken<'input> {
     #[regex("[0-9]+")]
     Num(&'input str),
-
+    #[token("_", priority = 3)]
+    Wildcard,
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*")]
     Ident(&'input str),
 
@@ -36,12 +37,8 @@ pub enum LexerToken<'input> {
     Let,
     #[token("perform")]
     Perform,
-    #[token("do")]
-    Do,
     #[token("with")]
     With,
-    #[token("as")]
-    As,
     #[token("match")]
     Match,
     #[token("rec")]
@@ -60,6 +57,7 @@ pub enum LexerToken<'input> {
     False,
     #[token("any")]
     Any,
+
     #[token("none")]
     None,
     #[token("__add")]
