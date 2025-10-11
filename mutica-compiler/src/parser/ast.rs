@@ -1054,37 +1054,38 @@ impl<'ast> LinearTypeAst<'ast> {
         ctx: &mut ParseContext,
         pattern_mode: bool,
         loc: Option<&SourceLocation>,
-    ) -> Result<FlowResult, ParseError> {
+        errors: &mut Vec<ParseError<'ast>>,
+    ) -> FlowResult<'ast> {
         match self {
-            LinearTypeAst::Int => Ok(FlowResult::simple(
+            LinearTypeAst::Int => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Int, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            )),
-            LinearTypeAst::Char => Ok(FlowResult::simple(
+            ),
+            LinearTypeAst::Char => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Char, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            )),
-            LinearTypeAst::Top => Ok(FlowResult::simple(
+            ),
+            LinearTypeAst::Top => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Top, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            )),
-            LinearTypeAst::Bottom => Ok(FlowResult::simple(
+            ),
+            LinearTypeAst::Bottom => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Bottom, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            )),
-            LinearTypeAst::IntLiteral(v) => Ok(FlowResult::simple(
+            ),
+            LinearTypeAst::IntLiteral(v) => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::IntLiteral(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            )),
-            LinearTypeAst::CharLiteral(v) => Ok(FlowResult::simple(
+            ),
+            LinearTypeAst::CharLiteral(v) => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::CharLiteral(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            )),
+            ),
             LinearTypeAst::Variable(Some(name)) => match ctx.use_variable(name) {
                 Ok(var_loc) => {
                     let mut captures = HashMap::new();
                     captures.insert(name.clone(), var_loc.clone());
-                    Ok(FlowResult::complex(
+                    FlowResult::complex(
                         WithLocation::new(LinearTypeAst::Variable(Some(name.clone())), loc),
                         captures,
                         PatternEnv::new(),
@@ -1093,180 +1094,185 @@ impl<'ast> LinearTypeAst<'ast> {
                         FlowedMetaData::default()
                             .with_reference(Some(var_loc.clone().map(|_| None)))
                             .with_variable_context(ctx.capture()),
-                    ))
+                    )
                 }
                 Err(context_error) => match context_error {
-                    ContextError::NotDeclared(name) => Err(ParseError::UseBeforeDeclaration(
-                        WithLocation::new(self.clone(), loc),
-                        name,
-                    )),
+                    ContextError::NotDeclared(name) => {
+                        errors.push(ParseError::UseBeforeDeclaration(
+                            WithLocation::new(self.clone(), loc),
+                            name,
+                        ));
+                        // 返回一个简单的变量引用作为恢复
+                        FlowResult::simple(
+                            WithLocation::new(LinearTypeAst::Variable(None), loc).with_payload(
+                                FlowedMetaData::default().with_variable_context(ctx.capture()),
+                            ),
+                        )
+                    }
                     _ => unreachable!(),
                 },
             },
-            LinearTypeAst::Variable(None) => Ok(FlowResult::simple(
+            LinearTypeAst::Variable(None) => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Variable(None), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            )), // None 表示续体，不会捕获任何变量（因为续体对于任何函数都是存在的）
+            ), // None 表示续体,不会捕获任何变量（因为续体对于任何函数都是存在的）
             LinearTypeAst::Tuple(elements) => {
                 let mut new_elements = Vec::new();
                 let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
                 for elem in elements {
-                    let res = elem.flow(ctx, pattern_mode, elem.location())?;
+                    let res = elem.flow(ctx, pattern_mode, elem.location(), errors);
                     new_elements.push(res.ty);
                     all_captures.extend(res.captures);
-                    all_patterns
-                        .extend(
-                            res.patterns
-                                .into_iter()
-                                .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                        )
-                        .map_err(|name| {
-                            ParseError::RedeclaredPattern(
-                                WithLocation::new(self.clone(), loc),
-                                name,
-                            )
-                        })?;
+                    if let Err(name) = all_patterns.extend(
+                        res.patterns
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    ) {
+                        errors.push(ParseError::RedeclaredPattern(
+                            WithLocation::new(self.clone(), loc),
+                            name,
+                        ));
+                    }
                 }
-                Ok(FlowResult::complex(
+                FlowResult::complex(
                     WithLocation::new(LinearTypeAst::Tuple(new_elements), loc),
                     all_captures,
                     all_patterns,
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::List(elements) => {
                 let mut new_elements = Vec::new();
                 let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
                 for elem in elements {
-                    let res = elem.flow(ctx, pattern_mode, elem.location())?;
+                    let res = elem.flow(ctx, pattern_mode, elem.location(), errors);
                     new_elements.push(res.ty);
                     all_captures.extend(res.captures);
-                    all_patterns
-                        .extend(
-                            res.patterns
-                                .into_iter()
-                                .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                        )
-                        .map_err(|name| {
-                            ParseError::RedeclaredPattern(
-                                WithLocation::new(self.clone(), loc),
-                                name,
-                            )
-                        })?;
+                    if let Err(name) = all_patterns.extend(
+                        res.patterns
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    ) {
+                        errors.push(ParseError::RedeclaredPattern(
+                            WithLocation::new(self.clone(), loc),
+                            name,
+                        ));
+                    }
                 }
-                Ok(FlowResult::complex(
+                FlowResult::complex(
                     WithLocation::new(LinearTypeAst::List(new_elements), loc),
                     all_captures,
                     all_patterns,
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Generalize(types) => {
                 let mut new_types = Vec::new();
                 let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
                 for ty in types {
-                    let res = ty.flow(ctx, pattern_mode, ty.location())?;
+                    let res = ty.flow(ctx, pattern_mode, ty.location(), errors);
                     new_types.push(res.ty);
                     all_captures.extend(res.captures);
-                    all_patterns
-                        .extend(
-                            res.patterns
-                                .into_iter()
-                                .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                        )
-                        .map_err(|name| {
-                            ParseError::RedeclaredPattern(
-                                WithLocation::new(self.clone(), loc),
-                                name,
-                            )
-                        })?;
+                    if let Err(name) = all_patterns.extend(
+                        res.patterns
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    ) {
+                        errors.push(ParseError::RedeclaredPattern(
+                            WithLocation::new(self.clone(), loc),
+                            name,
+                        ));
+                    }
                 }
                 if !all_patterns.is_empty() {
                     // 泛化类型中不允许出现模式变量，因为泛化类型是乱序的
-                    return Err(ParseError::AmbiguousPattern(WithLocation::new(
+                    errors.push(ParseError::AmbiguousPattern(WithLocation::new(
                         self.clone(),
                         loc,
                     )));
+                    all_patterns = PatternEnv::new(); // 清空模式变量
                 }
-                Ok(FlowResult::complex(
+                FlowResult::complex(
                     WithLocation::new(LinearTypeAst::Generalize(new_types), loc),
                     all_captures,
                     all_patterns,
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Specialize(types) => {
                 let mut new_types = Vec::new();
                 let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
                 for ty in types {
-                    let res = ty.flow(ctx, pattern_mode, ty.location())?;
+                    let res = ty.flow(ctx, pattern_mode, ty.location(), errors);
                     new_types.push(res.ty);
                     all_captures.extend(res.captures);
-                    all_patterns
-                        .extend(
-                            res.patterns
-                                .into_iter()
-                                .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                        )
-                        .map_err(|name| {
-                            ParseError::RedeclaredPattern(
-                                WithLocation::new(self.clone(), loc),
-                                name,
-                            )
-                        })?;
+                    if let Err(name) = all_patterns.extend(
+                        res.patterns
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    ) {
+                        errors.push(ParseError::RedeclaredPattern(
+                            WithLocation::new(self.clone(), loc),
+                            name,
+                        ));
+                    }
                 }
                 if !all_patterns.is_empty() {
                     // 专化类型中不允许出现模式变量，因为专化类型是乱序的
-                    return Err(ParseError::AmbiguousPattern(WithLocation::new(
+                    errors.push(ParseError::AmbiguousPattern(WithLocation::new(
                         self.clone(),
                         loc,
                     )));
+                    all_patterns = PatternEnv::new(); // 清空模式变量
                 }
-                Ok(FlowResult::complex(
+                FlowResult::complex(
                     WithLocation::new(LinearTypeAst::Specialize(new_types), loc),
                     all_captures,
                     all_patterns,
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Invoke {
                 func,
                 arg,
                 continuation,
             } => {
-                let func_res = func.flow(ctx, pattern_mode, func.location())?;
-                let arg_res = arg.flow(ctx, pattern_mode, arg.location())?;
-                let cont_res = continuation.flow(ctx, pattern_mode, continuation.location())?;
+                let func_res = func.flow(ctx, pattern_mode, func.location(), errors);
+                let arg_res = arg.flow(ctx, pattern_mode, arg.location(), errors);
+                let cont_res =
+                    continuation.flow(ctx, pattern_mode, continuation.location(), errors);
                 let mut all_captures = func_res.captures;
                 all_captures.extend(arg_res.captures);
                 all_captures.extend(cont_res.captures.clone());
 
                 let mut all_patterns = func_res.patterns;
-                all_patterns
-                    .extend(
-                        arg_res
-                            .patterns
-                            .into_iter()
-                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                    )
-                    .map_err(|name| {
-                        ParseError::RedeclaredPattern(WithLocation::new(self.clone(), loc), name)
-                    })?;
-                all_patterns
-                    .extend(
-                        cont_res
-                            .patterns
-                            .into_iter()
-                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                    )
-                    .map_err(|name| {
-                        ParseError::RedeclaredPattern(WithLocation::new(self.clone(), loc), name)
-                    })?;
-                Ok(FlowResult::complex(
+                if let Err(name) = all_patterns.extend(
+                    arg_res
+                        .patterns
+                        .into_iter()
+                        .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                ) {
+                    errors.push(ParseError::RedeclaredPattern(
+                        WithLocation::new(self.clone(), loc),
+                        name,
+                    ));
+                }
+                if let Err(name) = all_patterns.extend(
+                    cont_res
+                        .patterns
+                        .into_iter()
+                        .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                ) {
+                    errors.push(ParseError::RedeclaredPattern(
+                        WithLocation::new(self.clone(), loc),
+                        name,
+                    ));
+                }
+                FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Invoke {
                             func: Box::new(func_res.ty),
@@ -1278,41 +1284,39 @@ impl<'ast> LinearTypeAst<'ast> {
                     all_captures,
                     all_patterns,
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::AtomicOpcode(atomic_opcode) => Ok(FlowResult::simple(
+            LinearTypeAst::AtomicOpcode(atomic_opcode) => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            )),
+            ),
             LinearTypeAst::FixPoint { param_name, expr } => {
                 ctx.enter_scope();
                 match ctx.declare_variable(param_name.clone(), loc) {
                     Ok(_) => {}
                     Err(ContextError::EmptyContext) => {
-                        return Err(ParseError::InternalError(
-                            "Context should not be empty when declaring a variable".to_string(),
-                        ));
+                        panic!(
+                            "Internal error: Context should not be empty when declaring a variable"
+                        );
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        return Err(ParseError::UnusedVariable(
+                        errors.push(ParseError::UnusedVariable(
                             WithLocation::new(self.clone(), loc),
                             v,
                         ));
                     }
                 }
                 // 递归函数的表达式中不允许出现模式变量
-                let mut expr_res = expr.flow(ctx, false, expr.location())?;
+                let mut expr_res = expr.flow(ctx, false, expr.location(), errors);
                 match ctx.exit_scope() {
                     Ok(_) => {}
                     Err(ContextError::EmptyContext) => {
-                        return Err(ParseError::InternalError(
-                            "Context should not be empty when exiting a scope".to_string(),
-                        ));
+                        panic!("Internal error: Context should not be empty when exiting a scope");
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        return Err(ParseError::UnusedVariable(
+                        errors.push(ParseError::UnusedVariable(
                             WithLocation::new(self.clone(), loc),
                             v,
                         ));
@@ -1320,7 +1324,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 }
                 // 移除掉param_name，因为它是递归函数的参数，不应当被视为捕获的自由变量
                 expr_res.captures.remove(param_name);
-                Ok(FlowResult::complex(
+                FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::FixPoint {
                             param_name: param_name.clone(),
@@ -1331,11 +1335,11 @@ impl<'ast> LinearTypeAst<'ast> {
                     expr_res.captures,
                     PatternEnv::new(), // fixpoint类型本身不应当把模式变量泄露出去
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Namespace { tag, expr } => {
-                let expr_res = expr.flow(ctx, pattern_mode, expr.location())?;
-                Ok(FlowResult::complex(
+                let expr_res = expr.flow(ctx, pattern_mode, expr.location(), errors);
+                FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Namespace {
                             tag: tag.clone(),
@@ -1346,20 +1350,26 @@ impl<'ast> LinearTypeAst<'ast> {
                     expr_res.captures,
                     expr_res.patterns,
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Pattern { name, expr } => {
                 if !pattern_mode {
-                    return Err(ParseError::PatternOutOfParameterDefinition(
+                    errors.push(ParseError::PatternOutOfParameterDefinition(
                         WithLocation::new(self.clone(), loc),
                     ));
+                    // 继续处理，但返回简单的结果
+                    return FlowResult::simple(
+                        WithLocation::new(LinearTypeAst::Variable(None), loc).with_payload(
+                            FlowedMetaData::default().with_variable_context(ctx.capture()),
+                        ),
+                    );
                 }
-                let expr_res = expr.flow(ctx, pattern_mode, expr.location())?;
+                let expr_res = expr.flow(ctx, pattern_mode, expr.location(), errors);
                 let mut patterns = PatternEnv::new();
                 patterns
                     .extend(vec![WithLocation::new(name.clone(), loc)])
                     .unwrap();
-                Ok(FlowResult::complex(
+                FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Pattern {
                             name: name.clone(),
@@ -1370,7 +1380,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     expr_res.captures,
                     patterns,
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Closure {
                 pattern,
@@ -1379,20 +1389,28 @@ impl<'ast> LinearTypeAst<'ast> {
                 fail_branch,
             } => {
                 // 模式不应当捕获环境变量，因此直接传入空的环境
-                let pattern_res =
-                    pattern.flow(&mut ParseContext::new(), true, pattern.location())?;
+                let mut pattern_errors = Vec::new();
+                let pattern_res = pattern.flow(
+                    &mut ParseContext::new(),
+                    true,
+                    pattern.location(),
+                    &mut pattern_errors,
+                );
+                // 将pattern的错误合并到总错误列表
+                errors.extend(pattern_errors);
+
                 ctx.enter_scope();
                 for (var, loc) in auto_captures {
                     match ctx.declare_variable(var.clone(), loc.location()) {
                         Ok(_) => {}
                         Err(ContextError::EmptyContext) => {
-                            return Err(ParseError::InternalError(
-                                "Context should not be empty when declaring a variable".to_string(),
-                            ));
+                            panic!(
+                                "Internal error: Context should not be empty when declaring a variable"
+                            );
                         }
                         Err(ContextError::NotDeclared(_)) => unreachable!(),
                         Err(ContextError::NotUsed(v)) => {
-                            return Err(ParseError::UnusedVariable(
+                            errors.push(ParseError::UnusedVariable(
                                 WithLocation::new(self.clone(), loc.location()),
                                 v,
                             ));
@@ -1403,30 +1421,28 @@ impl<'ast> LinearTypeAst<'ast> {
                     match ctx.declare_variable(var.clone(), var_loc.location()) {
                         Ok(_) => {}
                         Err(ContextError::EmptyContext) => {
-                            return Err(ParseError::InternalError(
-                                "Context should not be empty when declaring a variable".to_string(),
-                            ));
+                            panic!(
+                                "Internal error: Context should not be empty when declaring a variable"
+                            );
                         }
                         Err(ContextError::NotDeclared(_)) => unreachable!(),
                         Err(ContextError::NotUsed(v)) => {
-                            return Err(ParseError::UnusedVariable(
+                            errors.push(ParseError::UnusedVariable(
                                 WithLocation::new(self.clone(), loc),
                                 v,
                             ));
                         }
                     }
                 }
-                let body_res = body.flow(ctx, false, body.location())?; // 闭包体不允许出现模式变量
+                let body_res = body.flow(ctx, false, body.location(), errors); // 闭包体不允许出现模式变量
                 match ctx.exit_scope() {
                     Ok(_) => {}
                     Err(ContextError::EmptyContext) => {
-                        return Err(ParseError::InternalError(
-                            "Context should not be empty when exiting a scope".to_string(),
-                        ));
+                        panic!("Internal error: Context should not be empty when exiting a scope");
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        return Err(ParseError::UnusedVariable(
+                        errors.push(ParseError::UnusedVariable(
                             WithLocation::new(self.clone(), loc),
                             v,
                         ));
@@ -1438,13 +1454,13 @@ impl<'ast> LinearTypeAst<'ast> {
                     body_captures.remove(var);
                 }
                 let fail_branch = if let Some(fb) = fail_branch {
-                    let fb_res = fb.flow(ctx, false, fb.location())?; // 失败分支不允许出现模式变量
+                    let fb_res = fb.flow(ctx, false, fb.location(), errors); // 失败分支不允许出现模式变量
                     body_captures.extend(fb_res.captures);
                     Some(fb_res.ty)
                 } else {
                     None
                 };
-                Ok(FlowResult::complex(
+                FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Closure {
                             pattern: Box::new(pattern_res.ty),
@@ -1457,16 +1473,16 @@ impl<'ast> LinearTypeAst<'ast> {
                     body_captures,
                     PatternEnv::new(), // 闭包类型本身不应当把模式变量泄露出去
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Literal(inner) => {
-                let inner_res = inner.flow(ctx, pattern_mode, inner.location())?;
-                Ok(FlowResult::complex(
+                let inner_res = inner.flow(ctx, pattern_mode, inner.location(), errors);
+                FlowResult::complex(
                     WithLocation::new(LinearTypeAst::Literal(Box::new(inner_res.ty)), loc),
                     inner_res.captures,
                     inner_res.patterns,
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())))
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
         }
     }

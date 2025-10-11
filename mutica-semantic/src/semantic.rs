@@ -225,25 +225,35 @@ mod test {
                     .linearize(&mut LinearizeContext::new(), basic.location())
                     .finalize();
                 // println!("Linearized AST: {:?}", linearized);
-                let flow_result =
-                    linearized.flow(&mut ParseContext::new(), false, linearized.location());
-                let flowed = match &flow_result {
-                    Ok(result) => result.ty().clone(),
-                    Err(e) => {
-                        // 获取源文件信息用于错误报告
-                        let (filepath, source_content) =
-                            if let Some(location) = linearized.location() {
-                                let source = location.source();
-                                (source.filepath(), source.content().to_string())
-                            } else {
-                                ("<input>".to_string(), expr.to_string())
-                            };
+                let mut flow_errors = Vec::new();
+                let flowed = linearized.flow(
+                    &mut ParseContext::new(),
+                    false,
+                    linearized.location(),
+                    &mut flow_errors,
+                );
+
+                if !flow_errors.is_empty() {
+                    // 获取源文件信息用于错误报告
+                    let (filepath, source_content) = if let Some(location) = linearized.location() {
+                        let source = location.source();
+                        (source.filepath(), source.content().to_string())
+                    } else {
+                        ("<input>".to_string(), expr.to_string())
+                    };
+                    // 报告所有错误
+                    for e in &flow_errors {
                         e.report()
-                            .eprint((filepath, ariadne::Source::from(source_content)))
+                            .eprint((
+                                filepath.clone(),
+                                ariadne::Source::from(source_content.clone()),
+                            ))
                             .ok();
-                        return;
                     }
-                };
+                    return;
+                }
+
+                let flowed = flowed.ty().clone();
 
                 let mapping = SourceMapping::from_ast(&flowed, &source_file);
 
@@ -360,24 +370,34 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
                 let linearized = basic
                     .linearize(&mut LinearizeContext::new(), basic.location())
                     .finalize();
-                let flow_result =
-                    linearized.flow(&mut ParseContext::new(), false, linearized.location());
-                let flowed = match &flow_result {
-                    Ok(result) => result.ty().clone(),
-                    Err(e) => {
-                        let (filepath, source_content) =
-                            if let Some(location) = linearized.location() {
-                                let source = location.source();
-                                (source.filepath(), source.content().to_string())
-                            } else {
-                                ("<input>".to_string(), expr.to_string())
-                            };
+                let mut flow_errors = Vec::new();
+                let flowed = linearized.flow(
+                    &mut ParseContext::new(),
+                    false,
+                    linearized.location(),
+                    &mut flow_errors,
+                );
+
+                if !flow_errors.is_empty() {
+                    let (filepath, source_content) = if let Some(location) = linearized.location() {
+                        let source = location.source();
+                        (source.filepath(), source.content().to_string())
+                    } else {
+                        ("<input>".to_string(), expr.to_string())
+                    };
+                    // 报告所有错误
+                    for e in &flow_errors {
                         e.report()
-                            .eprint((filepath, ariadne::Source::from(source_content)))
+                            .eprint((
+                                filepath.clone(),
+                                ariadne::Source::from(source_content.clone()),
+                            ))
                             .ok();
-                        return;
                     }
-                };
+                    return;
+                }
+
+                let flowed = flowed.ty().clone();
 
                 let mapping = SourceMapping::from_ast(&flowed, &source_file);
 

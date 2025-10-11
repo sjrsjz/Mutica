@@ -80,6 +80,9 @@ pub enum ParseError<'ast> {
 }
 
 impl<'ast> ParseError<'ast> {
+    pub fn is_warning(&self) -> bool {
+        matches!(self, ParseError::UnusedVariable(_, _))
+    }
     /// 辅助函数：从 WithLocation 提取位置信息
     /// 返回 (char_start, char_end, filepath_owned)
     fn extract_location_info(ast: &WithLocation<LinearTypeAst<'ast>>) -> (usize, usize, String) {
@@ -188,7 +191,7 @@ impl<'ast> ParseError<'ast> {
                                     "Variable '{}' is declared but never used",
                                     name_with_loc.value()
                                 ))
-                                .with_color(Color::Red),
+                                .with_color(Color::Yellow),
                         );
                     }
                 }
@@ -219,7 +222,7 @@ impl<'ast> ParseError<'ast> {
                 };
 
                 let mut report =
-                    Report::build(ReportKind::Error, report_filepath.clone(), report_start)
+                    Report::build(ReportKind::Warning, report_filepath.clone(), report_start)
                         .with_message(format!("Unused variables: {}", var_names.join(", ")));
 
                 // 添加所有变量的 Label
@@ -244,7 +247,7 @@ impl<'ast> ParseError<'ast> {
                 }
 
                 report
-                    .with_help("Mutica enforces strict variable usage and any variables should be used at least once")
+                    .with_help("Mutica requires all declared variables to be used. Consider removing them to intentionally ignore them.")
                     .finish()
             }
             ParseError::AmbiguousPattern(ast) => {

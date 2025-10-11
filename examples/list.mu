@@ -1,5 +1,5 @@
 let int_list: any = rec list: (() | (int, list));
-let append: any = rec append: (list1: any, list2: any) |->
+let append: any = rec appnd: (list1: any, list2: any) |->
     match list1
         | () => list2
         | (head: int, tail: any) => (head, append(tail, list2))

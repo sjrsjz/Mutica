@@ -81,24 +81,41 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                 .linearize(&mut LinearizeContext::new(), basic.location())
                 .finalize();
             // println!("Linearized AST: {:?}", linearized);
-            let flow_result =
-                linearized.flow(&mut ParseContext::new(), false, linearized.location());
-            let flowed = match &flow_result {
-                Ok(result) => result.ty().clone(),
-                Err(e) => {
-                    // 获取源文件信息用于错误报告
-                    let (filepath, source_content) = if let Some(location) = linearized.location() {
-                        let source = location.source();
-                        (source.filepath(), source.content().to_string())
-                    } else {
-                        (source_file.filepath(), expr.to_string())
-                    };
+            let mut flow_errors = Vec::new();
+            let flowed = linearized.flow(
+                &mut ParseContext::new(),
+                false,
+                linearized.location(),
+                &mut flow_errors,
+            );
+
+            if !flow_errors.is_empty() {
+                // 获取源文件信息用于错误报告
+                let (filepath, source_content) = if let Some(location) = linearized.location() {
+                    let source = location.source();
+                    (source.filepath(), source.content().to_string())
+                } else {
+                    (source_file.filepath(), expr.to_string())
+                };
+                // 报告所有错误
+                let mut has_error = false;
+                for e in &flow_errors {
                     e.report()
-                        .eprint((filepath, ariadne::Source::from(source_content)))
+                        .eprint((
+                            filepath.clone(),
+                            ariadne::Source::from(source_content.clone()),
+                        ))
                         .ok();
+                    if !e.is_warning() {
+                        has_error = true;
+                    }
+                }
+                if has_error {
                     return;
                 }
-            };
+            }
+
+            let flowed = flowed.ty().clone();
 
             let mut gc = GC::new();
             let built_type =
