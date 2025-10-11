@@ -519,7 +519,6 @@ pub struct BuildContextLayer {
     fixpoint_mapping: Vec<(String, Type)>,
     pattern_index_mapping: HashMap<String, isize>,
     captured_index_mapping: HashMap<String, isize>,
-    pattern_count: usize,
 }
 
 impl BuildContextLayer {
@@ -528,7 +527,6 @@ impl BuildContextLayer {
             fixpoint_mapping: Vec::new(),
             pattern_index_mapping: HashMap::new(),
             captured_index_mapping: HashMap::new(),
-            pattern_count: 0,
         }
     }
 
@@ -574,23 +572,30 @@ impl BuildContextLayer {
         Some(index)
     }
 
-    pub fn pattern_count(&self) -> usize {
-        self.pattern_index_mapping.len()
-    }
-
     pub fn captured_count(&self) -> usize {
         self.captured_index_mapping.len()
-    }
-
-    pub fn inc_pattern_count(&mut self) -> usize {
-        self.pattern_count += 1;
-        self.pattern_count - 1
     }
 }
 
 impl Default for BuildContextLayer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct PatternCounter {
+    count: usize,
+}
+
+impl PatternCounter {
+    pub fn new() -> Self {
+        Self { count: 0 }
+    }
+
+    pub fn next(&mut self) -> usize {
+        let current = self.count;
+        self.count += 1;
+        current
     }
 }
 
@@ -682,19 +687,29 @@ impl SourceLocation {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WithLocation<T, P = ()>
 where
-    P: Clone + Debug,
+    P: Clone,
 {
     value: T,
     location: Option<SourceLocation>,
     payload: P,
 }
 
+impl<T, P> Debug for WithLocation<T, P>
+where
+    T: Debug,
+    P: Clone,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
 impl<T, P> WithLocation<T, P>
 where
-    P: Clone + Debug + Default,
+    P: Clone + Default,
 {
     pub fn new<'a, I: Into<&'a SourceLocation>>(value: T, location: Option<I>) -> Self {
         Self {
@@ -707,7 +722,7 @@ where
 
 impl<T, P> WithLocation<T, P>
 where
-    P: Clone + Debug,
+    P: Clone,
 {
     pub fn with_payload(self, payload: P) -> Self {
         Self { payload, ..self }
@@ -756,7 +771,7 @@ where
 
 impl<T, P> From<T> for WithLocation<T, P>
 where
-    P: Clone + Debug + Default,
+    P: Clone + Default,
 {
     fn from(value: T) -> WithLocation<T, P> {
         WithLocation {
@@ -769,7 +784,7 @@ where
 
 impl<T, P> Deref for WithLocation<T, P>
 where
-    P: Clone + Debug + Default,
+    P: Clone,
 {
     type Target = T;
     fn deref(&self) -> &T {

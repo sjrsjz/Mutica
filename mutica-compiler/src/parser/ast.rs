@@ -1,6 +1,7 @@
 use crate::parser::lexer::{LexerToken, LexicalError};
 use crate::parser::{
-    BuildContext, ContextError, ParseContext, ParseError, SourceLocation, WithLocation,
+    BuildContext, ContextError, ParseContext, ParseError, PatternCounter, SourceLocation,
+    WithLocation,
 };
 use lalrpop_util::ErrorRecovery;
 use mutica_core::arc_gc::gc::GC;
@@ -372,16 +373,26 @@ impl BasicTypeAst {
                 body,
                 fail_branch,
             } => {
-                let fail_branch = fail_branch
-                    .as_ref()
-                    .map(|b| b.linearize(ctx, b.location()).finalize().into());
+                let mut bindings = Vec::new();
+                let pattern = pattern.linearize(ctx, pattern.location());
+                bindings.extend(pattern.bindings.clone());
+                // fail_branch 是严格独立上下文的，因此直接线性化不参与CPS
+                let fail_branch = match fail_branch {
+                    Some(fail_branch) => Some(Box::new(
+                        fail_branch
+                            .linearize(ctx, fail_branch.location())
+                            .finalize(),
+                    )),
+                    None => None,
+                };
                 let ty = LinearTypeAst::Closure {
-                    pattern: Box::new(pattern.linearize(ctx, pattern.location()).finalize()), // pattern 直接完整线性化
+                    pattern: Box::new(pattern.tail_type().clone()),
                     auto_captures: HashMap::new(),
+                    // body 也是严格独立上下文的，因此直接线性化不参与CPS
                     body: Box::new(body.linearize(ctx, body.location()).finalize()),
                     fail_branch,
                 };
-                LinearizeResult::new_simple(WithLocation::new(ty, loc))
+                LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Apply { func, arg } => {
                 let func = func.linearize(ctx, func.location());
@@ -417,12 +428,9 @@ impl BasicTypeAst {
                 LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Literal(inner) => {
-                // 我们直接认为字面量类型的内部类型已经是线性化的
-                let inner = inner.linearize(ctx, inner.location()).finalize();
-                LinearizeResult::new_simple(WithLocation::new(
-                    LinearTypeAst::Literal(Box::new(inner)),
-                    loc,
-                ))
+                let inner = inner.linearize(ctx, inner.location());
+                let ty = LinearTypeAst::Literal(Box::new(inner.tail_type().clone()));
+                LinearizeResult::new_with_binding(inner.bindings, WithLocation::new(ty, loc))
             }
         }
     }
@@ -1359,7 +1367,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     ));
                     // 继续处理，但返回简单的结果
                     return FlowResult::simple(
-                        WithLocation::new(LinearTypeAst::Variable(None), loc).with_payload(
+                        WithLocation::new(LinearTypeAst::Bottom, loc).with_payload(
                             FlowedMetaData::default().with_variable_context(ctx.capture()),
                         ),
                     );
@@ -1388,14 +1396,23 @@ impl<'ast> LinearTypeAst<'ast> {
                 body,
                 fail_branch,
             } => {
-                // 模式不应当捕获环境变量，因此直接传入空的环境
+                // 模式允许捕获环境变量，因此传入当前的ctx
                 let mut pattern_errors = Vec::new();
-                let pattern_res = pattern.flow(
-                    &mut ParseContext::new(),
-                    true,
-                    pattern.location(),
-                    &mut pattern_errors,
-                );
+                ctx.enter_scope();
+                let pattern_res = pattern.flow(ctx, true, pattern.location(), &mut pattern_errors);
+                match ctx.exit_scope() {
+                    Ok(_) => {}
+                    Err(ContextError::EmptyContext) => {
+                        panic!("Internal error: Context should not be empty when exiting a scope");
+                    }
+                    Err(ContextError::NotDeclared(_)) => unreachable!(),
+                    Err(ContextError::NotUsed(v)) => {
+                        pattern_errors.push(ParseError::UnusedVariable(
+                            WithLocation::new(self.clone(), loc),
+                            v,
+                        ));
+                    }
+                }
                 // 将pattern的错误合并到总错误列表
                 errors.extend(pattern_errors);
 
@@ -1460,6 +1477,8 @@ impl<'ast> LinearTypeAst<'ast> {
                 } else {
                     None
                 };
+                let mut expr_captures = body_captures.clone(); // 构建闭包表达式本身所需要的捕获变量
+                expr_captures.extend(pattern_res.captures);
                 FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Closure {
@@ -1470,7 +1489,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         },
                         loc,
                     ),
-                    body_captures,
+                    expr_captures,
                     PatternEnv::new(), // 闭包类型本身不应当把模式变量泄露出去
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
@@ -1529,6 +1548,7 @@ impl<'ast> LinearTypeAst<'ast> {
     pub fn to_type(
         &self,
         ctx: &mut BuildContext,
+        pattern_counter: &mut PatternCounter,
         pattern_mode: bool,
         gc: &mut GC<FixPointInner>,
         loc: Option<&SourceLocation>,
@@ -1557,7 +1577,13 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Tuple(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, pattern_mode, gc, bta.location())?);
+                    types.push(bta.to_type(
+                        ctx,
+                        pattern_counter,
+                        pattern_mode,
+                        gc,
+                        bta.location(),
+                    )?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
                 Ok(BuildResult::complex(Tuple::new(&types), patterns))
@@ -1565,7 +1591,13 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::List(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, pattern_mode, gc, bta.location())?);
+                    types.push(bta.to_type(
+                        ctx,
+                        pattern_counter,
+                        pattern_mode,
+                        gc,
+                        bta.location(),
+                    )?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
                 Ok(BuildResult::complex(List::new(&types), patterns))
@@ -1573,7 +1605,13 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Generalize(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, pattern_mode, gc, bta.location())?);
+                    types.push(bta.to_type(
+                        ctx,
+                        &mut PatternCounter::new(), // 泛化类型内不允许出现模式变量，安全起见传入一个新的计数器
+                        false,
+                        gc,
+                        bta.location(),
+                    )?);
                 }
                 // 我们无法计算出泛化类型的闭包环境，因此传入一个空的闭包环境
                 let (types, patterns) = BuildResult::fold(types);
@@ -1582,7 +1620,13 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Specialize(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, false, gc, bta.location())?);
+                    types.push(bta.to_type(
+                        ctx,
+                        &mut PatternCounter::new(), // 专化类型内不允许出现模式变量，安全起见传入一个新的计数器
+                        false,
+                        gc,
+                        bta.location(),
+                    )?);
                 }
                 // 我们无法计算出专化类型的闭包环境，因此传入一个空的闭包环境
                 let (types, patterns) = BuildResult::fold(types);
@@ -1599,10 +1643,16 @@ impl<'ast> LinearTypeAst<'ast> {
                 arg,
                 continuation,
             } => {
-                let func_type = func.to_type(ctx, false, gc, func.location())?;
-                let arg_type = arg.to_type(ctx, pattern_mode, gc, arg.location())?;
-                let continuation_type =
-                    continuation.to_type(ctx, false, gc, continuation.location())?;
+                let func_type = func.to_type(ctx, pattern_counter, false, gc, func.location())?;
+                let arg_type =
+                    arg.to_type(ctx, pattern_counter, pattern_mode, gc, arg.location())?;
+                let continuation_type = continuation.to_type(
+                    ctx,
+                    pattern_counter,
+                    false,
+                    gc,
+                    continuation.location(),
+                )?;
                 let (types, patterns) =
                     BuildResult::fold(vec![func_type, arg_type, continuation_type]);
                 Ok(BuildResult::complex(
@@ -1636,8 +1686,13 @@ impl<'ast> LinearTypeAst<'ast> {
                 }
                 let closure_env = ClosureEnv::new(closure_env);
 
-                let pattern_type: BuildResult =
-                    pattern.to_type(&mut BuildContext::new(), true, gc, pattern.location())?; // 模式不应当捕获环境变量，因此传入空的BuildContext
+                let pattern_type: BuildResult = pattern.to_type(
+                    ctx,
+                    &mut PatternCounter::new(), // 进入模式定义，重新计数
+                    true,
+                    gc,
+                    pattern.location(),
+                )?; // 模式现在允许捕获环境变量
 
                 ctx.enter_layer();
                 for (var, var_loc) in auto_captures {
@@ -1661,10 +1716,22 @@ impl<'ast> LinearTypeAst<'ast> {
                         )));
                     }
                 }
-                let body_type = body.to_type(ctx, pattern_mode, gc, body.location())?;
+                let body_type = body.to_type(
+                    ctx,
+                    &mut PatternCounter::new(), // 进入闭包体，闭包体不允许出现模式变量，安全起见传入一个新的计数器
+                    false,
+                    gc,
+                    body.location(),
+                )?;
                 ctx.exit_layer();
                 let fail_branch_type = if let Some(fb) = fail_branch {
-                    Some(fb.to_type(ctx, pattern_mode, gc, fb.location())?)
+                    Some(fb.to_type(
+                        ctx,
+                        &mut PatternCounter::new(), // 进入失败分支，失败分支不允许出现模式变量，安全起见传入一个新的计数器
+                        false,
+                        gc,
+                        fb.location(),
+                    )?)
                 } else {
                     None
                 };
@@ -1695,7 +1762,8 @@ impl<'ast> LinearTypeAst<'ast> {
                 let placeholder = FixPoint::new_placeholder(gc);
                 ctx.current_layer_mut()
                     .enter_fixpoint(param_name.clone(), placeholder.weak().clone());
-                let expr_type = expr.to_type(ctx, false, gc, expr.location())?;
+                let expr_type =
+                    expr.to_type(ctx, &mut PatternCounter::new(), false, gc, expr.location())?; // 递归函数的表达式中不允许出现模式变量，安全起见传入一个新的计数器
                 ctx.current_layer_mut().exit_fixpoint();
                 as_type!(placeholder.weak(), Type::FixPoint)
                     .set(expr_type.ty)
@@ -1703,7 +1771,8 @@ impl<'ast> LinearTypeAst<'ast> {
                 Ok(BuildResult::simple(placeholder))
             }
             LinearTypeAst::Namespace { tag, expr } => {
-                let expr_type = expr.to_type(ctx, pattern_mode, gc, expr.location())?;
+                let expr_type =
+                    expr.to_type(ctx, pattern_counter, pattern_mode, gc, expr.location())?;
                 Ok(BuildResult::complex(
                     Namespace::new(tag.clone(), &expr_type.ty),
                     expr_type.patterns,
@@ -1715,7 +1784,8 @@ impl<'ast> LinearTypeAst<'ast> {
                         WithLocation::new(self.clone(), loc),
                     )));
                 }
-                let expr_type = expr.to_type(ctx, pattern_mode, gc, expr.location())?;
+                let expr_type =
+                    expr.to_type(ctx, pattern_counter, pattern_mode, gc, expr.location())?;
                 let mut patterns = expr_type.patterns;
                 for var in &patterns {
                     if var.value() == name {
@@ -1725,7 +1795,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         )));
                     }
                 }
-                let debruijn_index = ctx.current_layer_mut().inc_pattern_count();
+                let debruijn_index = pattern_counter.next();
                 patterns.extend(vec![WithLocation::new(name.clone(), loc)]);
                 Ok(BuildResult::complex(
                     Pattern::new(debruijn_index, &expr_type.ty),
@@ -1733,7 +1803,8 @@ impl<'ast> LinearTypeAst<'ast> {
                 ))
             }
             LinearTypeAst::Literal(inner) => {
-                let inner_type = inner.to_type(ctx, pattern_mode, gc, inner.location())?;
+                let inner_type =
+                    inner.to_type(ctx, pattern_counter, pattern_mode, gc, inner.location())?;
                 Ok(BuildResult::complex(
                     Lazy::new(&inner_type.ty),
                     inner_type.patterns,

@@ -5,7 +5,10 @@ use mutica_compiler::{
     SyntaxError, ariadne,
     grammar::TypeParser,
     logos::Logos,
-    parser::{BuildContext, ParseContext, SourceFile, ast::LinearizeContext, lexer::LexerToken},
+    parser::{
+        BuildContext, ParseContext, PatternCounter, SourceFile, ast::LinearizeContext,
+        lexer::LexerToken,
+    },
 };
 use mutica_core::{
     arc_gc::gc::GC,
@@ -76,11 +79,11 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                 return;
             }
             let basic = ast.into_basic(ast.location());
-            // println!("Basic AST: {:?}", basic);
+            // println!("Basic AST: {:#?}", basic);
             let linearized = basic
                 .linearize(&mut LinearizeContext::new(), basic.location())
                 .finalize();
-            // println!("Linearized AST: {:?}", linearized);
+            // println!("Linearized AST: {:#?}", linearized);
             let mut flow_errors = Vec::new();
             let flowed = linearized.flow(
                 &mut ParseContext::new(),
@@ -118,28 +121,33 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
             let flowed = flowed.ty().clone();
 
             let mut gc = GC::new();
-            let built_type =
-                match flowed.to_type(&mut BuildContext::new(), false, &mut gc, flowed.location()) {
-                    Ok(result) => result,
-                    Err(Ok(type_error)) => {
-                        println!("Type building error: {:?}", type_error);
-                        return;
-                    }
-                    Err(Err(parse_error)) => {
-                        // 获取源文件信息用于错误报告
-                        let (filepath, source_content) = if let Some(location) = flowed.location() {
-                            let source = location.source();
-                            (source.filepath(), source.content().to_string())
-                        } else {
-                            ("<input>".to_string(), expr.to_string())
-                        };
-                        parse_error
-                            .report()
-                            .eprint((filepath, ariadne::Source::from(source_content)))
-                            .ok();
-                        return;
-                    }
-                };
+            let built_type = match flowed.to_type(
+                &mut BuildContext::new(),
+                &mut PatternCounter::new(),
+                false,
+                &mut gc,
+                flowed.location(),
+            ) {
+                Ok(result) => result,
+                Err(Ok(type_error)) => {
+                    println!("Type building error: {:?}", type_error);
+                    return;
+                }
+                Err(Err(parse_error)) => {
+                    // 获取源文件信息用于错误报告
+                    let (filepath, source_content) = if let Some(location) = flowed.location() {
+                        let source = location.source();
+                        (source.filepath(), source.content().to_string())
+                    } else {
+                        ("<input>".to_string(), expr.to_string())
+                    };
+                    parse_error
+                        .report()
+                        .eprint((filepath, ariadne::Source::from(source_content)))
+                        .ok();
+                    return;
+                }
+            };
             #[cfg(debug_assertions)]
             println!(
                 "Built type: {}\n",
@@ -163,7 +171,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                         }
                     })
                     .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e)),
-                Err(e) => println!("Failed: {:?}", e),
+                Err(e) => eprintln!("Runtime Error: {:?}", e),
             }
         }
         Err(e) => {
@@ -241,12 +249,12 @@ mod tests {
         let expr = r#"
         let Just: any = x: any |-> Just::x;
         let Nothing: any = Nothing::();
-        // let Option: any = T: any |-> (Nothing | Just T);
+        let Option: any = T: any |-> (Nothing | Just T);
         let safe_div: any = (x: int, y: int) |->
             match y
                 | 0 => Nothing
                 | ! => Just (x / y);
-        let get_value: any = opt: (Nothing::() | Just::any) |->
+        let get_value: any = opt: Option(any) |->
             match opt
                 | Just::(v: any) => v
                 | Nothing::any => ()
@@ -528,5 +536,23 @@ mod tests {
         h(g), g
         "#;
         parse_and_reduce(expr, PathBuf::from("test_literal.mutica"));
+    }
+
+    #[test]
+    fn test_complex() {
+        let expr: &'static str = r#"
+        let y: any = 1;
+        (x: (1+y)) |-> x
+        "#;
+        parse_and_reduce(expr, PathBuf::from("test_complex.mutica"));
+    }
+
+    #[test]
+    fn test_generic() {
+        let expr: &'static str = r#"
+        let id: any = T: any |-> x: T |-> x;
+        id(int)(42), id(char)('a'), id(()), id(int | char)(42), id(int | char)('a')
+        "#;
+        parse_and_reduce(expr, PathBuf::from("test_generic.mutica"));
     }
 }

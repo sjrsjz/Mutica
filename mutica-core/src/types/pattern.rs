@@ -3,11 +3,10 @@ use std::sync::Arc;
 use arc_gc::traceable::GCTraceable;
 
 use crate::types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
-        StabilizedType, Type, TypeError,
-        
-        fixpoint::FixPointInner,
-    };
+    AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+    Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
+    fixpoint::FixPointInner,
+};
 
 #[derive(Clone)]
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
@@ -46,13 +45,14 @@ impl CoinductiveType<Type, StabilizedType> for Pattern {
         Type::Pattern(self)
     }
 
-    fn is(
-        &self,
-        other: &Type,
-        ctx: &mut TypeCheckContext,
-    ) -> Result<Option<()>, TypeError> {
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             if !ctx.pattern_mode {
                 // 由于Pattern的特殊性，Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
                 return match other {
@@ -66,23 +66,18 @@ impl CoinductiveType<Type, StabilizedType> for Pattern {
                     _ => Ok(None),
                 };
             }
-            self.expr
-                .is(other, &mut inner_ctx)
+            self.expr.is(other, &mut inner_ctx)
         })
     }
 
-    fn invoke(
-        &self,
-        ctx: &mut InvokeContext,
-    ) -> Result<StabilizedType, TypeError> {
-        self.expr.invoke(ctx)
+    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+        Err(TypeError::NonApplicableType(
+            self.clone().dispatch().stabilize().into(),
+        ))
     }
 
-    fn reduce(
-        &self,
-        ctx: &mut ReductionContext,
-    ) -> Result<StabilizedType, TypeError> {
-        self.expr.reduce(ctx)
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
+        Ok(Self::new(self.debruijn_index, self.expr.reduce(ctx)?))
     }
 
     fn tagged_ptr(&self) -> super::TaggedPtr<()> {
@@ -97,15 +92,17 @@ impl CoinductiveTypeWithAny<Type, StabilizedType> for Pattern {
         ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             if !ctx.pattern_mode {
                 // 由于调用has的other一定不是Pattern类型
                 return Ok(None);
             }
-            if other
-                .is(&self.expr, &mut inner_ctx)?
-                .is_some()
-            {
+            if other.is(&self.expr, &mut inner_ctx)?.is_some() {
                 pattern_env.push((self.debruijn_index, other.clone().dispatch()));
                 Ok(Some(()))
             } else {

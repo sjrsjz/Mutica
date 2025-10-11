@@ -228,7 +228,7 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
                                 ctx.assumptions,
                                 ctx.closure_env,
                                 pattern_env,
-                                ctx.pattern_mode,
+                                false,
                             );
                             a.is(b, &mut fb_ctx)?.is_some()
                         }
@@ -264,7 +264,7 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self::new(
             self.inner.pattern_param_size,
-            &self.inner.pattern,
+            self.inner.pattern.reduce(ctx)?,
             &self.inner.expr,
             match &self.inner.fail_branch {
                 Some(fb) => Some(fb.reduce(ctx)?),
