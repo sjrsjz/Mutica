@@ -425,11 +425,10 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Literal(inner) => {
-                let inner = inner.linearize(ctx, inner.location());
-                let ty = LinearTypeAst::Literal(Box::new(inner.tail_type().clone()));
-                LinearizeResult::new_with_binding(inner.bindings, WithLocation::new(ty, loc))
-            }
+            BasicTypeAst::Literal(inner) => LinearizeResult::new_simple(WithLocation::new(
+                LinearTypeAst::Literal(Box::new(inner.linearize(ctx, inner.location()).finalize())),
+                loc,
+            )),
         }
     }
 }
