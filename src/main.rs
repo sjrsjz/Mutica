@@ -566,8 +566,7 @@ mod tests {
     #[test]
     fn test_multipattern() {
         let expr: &'static str = r#"
-        let (x: int, x: char) = (1, 'a');
-        x
+        let (_x: int, _x: char) = (1, 'a');
         "#;
         parse_and_reduce(expr, PathBuf::from("test_multipattern.mutica"));
     }

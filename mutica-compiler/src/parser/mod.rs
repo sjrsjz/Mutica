@@ -247,7 +247,7 @@ impl<'ast> ParseError<'ast> {
                 }
 
                 report
-                    .with_help("Mutica requires all declared variables to be used. Consider removing them to intentionally ignore them.")
+                    .with_help("Consider removing unused variables or prefixing with '_' to intentionally ignore them")
                     .finish()
             }
             ParseError::AmbiguousPattern(ast) => {
@@ -470,7 +470,7 @@ impl ParseContext {
             let unused_vars: Vec<WithLocation<String>> = current_scope
                 .iter()
                 .filter_map(|(name, (count, loc))| {
-                    if *count == Self::NOT_USED {
+                    if *count == Self::NOT_USED && !name.starts_with("_") {
                         Some(loc.clone().map(|_| name.clone()))
                     } else {
                         None
@@ -493,7 +493,11 @@ impl ParseContext {
         loc: Option<&SourceLocation>,
     ) -> Result<(), ContextError> {
         if let Some(current_scope) = self.declared_variables.last_mut() {
-            if current_scope.contains_key(&name) && current_scope[&name].0 == Self::NOT_USED {
+            if current_scope.contains_key(&name)
+                && current_scope[&name].0 == Self::NOT_USED
+                && !name.starts_with("_")
+            // 允许以 _ 开头的变量不被使用
+            {
                 return Err(ContextError::NotUsed(vec![
                     current_scope[&name].1.clone().map(|_| name),
                 ]));
