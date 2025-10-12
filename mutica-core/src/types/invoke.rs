@@ -228,7 +228,7 @@ impl Invoke {
                 // We are in the k(val) case.
                 // Simply invoke the outer continuation `k` with the value `v`.
                 let closure_env = ClosureEnv::new(Vec::<Type>::new());
-                let param_env = ParamEnv::from_collector(Collector::new());
+                let param_env = ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
                 let mut rec_assumptions = smallvec::SmallVec::new();
                 let mut invoke_ctx = InvokeContext::new(
                     &ty,

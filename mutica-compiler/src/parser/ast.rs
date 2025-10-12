@@ -38,8 +38,7 @@ pub enum AtomicOpcode {
     Less,
     Greater,
     Is,
-    Input,
-    Print,
+    IO(String),
 }
 
 #[derive(Debug, Clone)]
@@ -974,18 +973,14 @@ impl PatternEnv {
         }
     }
 
-    pub fn extend(
-        &mut self,
-        names: impl IntoIterator<Item = WithLocation<String>>,
-    ) -> Result<(), WithLocation<String>> {
+    pub fn extend(&mut self, names: impl IntoIterator<Item = WithLocation<String>>) {
         for name in names {
             if self.declared.contains_key(name.value()) {
-                return Err(name.clone());
+                return; // 重复声明，忽略
             }
             self.declared
                 .insert(name.value().clone(), WithLocation::new((), name.location()));
         }
-        Ok(())
     }
 }
 
@@ -1123,16 +1118,11 @@ impl<'ast> LinearTypeAst<'ast> {
                     let res = elem.flow(ctx, pattern_mode, elem.location(), errors);
                     new_elements.push(res.ty);
                     all_captures.extend(res.captures);
-                    if let Err(name) = all_patterns.extend(
+                    all_patterns.extend(
                         res.patterns
                             .into_iter()
                             .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                    ) {
-                        errors.push(ParseError::RedeclaredPattern(
-                            WithLocation::new(self.clone(), loc),
-                            name,
-                        ));
-                    }
+                    );
                 }
                 FlowResult::complex(
                     WithLocation::new(LinearTypeAst::Tuple(new_elements), loc),
@@ -1149,16 +1139,11 @@ impl<'ast> LinearTypeAst<'ast> {
                     let res = elem.flow(ctx, pattern_mode, elem.location(), errors);
                     new_elements.push(res.ty);
                     all_captures.extend(res.captures);
-                    if let Err(name) = all_patterns.extend(
+                    all_patterns.extend(
                         res.patterns
                             .into_iter()
                             .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                    ) {
-                        errors.push(ParseError::RedeclaredPattern(
-                            WithLocation::new(self.clone(), loc),
-                            name,
-                        ));
-                    }
+                    );
                 }
                 FlowResult::complex(
                     WithLocation::new(LinearTypeAst::List(new_elements), loc),
@@ -1175,16 +1160,11 @@ impl<'ast> LinearTypeAst<'ast> {
                     let res = ty.flow(ctx, pattern_mode, ty.location(), errors);
                     new_types.push(res.ty);
                     all_captures.extend(res.captures);
-                    if let Err(name) = all_patterns.extend(
+                    all_patterns.extend(
                         res.patterns
                             .into_iter()
                             .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                    ) {
-                        errors.push(ParseError::RedeclaredPattern(
-                            WithLocation::new(self.clone(), loc),
-                            name,
-                        ));
-                    }
+                    );
                 }
                 if !all_patterns.is_empty() {
                     // 泛化类型中不允许出现模式变量，因为泛化类型是乱序的
@@ -1209,16 +1189,11 @@ impl<'ast> LinearTypeAst<'ast> {
                     let res = ty.flow(ctx, pattern_mode, ty.location(), errors);
                     new_types.push(res.ty);
                     all_captures.extend(res.captures);
-                    if let Err(name) = all_patterns.extend(
+                    all_patterns.extend(
                         res.patterns
                             .into_iter()
                             .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                    ) {
-                        errors.push(ParseError::RedeclaredPattern(
-                            WithLocation::new(self.clone(), loc),
-                            name,
-                        ));
-                    }
+                    );
                 }
                 if !all_patterns.is_empty() {
                     // 专化类型中不允许出现模式变量，因为专化类型是乱序的
@@ -1249,28 +1224,18 @@ impl<'ast> LinearTypeAst<'ast> {
                 all_captures.extend(cont_res.captures.clone());
 
                 let mut all_patterns = func_res.patterns;
-                if let Err(name) = all_patterns.extend(
+                all_patterns.extend(
                     arg_res
                         .patterns
                         .into_iter()
                         .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                ) {
-                    errors.push(ParseError::RedeclaredPattern(
-                        WithLocation::new(self.clone(), loc),
-                        name,
-                    ));
-                }
-                if let Err(name) = all_patterns.extend(
+                );
+                all_patterns.extend(
                     cont_res
                         .patterns
                         .into_iter()
                         .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                ) {
-                    errors.push(ParseError::RedeclaredPattern(
-                        WithLocation::new(self.clone(), loc),
-                        name,
-                    ));
-                }
+                );
                 FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Invoke {
@@ -1365,9 +1330,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 }
                 let expr_res = expr.flow(ctx, pattern_mode, expr.location(), errors);
                 let mut patterns = PatternEnv::new();
-                patterns
-                    .extend(vec![WithLocation::new(name.clone(), loc)])
-                    .unwrap();
+                patterns.extend(vec![WithLocation::new(name.clone(), loc)]);
                 FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Pattern {
@@ -1688,24 +1651,16 @@ impl<'ast> LinearTypeAst<'ast> {
                 ctx.enter_layer();
                 for (var, var_loc) in auto_captures {
                     if ctx.current_layer_mut().push_captured(var.clone()).is_none() {
-                        return Err(Err(ParseError::RedeclaredPattern(
+                        return Err(Err(ParseError::RedeclaredCaptureValue(
                             WithLocation::new(self.clone(), loc),
                             var_loc.map(|_| var),
                         )));
                     }
                 }
                 // 把模式变量加入到当前作用域
+                // 我们仅仅按照顺序加入模式变量，如果有重名的模式变量，直接跳过即可
                 for var in pattern_type.patterns.iter() {
-                    if ctx
-                        .current_layer_mut()
-                        .push_pattern(var.value().clone())
-                        .is_none()
-                    {
-                        return Err(Err(ParseError::RedeclaredPattern(
-                            WithLocation::new(self.clone(), loc),
-                            var.clone(),
-                        )));
-                    }
+                    let _ = ctx.current_layer_mut().push_pattern(var.value().clone());
                 }
                 let body_type = body.to_type(
                     ctx,
@@ -1745,8 +1700,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     AtomicOpcode::Less => Opcode::Less,
                     AtomicOpcode::Greater => Opcode::Greater,
                     AtomicOpcode::Is => Opcode::Is,
-                    AtomicOpcode::Input => Opcode::Input,
-                    AtomicOpcode::Print => Opcode::Print,
+                    AtomicOpcode::IO(v) => Opcode::IO(v.clone()),
                 })))
             }
             LinearTypeAst::FixPoint { param_name, expr } => {
@@ -1778,15 +1732,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 let expr_type =
                     expr.to_type(ctx, pattern_counter, pattern_mode, gc, expr.location())?;
                 let mut patterns = expr_type.patterns;
-                for var in &patterns {
-                    if var.value() == name {
-                        return Err(Err(ParseError::RedeclaredPattern(
-                            WithLocation::new(self.clone(), loc),
-                            var.clone(),
-                        )));
-                    }
-                }
-                let debruijn_index = pattern_counter.next();
+                let debruijn_index = pattern_counter.alloc(name.clone());
                 patterns.extend(vec![WithLocation::new(name.clone(), loc)]);
                 Ok(BuildResult::complex(
                     Pattern::new(debruijn_index, &expr_type.ty),

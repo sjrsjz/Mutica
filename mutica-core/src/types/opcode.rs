@@ -3,9 +3,8 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
-        character_value::CharacterValue, closure::ClosureEnv, fixpoint::FixPointInner,
-        integer_value::IntegerValue, list::List, tuple::Tuple, type_bound::TypeBound,
+        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
+        fixpoint::FixPointInner, integer_value::IntegerValue, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -24,8 +23,7 @@ pub enum Opcode {
     Greater,
     Is,
     // I/O
-    Input,
-    Print,
+    IO(String),
 }
 
 impl GCTraceable<FixPointInner> for Opcode {
@@ -53,13 +51,20 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
             );
             match other {
                 Type::Opcode(Opcode::Opcode) => Ok(Some(())),
-                Type::Opcode(v) => Ok(
-                    if std::mem::discriminant(self) == std::mem::discriminant(v) {
-                        Some(())
-                    } else {
-                        None
-                    },
-                ),
+                Type::Opcode(v) => match (self, v) {
+                    (Opcode::Opcode, _) => Ok(Some(())),
+                    (_, Opcode::Opcode) => Ok(Some(())),
+                    (Opcode::Add, Opcode::Add)
+                    | (Opcode::Sub, Opcode::Sub)
+                    | (Opcode::Mul, Opcode::Mul)
+                    | (Opcode::Div, Opcode::Div)
+                    | (Opcode::Mod, Opcode::Mod)
+                    | (Opcode::Less, Opcode::Less)
+                    | (Opcode::Greater, Opcode::Greater)
+                    | (Opcode::Is, Opcode::Is) => Ok(Some(())),
+                    (Opcode::IO(a), Opcode::IO(b)) => Ok(if a == b { Some(()) } else { None }),
+                    _ => Ok(None),
+                },
                 Type::Bound(TypeBound::Top) => Ok(Some(())),
                 Type::Specialize(v) => v.has(self, &mut inner_ctx),
                 Type::Generalize(v) => v.has(self, &mut inner_ctx),
@@ -80,23 +85,29 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
             Opcode::Opcode => Err(TypeError::NonApplicableType(
                 self.clone().dispatch().stabilize().into(),
             )),
-            Opcode::Input => {
-                // 从stdin读取一行输入，返回List<CharacterValue>类型
-                let mut input = String::new();
-                std::io::stdin()
-                    .read_line(&mut input)
-                    .map_err(|e| TypeError::RuntimeError(std::sync::Arc::new(e)))?;
-                let chars = input
-                    .chars()
-                    .map(|c| CharacterValue::new(c))
-                    .collect::<Vec<_>>();
-                Ok(List::new(chars))
-            }
-            Opcode::Print => {
-                // 打印参数
-                print!("{}", ctx.arg.display(&mut FastCycleDetector::new()));
-                Ok(Tuple::new(Vec::<Type>::new()))
-            }
+            Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Unhandled IO operation: {}", v),
+                ),
+            ))),
+            // Opcode::Input => {
+            //     // 从stdin读取一行输入，返回List<CharacterValue>类型
+            //     let mut input = String::new();
+            //     std::io::stdin()
+            //         .read_line(&mut input)
+            //         .map_err(|e| TypeError::RuntimeError(std::sync::Arc::new(e)))?;
+            //     let chars = input
+            //         .chars()
+            //         .map(|c| CharacterValue::new(c))
+            //         .collect::<Vec<_>>();
+            //     Ok(List::new(chars))
+            // }
+            // Opcode::Print => {
+            //     // 打印参数
+            //     print!("{}", ctx.arg.display(&mut FastCycleDetector::new()));
+            //     Ok(Tuple::new(Vec::<Type>::new()))
+            // }
             Opcode::Is => {
                 if let Type::Tuple(tuple) = ctx.arg {
                     if tuple.len() == 2 {

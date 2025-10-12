@@ -6,7 +6,7 @@ use crate::{
     types::{
         AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
         Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
-        fixpoint::FixPointInner, generalize::Generalize, type_bound::TypeBound,
+        fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -87,23 +87,47 @@ impl Deref for ParamEnv {
 }
 
 impl ParamEnv {
-    pub fn from_collector(collector: Collector<(usize, Type)>) -> Self {
+    /// 尝试从 Collector 构造 ParamEnv，如果同一索引下的类型不等价则返回 None
+    /// 这个构造器拒绝“空洞的真理”，即保证每个索引下至少有一个类型
+    pub fn from_collector(collector: Collector<(usize, Type)>) -> Result<Option<Self>, TypeError> {
+        if collector.items().is_empty() {
+            return Ok(Some(ParamEnv(Vec::new())));
+        }
         // 计算出最大的索引
         let max_index = collector
             .items()
             .iter()
             .map(|(index, _)| *index)
             .max()
-            .unwrap_or(0);
+            .unwrap();
         let mut vec = vec![smallvec::SmallVec::<[Type; 8]>::new(); max_index + 1];
         for (index, ty) in collector.items().iter() {
             vec[*index].push(ty.clone());
         }
-        let vec = vec
-            .into_iter()
-            .map(|types| Generalize::new(types, &ClosureEnv::default()).unwrap())
-            .collect::<Vec<_>>();
-        ParamEnv(vec)
+        let mut stabilized_vec = Vec::with_capacity(vec.len());
+        for types in vec.into_iter() {
+            if Self::check_equivalent(&types)? {
+                stabilized_vec.push(types[0].clone().stabilize());
+            } else {
+                return Ok(None);
+            }
+        }
+        Ok(Some(ParamEnv(stabilized_vec)))
+    }
+
+    fn check_equivalent(types: &smallvec::SmallVec<[Type; 8]>) -> Result<bool, TypeError> {
+        if types.is_empty() {
+            // 我们不承认“空洞的真理”，因为“空洞的真理”会导致空匹配无法被严格处理，如果仅仅只是处理成 Bottom 那么会导致类型黑洞引发错误传播
+            // 这在构造主义逻辑中是不可接受的
+            return Ok(false);
+        }
+        let base_type = &types[0];
+        for ty in types.iter().skip(1) {
+            if !ty.equivalent(base_type)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub fn get(&self, index: usize) -> Result<&StabilizedType, TypeError> {
@@ -290,9 +314,9 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
             .arg
             .is(&self.inner.pattern, &mut pattern_check_ctx)?
             .is_some()
+            && let Some(param_env) = ParamEnv::from_collector(matched_pattern)?
         {
             // 一旦模式匹配成功,就可以用 matched_pattern 来替换 expr 中的模式变量
-            let param_env = ParamEnv::from_collector(matched_pattern);
             let mut reduce_ctx = ReductionContext::new(
                 self.inner.env(),
                 &param_env,

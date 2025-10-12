@@ -71,7 +71,7 @@ pub fn calculate_full_error_span(
 #[derive(Debug, Clone)]
 pub enum ParseError<'ast> {
     UseBeforeDeclaration(WithLocation<LinearTypeAst<'ast>>, String),
-    RedeclaredPattern(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>),
+    RedeclaredCaptureValue(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>),
     UnusedVariable(WithLocation<LinearTypeAst<'ast>>, Vec<WithLocation<String>>),
     AmbiguousPattern(WithLocation<LinearTypeAst<'ast>>),
     PatternOutOfParameterDefinition(WithLocation<LinearTypeAst<'ast>>),
@@ -115,7 +115,7 @@ impl<'ast> ParseError<'ast> {
                     .with_help("Make sure the variable is declared before use")
                     .finish()
             }
-            ParseError::RedeclaredPattern(ast, name) => {
+            ParseError::RedeclaredCaptureValue(ast, name) => {
                 // 优先使用 name 的位置信息
                 let (report_start, report_filepath) = if let Some(name_location) = name.location() {
                     let source = name_location.source();
@@ -130,7 +130,7 @@ impl<'ast> ParseError<'ast> {
 
                 let mut report =
                     Report::build(ReportKind::Error, report_filepath.clone(), report_start)
-                        .with_message(format!("Redeclared pattern variable '{}'", name.value()));
+                        .with_message(format!("Redeclared capture variable '{}'", name.value()));
 
                 // 如果 name 有位置信息，为其添加 Label
                 if let Some(name_location) = name.location() {
@@ -144,7 +144,7 @@ impl<'ast> ParseError<'ast> {
                     report = report.with_label(
                         Label::new((filepath, char_start..char_end))
                             .with_message(format!(
-                                "Pattern variable '{}' is redeclared here",
+                                "Capture variable '{}' is redeclared here",
                                 name.value()
                             ))
                             .with_color(Color::Red),
@@ -162,7 +162,7 @@ impl<'ast> ParseError<'ast> {
 
                     report = report.with_label(
                         Label::new((ast_filepath, ast_start..ast_end))
-                            .with_message("The variable was already declared in this pattern")
+                            .with_message("The variable was already declared in this closure's capture, it might be a internal compiler error")
                             .with_color(Color::Yellow),
                     );
                 }
@@ -584,18 +584,23 @@ impl Default for BuildContextLayer {
 }
 
 pub struct PatternCounter {
-    count: usize,
+    index_mapping: HashMap<String, usize>,
 }
 
 impl PatternCounter {
     pub fn new() -> Self {
-        Self { count: 0 }
+        Self {
+            index_mapping: HashMap::new(),
+        }
     }
 
-    pub fn next(&mut self) -> usize {
-        let current = self.count;
-        self.count += 1;
-        current
+    pub fn alloc(&mut self, name: String) -> usize {
+        if let Some(&index) = self.index_mapping.get(&name) {
+            return index;
+        }
+        let index = self.index_mapping.len();
+        self.index_mapping.insert(name, index);
+        index
     }
 }
 

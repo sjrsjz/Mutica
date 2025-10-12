@@ -222,6 +222,20 @@ impl Type {
     pub fn stabilize(self) -> StabilizedType {
         StabilizedType::new(self)
     }
+
+    pub fn equivalent<T: AsTypeRef>(&self, other: T) -> Result<bool, TypeError> {
+        let mut assumptions = SmallVec::new();
+        let empty_env = ClosureEnv::new(Vec::<Type>::new());
+        let mut pattern_env = Collector::new();
+        let type_check_ctx = &mut TypeCheckContext::new(
+            &mut assumptions,
+            (&empty_env, &empty_env),
+            &mut pattern_env,
+            false,
+        );
+        Ok(self.is(other.as_type_ref(), type_check_ctx)?.is_some()
+            && other.as_type_ref().is(self, type_check_ctx)?.is_some())
+    }
 }
 
 /// Trait to extract Type reference from different input types

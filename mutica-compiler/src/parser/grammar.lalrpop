@@ -41,8 +41,6 @@ extern {
         "__is" => LexerToken::DunderIs,
         "__opcode" => LexerToken::DunderOpcode,
         "__continuation" => LexerToken::DunderContinuation,
-        "input" => LexerToken::Input,
-        "print" => LexerToken::Print,
 
         "->" => LexerToken::Arrow,
         "|->" => LexerToken::FatArrow,
@@ -124,8 +122,6 @@ AtomType: WithLocation<TypeAst<'input>> = {
     <l:@L> "__mod" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "__is" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "__opcode" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "input" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Input), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "print" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Print), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "__continuation" <r:@R> => WithLocation::new(TypeAst::Variable(None), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(n), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(Some(id)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -134,6 +130,7 @@ AtomType: WithLocation<TypeAst<'input>> = {
         let chars: Vec<WithLocation<TypeAst<'input>>> = s.chars().map(|ch| WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref())).collect();
         WithLocation::new(TypeAst::List(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
+    <l:@L> <io: Ident> "!" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
 Term: WithLocation<TypeAst<'input>> = {

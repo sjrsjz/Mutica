@@ -76,10 +76,6 @@ pub enum LexerToken<'input> {
     DunderOpcode,
     #[token("__continuation")]
     DunderContinuation,
-    #[token("input")]
-    Input,
-    #[token("print")]
-    Print,
 
     #[token("->")]
     Arrow,
