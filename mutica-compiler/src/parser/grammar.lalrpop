@@ -5,7 +5,7 @@ use crate::parser::SourceFile;
 use crate::parser::SourceLocation;
 use crate::parser::WithLocation;
 use std::sync::Arc;
-grammar<'input>(source: &Arc<SourceFile>);
+grammar(source: &Arc<SourceFile>);
 
 
 
@@ -13,12 +13,12 @@ extern {
     type Location = usize;
     type Error = LexicalError;
 
-    enum LexerToken<'input> {
+    enum LexerToken {
         "_" => LexerToken::Wildcard,
-        r"[0-9]+" => LexerToken::Num(<&'input str>),
-        r"[a-zA-Z_][a-zA-Z0-9_]*" => LexerToken::Ident(<&'input str>),
-        r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'" => LexerToken::CharLit(<&'input str>),
-        r#""([^"\\]|\\.)*""# => LexerToken::StringLit(<&'input str>),
+        r"[0-9]+" => LexerToken::Num(<String>),
+        r"[a-zA-Z_][a-zA-Z0-9_]*" => LexerToken::Ident(<String>),
+        r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'" => LexerToken::CharLit(<String>),
+        r#""([^"\\]|\\.)*""# => LexerToken::StringLit(<String>),
 
         "let" => LexerToken::Let,
         "perform" => LexerToken::Perform,
@@ -107,7 +107,7 @@ StringLiteral: String = {
 };
 
 
-AtomType: WithLocation<TypeAst<'input>> = {
+AtomType: WithLocation<TypeAst> = {
     <l:@L> "int" <r:@R> => WithLocation::new(TypeAst::Int, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "char" <r:@R> => WithLocation::new(TypeAst::Char, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> "true" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -127,13 +127,13 @@ AtomType: WithLocation<TypeAst<'input>> = {
     <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(Some(id)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <s: StringLiteral> <r:@R> => {
-        let chars: Vec<WithLocation<TypeAst<'input>>> = s.chars().map(|ch| WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref())).collect();
+        let chars: Vec<WithLocation<TypeAst>> = s.chars().map(|ch| WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref())).collect();
         WithLocation::new(TypeAst::List(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <io: Ident> "!" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
-Term: WithLocation<TypeAst<'input>> = {
+Term: WithLocation<TypeAst> = {
     "(" <t: Type> ")" => t,
     "[" <t: Type> "]" => t,
     "{" <t: Type> "}" => t,
@@ -141,14 +141,14 @@ Term: WithLocation<TypeAst<'input>> = {
     <a: AtomType> => a,
 }
 
-Namespace: WithLocation<TypeAst<'input>> = {
+Namespace: WithLocation<TypeAst> = {
     <l:@L> <tag: Ident> "::" <t: Term> <r:@R> => WithLocation::new(TypeAst::Namespace {
         tag: tag,
         expr: Box::new(t),
     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
-Apply: WithLocation<TypeAst<'input>> = {
+Apply: WithLocation<TypeAst> = {
     <l:@L> <obj: Apply> "." <k: Ident> <r:@R> => WithLocation::new(TypeAst::Apply {
         func: Box::new(WithLocation::new(TypeAst::Closure {
             pattern: Box::new(WithLocation::new(TypeAst::Namespace {
@@ -175,14 +175,14 @@ Apply: WithLocation<TypeAst<'input>> = {
     <t: Term> => t,
 }
 
-List: WithLocation<TypeAst<'input>> = {
+List: WithLocation<TypeAst> = {
     <l:@L> "@" <element: Primary> <r:@R> => match element.value() {
         TypeAst::Tuple(elements) => WithLocation::new(TypeAst::List(elements.clone()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
         single => WithLocation::new(TypeAst::List(vec![WithLocation::new(single.clone(), element.location())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     },
 }
 
-Match: WithLocation<TypeAst<'input>> = {
+Match: WithLocation<TypeAst> = {
     <l:@L> "match" <value: Primary?> <branches: MatchBranch+> "|" "panic" <r:@R> => {
         WithLocation::new(TypeAst::Match {
             value: value.map(Box::new),
@@ -191,26 +191,26 @@ Match: WithLocation<TypeAst<'input>> = {
     },
 }
 
-MatchBranch: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
+MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     "|" <pattern: Primary> "=>" <t: Primary> => (pattern, t),
 }
 
-// ElseBranch: WithLocation<TypeAst<'input>> = {
+// ElseBranch: WithLocation<TypeAst> = {
 //     "|" "!" "=>" <t: Primary> => t,
 // }
 
-RecursiveGen: WithLocation<TypeAst<'input>> = {
+RecursiveGen: WithLocation<TypeAst> = {
     <l:@L> "rec" <id: Ident> ":" <t: Primary> <r:@R> => WithLocation::new(TypeAst::FixPoint {
         param_name: id,
         expr: Box::new(t),
     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
-FailBranch: Box<WithLocation<TypeAst<'input>>> = {
+FailBranch: Box<WithLocation<TypeAst>> = {
     "\\" <t: Primary> => Box::new(t),
 }
 
-Closure: WithLocation<TypeAst<'input>> = {
+Closure: WithLocation<TypeAst> = {
     <l:@L> <pattern: Factor> "->" <body: Primary> <fail_branch: FailBranch> <r:@R> => {
         WithLocation::new(TypeAst::Closure {
             pattern: Box::new(pattern),
@@ -227,7 +227,7 @@ Closure: WithLocation<TypeAst<'input>> = {
     }
 }
 
-Tuple: WithLocation<TypeAst<'input>> = {
+Tuple: WithLocation<TypeAst> = {
     <l:@L> <r:@R> => WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <items: Comma<TupleElement>> <r:@R> => WithLocation::new(TypeAst::Tuple(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <item: TupleElement> => item,
@@ -249,11 +249,11 @@ Comma<T>: Vec<T> = {
 CommaSep = ","+;
 
 
-Literal: WithLocation<TypeAst<'input>> = {
+Literal: WithLocation<TypeAst> = {
     <l:@L> "#" <t: Primary> <r:@R> => WithLocation::new(TypeAst::Literal(Box::new(t)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
-Primary: WithLocation<TypeAst<'input>> = {
+Primary: WithLocation<TypeAst> = {
     <l: Literal> => l,
     <l: List> => l,
     <r: RecursiveGen> => r,
@@ -261,12 +261,12 @@ Primary: WithLocation<TypeAst<'input>> = {
     <m: Match> => m,
     <c: Calculate> => c,
     ! => {
-        let err: ErrorRecovery<usize, LexerToken<'input>, LexicalError> = <>;
+        let err: ErrorRecovery<usize, LexerToken, LexicalError> = <>;
         WithLocation::new(TypeAst::ParseError(err), None::<&SourceLocation>)
     }
 };
 
-Factor: WithLocation<TypeAst<'input>> = {
+Factor: WithLocation<TypeAst> = {
     <l:@L> "!" <a: Factor> <r:@R> => WithLocation::new(TypeAst::Not {
         value: Box::new(a),
     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -280,7 +280,7 @@ Factor: WithLocation<TypeAst<'input>> = {
 
 TupleElement = Generalize;
 
-Generalize: WithLocation<TypeAst<'input>> = {
+Generalize: WithLocation<TypeAst> = {
     <l:@L> <items: Bars<Specialize>> <r:@R> => WithLocation::new(TypeAst::Generalize(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <e: Specialize> => e,
 }
@@ -298,7 +298,7 @@ Bars<T>: Vec<T> = {
 
 BarsSep = "|" +;
 
-Specialize: WithLocation<TypeAst<'input>> = {
+Specialize: WithLocation<TypeAst> = {
     <l:@L> <items: Ands<Primary>> <r:@R> => WithLocation::new(TypeAst::Specialize(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <e: Primary> => e,
 }
@@ -318,9 +318,9 @@ Ands<T>: Vec<T> = {
 AndsSep = "&"+;
 
 
-Calculate: WithLocation<TypeAst<'input>> = { Compare };
+Calculate: WithLocation<TypeAst> = { Compare };
 
-Compare: WithLocation<TypeAst<'input>> = {
+Compare: WithLocation<TypeAst> = {
     <l:@L> <left: Compare> "==" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Eq {
         left: Box::new(left),
         right: Box::new(right),
@@ -364,7 +364,7 @@ Compare: WithLocation<TypeAst<'input>> = {
     <t: AddSub> => t,
 }
 
-AddSub: WithLocation<TypeAst<'input>> = {
+AddSub: WithLocation<TypeAst> = {
     <l:@L> <left: AddSub> "+" <right: Mod> <r:@R> => WithLocation::new(TypeAst::Apply {
         func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
@@ -376,7 +376,7 @@ AddSub: WithLocation<TypeAst<'input>> = {
     <t: Mod> => t,
 }
 
-Mod: WithLocation<TypeAst<'input>> = {
+Mod: WithLocation<TypeAst> = {
     <l:@L> <left: Mod> "%" <right: MulDiv> <r:@R> => WithLocation::new(TypeAst::Apply {
         func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
@@ -384,7 +384,7 @@ Mod: WithLocation<TypeAst<'input>> = {
     <t: MulDiv> => t,
 }
 
-MulDiv: WithLocation<TypeAst<'input>> = {
+MulDiv: WithLocation<TypeAst> = {
     <l:@L> <left: MulDiv> "*" <right: Factor> <r:@R> => WithLocation::new(TypeAst::Apply {
         func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
@@ -396,23 +396,23 @@ MulDiv: WithLocation<TypeAst<'input>> = {
     <t: Factor> => t,
 }
 
-Let: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
+Let: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     "let" <id: Primary> "=" <value: Type> ";" => (id, value),
 }
 
-Perform: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
+Perform: (WithLocation<TypeAst>, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     "perform" <id: Primary> "=" <f: Type> "with" <value: Type> ";" => (id, f, value),
 }
 
-DiscardPerform: (WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>) = {
+DiscardPerform: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     "perform" <f: Type> "with"  <e: Type> ";" => (f, e),
 }
 
-Discard: WithLocation<TypeAst<'input>> = {
+Discard: WithLocation<TypeAst> = {
     "discard" <e: Type> ";" => e,
 }
 
-Expression: WithLocation<TypeAst<'input>> = {
+Expression: WithLocation<TypeAst> = {
     <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
         match e.value() {
             TypeAst::Expression {
@@ -463,7 +463,7 @@ Expression: WithLocation<TypeAst<'input>> = {
     },
 }
 
-Effect: WithLocation<TypeAst<'input>> = {
+Effect: WithLocation<TypeAst> = {
     <l:@L> <perform_expr: Perform> <e: Type> <r:@R> => {
         WithLocation::new(TypeAst::Invoke {
             func: Box::new(perform_expr.1),
@@ -489,7 +489,7 @@ Effect: WithLocation<TypeAst<'input>> = {
 }
 
 
-pub Type: WithLocation<TypeAst<'input>> = {
+pub Type: WithLocation<TypeAst> = {
     <e: Effect> => e,
     <e: Expression> => e,
     <t: Tuple> => t,

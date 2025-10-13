@@ -19,19 +19,19 @@ impl Default for LexicalError {
 #[logos(skip r"//[^\n\r]*")]
 #[logos(skip r"/\*([^*]|\*[^/])*\*/")]
 #[logos(error = LexicalError)]
-pub enum LexerToken<'input> {
-    #[regex("[0-9]+")]
-    Num(&'input str),
+pub enum LexerToken {
+    #[regex("[0-9]+", |lex| lex.slice().to_owned())]
+    Num(String),
     #[token("_", priority = 3)]
     Wildcard,
-    #[regex("[a-zA-Z_][a-zA-Z0-9_]*")]
-    Ident(&'input str),
+    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_owned())]
+    Ident(String),
 
-    #[regex(r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'")]
-    CharLit(&'input str),
+    #[regex(r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'", |lex| lex.slice().to_owned())]
+    CharLit(String),
 
-    #[regex(r#""([^"\\]|\\.)*""#)]
-    StringLit(&'input str),
+    #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice().to_owned())]
+    StringLit(String),
 
     #[token("let")]
     Let,

@@ -1,7 +1,7 @@
 use crate::parser::lexer::{LexerToken, LexicalError};
 use crate::parser::{
-    BuildContext, ContextError, ParseContext, ParseError, PatternCounter, SourceLocation,
-    WithLocation,
+    BuildContext, ContextError, MultiFileBuilder, MultiFileBuilderError, ParseContext, ParseError,
+    PatternCounter, SourceLocation, WithLocation,
 };
 use lalrpop_util::ErrorRecovery;
 use mutica_core::arc_gc::gc::GC;
@@ -26,6 +26,7 @@ use mutica_core::types::variable::Variable;
 use mutica_core::types::{Stabilized, StabilizedType, Type, TypeError};
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum AtomicOpcode {
@@ -42,8 +43,9 @@ pub enum AtomicOpcode {
 }
 
 #[derive(Debug, Clone)]
-pub enum TypeAst<'input> {
-    ParseError(ErrorRecovery<usize, LexerToken<'input>, LexicalError>),
+pub enum TypeAst {
+    ParseError(ErrorRecovery<usize, LexerToken, LexicalError>),
+    Import(String), // 用于import语句
     Int,
     Char,
     Top,
@@ -52,58 +54,58 @@ pub enum TypeAst<'input> {
     IntLiteral(isize),
     CharLiteral(char),
     Variable(Option<String>),
-    Tuple(Vec<WithLocation<TypeAst<'input>>>),
-    List(Vec<WithLocation<TypeAst<'input>>>),
-    Generalize(Vec<WithLocation<TypeAst<'input>>>),
-    Specialize(Vec<WithLocation<TypeAst<'input>>>),
+    Tuple(Vec<WithLocation<TypeAst>>),
+    List(Vec<WithLocation<TypeAst>>),
+    Generalize(Vec<WithLocation<TypeAst>>),
+    Specialize(Vec<WithLocation<TypeAst>>),
     Invoke {
-        func: Box<WithLocation<TypeAst<'input>>>,
-        arg: Box<WithLocation<TypeAst<'input>>>,
-        continuation: Box<WithLocation<TypeAst<'input>>>,
+        func: Box<WithLocation<TypeAst>>,
+        arg: Box<WithLocation<TypeAst>>,
+        continuation: Box<WithLocation<TypeAst>>,
     },
     Expression {
-        binding_patterns: Vec<WithLocation<TypeAst<'input>>>,
-        binding_types: Vec<WithLocation<TypeAst<'input>>>,
-        body: Box<WithLocation<TypeAst<'input>>>,
+        binding_patterns: Vec<WithLocation<TypeAst>>,
+        binding_types: Vec<WithLocation<TypeAst>>,
+        body: Box<WithLocation<TypeAst>>,
     },
     Match {
-        value: Option<Box<WithLocation<TypeAst<'input>>>>,
-        match_branch: Vec<(WithLocation<TypeAst<'input>>, WithLocation<TypeAst<'input>>)>,
+        value: Option<Box<WithLocation<TypeAst>>>,
+        match_branch: Vec<(WithLocation<TypeAst>, WithLocation<TypeAst>)>,
     },
     Closure {
-        pattern: Box<WithLocation<TypeAst<'input>>>,
-        body: Box<WithLocation<TypeAst<'input>>>,
-        fail_branch: Option<Box<WithLocation<TypeAst<'input>>>>,
+        pattern: Box<WithLocation<TypeAst>>,
+        body: Box<WithLocation<TypeAst>>,
+        fail_branch: Option<Box<WithLocation<TypeAst>>>,
     },
     Apply {
-        func: Box<WithLocation<TypeAst<'input>>>,
-        arg: Box<WithLocation<TypeAst<'input>>>,
+        func: Box<WithLocation<TypeAst>>,
+        arg: Box<WithLocation<TypeAst>>,
     },
     Eq {
-        left: Box<WithLocation<TypeAst<'input>>>,
-        right: Box<WithLocation<TypeAst<'input>>>,
+        left: Box<WithLocation<TypeAst>>,
+        right: Box<WithLocation<TypeAst>>,
     },
     Neq {
-        left: Box<WithLocation<TypeAst<'input>>>,
-        right: Box<WithLocation<TypeAst<'input>>>,
+        left: Box<WithLocation<TypeAst>>,
+        right: Box<WithLocation<TypeAst>>,
     },
     Not {
-        value: Box<WithLocation<TypeAst<'input>>>,
+        value: Box<WithLocation<TypeAst>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
         param_name: String,
-        expr: Box<WithLocation<TypeAst<'input>>>,
+        expr: Box<WithLocation<TypeAst>>,
     },
     Namespace {
         tag: String,
-        expr: Box<WithLocation<TypeAst<'input>>>,
+        expr: Box<WithLocation<TypeAst>>,
     },
     Pattern {
         name: String,
-        expr: Box<WithLocation<TypeAst<'input>>>,
+        expr: Box<WithLocation<TypeAst>>,
     },
-    Literal(Box<WithLocation<TypeAst<'input>>>),
+    Literal(Box<WithLocation<TypeAst>>),
 }
 
 #[derive(Debug, Clone)]
@@ -257,11 +259,11 @@ impl<'ast> LinearizeResult<'ast> {
 
 impl BasicTypeAst {
     #[stacksafe::stacksafe]
-    pub fn linearize(
-        &self,
+    pub fn linearize<'a>(
+        &'a self,
         ctx: &mut LinearizeContext,
         loc: Option<&SourceLocation>,
-    ) -> LinearizeResult {
+    ) -> LinearizeResult<'a> {
         match self {
             BasicTypeAst::Int => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Int, loc))
@@ -512,10 +514,14 @@ pub enum LinearTypeAst<'ast> {
     Literal(Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
 }
 
-impl<'input> TypeAst<'input> {
+impl TypeAst {
     // 把高级抽象语法转换为基础抽象语法
     #[stacksafe::stacksafe]
-    pub fn into_basic(&self, loc: Option<&SourceLocation>) -> WithLocation<BasicTypeAst> {
+    pub fn into_basic(
+        &self,
+        multifile_builder: &mut MultiFileBuilder,
+        loc: Option<&SourceLocation>,
+    ) -> WithLocation<BasicTypeAst> {
         match self {
             TypeAst::ParseError(span) => {
                 panic!(
@@ -535,7 +541,7 @@ impl<'input> TypeAst<'input> {
                 BasicTypeAst::Tuple(
                     elements
                         .into_iter()
-                        .map(|e| e.into_basic(e.location()))
+                        .map(|e| e.into_basic(multifile_builder, e.location()))
                         .collect(),
                 ),
                 loc,
@@ -544,7 +550,7 @@ impl<'input> TypeAst<'input> {
                 BasicTypeAst::List(
                     elements
                         .into_iter()
-                        .map(|e| e.into_basic(e.location()))
+                        .map(|e| e.into_basic(multifile_builder, e.location()))
                         .collect(),
                 ),
                 loc,
@@ -553,7 +559,7 @@ impl<'input> TypeAst<'input> {
                 BasicTypeAst::Generalize(
                     elements
                         .into_iter()
-                        .map(|e| e.into_basic(e.location()))
+                        .map(|e| e.into_basic(multifile_builder, e.location()))
                         .collect(),
                 ),
                 loc,
@@ -562,7 +568,7 @@ impl<'input> TypeAst<'input> {
                 BasicTypeAst::Specialize(
                     elements
                         .into_iter()
-                        .map(|e| e.into_basic(e.location()))
+                        .map(|e| e.into_basic(multifile_builder, e.location()))
                         .collect(),
                 ),
                 loc,
@@ -573,9 +579,11 @@ impl<'input> TypeAst<'input> {
                 continuation,
             } => WithLocation::new(
                 BasicTypeAst::Invoke {
-                    func: Box::new(func.into_basic(func.location())),
-                    arg: Box::new(arg.into_basic(arg.location())),
-                    continuation: Box::new(continuation.into_basic(continuation.location())),
+                    func: Box::new(func.into_basic(multifile_builder, func.location())),
+                    arg: Box::new(arg.into_basic(multifile_builder, arg.location())),
+                    continuation: Box::new(
+                        continuation.into_basic(multifile_builder, continuation.location()),
+                    ),
                 },
                 loc,
             ),
@@ -585,7 +593,7 @@ impl<'input> TypeAst<'input> {
                 body,
             } => {
                 // 转换为嵌套的闭包和应用
-                let mut expr = body.into_basic(body.location());
+                let mut expr = body.into_basic(multifile_builder, body.location());
                 for (pat, ty) in binding_patterns
                     .into_iter()
                     .rev()
@@ -595,13 +603,15 @@ impl<'input> TypeAst<'input> {
                         BasicTypeAst::Apply {
                             func: Box::new(WithLocation::new(
                                 BasicTypeAst::Closure {
-                                    pattern: Box::new(pat.into_basic(pat.location())),
+                                    pattern: Box::new(
+                                        pat.into_basic(multifile_builder, pat.location()),
+                                    ),
                                     body: Box::new(expr),
                                     fail_branch: None,
                                 },
                                 pat.location(),
                             )),
-                            arg: Box::new(ty.into_basic(ty.location())),
+                            arg: Box::new(ty.into_basic(multifile_builder, ty.location())),
                         },
                         ty.location(),
                     ); // 应用的位置信息不重要
@@ -615,8 +625,8 @@ impl<'input> TypeAst<'input> {
                 let mut branches = Vec::new();
                 for (pat, expr) in match_branch {
                     branches.push((
-                        pat.into_basic(pat.location()),
-                        expr.into_basic(expr.location()),
+                        pat.into_basic(multifile_builder, pat.location()),
+                        expr.into_basic(multifile_builder, expr.location()),
                     ));
                 }
                 // 把match转换为一系列的Apply和Closure
@@ -653,7 +663,7 @@ impl<'input> TypeAst<'input> {
                                 },
                                 loc,
                             )),
-                            arg: Box::new(value.into_basic(value.location())),
+                            arg: Box::new(value.into_basic(multifile_builder, value.location())),
                         },
                         loc,
                     ),
@@ -679,18 +689,18 @@ impl<'input> TypeAst<'input> {
                 fail_branch,
             } => WithLocation::new(
                 BasicTypeAst::Closure {
-                    pattern: Box::new(pattern.into_basic(pattern.location())),
-                    body: Box::new(body.into_basic(body.location())),
+                    pattern: Box::new(pattern.into_basic(multifile_builder, pattern.location())),
+                    body: Box::new(body.into_basic(multifile_builder, body.location())),
                     fail_branch: fail_branch
                         .as_ref()
-                        .map(|b| Box::new(b.into_basic(b.location()))),
+                        .map(|b| Box::new(b.into_basic(multifile_builder, b.location()))),
                 },
                 loc,
             ),
             TypeAst::Apply { func, arg } => WithLocation::new(
                 BasicTypeAst::Apply {
-                    func: Box::new(func.into_basic(func.location())),
-                    arg: Box::new(arg.into_basic(arg.location())),
+                    func: Box::new(func.into_basic(multifile_builder, func.location())),
+                    arg: Box::new(arg.into_basic(multifile_builder, arg.location())),
                 },
                 loc,
             ),
@@ -786,8 +796,8 @@ impl<'input> TypeAst<'input> {
                     )),
                     arg: Box::new(WithLocation::new(
                         BasicTypeAst::Tuple(vec![
-                            left.into_basic(left.location()),
-                            right.into_basic(right.location()),
+                            left.into_basic(multifile_builder, left.location()),
+                            right.into_basic(multifile_builder, right.location()),
                         ]),
                         loc,
                     )),
@@ -809,7 +819,7 @@ impl<'input> TypeAst<'input> {
                     },
                     loc,
                 )
-                .into_basic(loc)
+                .into_basic(multifile_builder, loc)
             }
             TypeAst::Not { value } => WithLocation::new(
                 BasicTypeAst::Apply {
@@ -822,7 +832,7 @@ impl<'input> TypeAst<'input> {
                         loc,
                     )
                     .into(),
-                    arg: value.into_basic(value.location()).into(),
+                    arg: value.into_basic(multifile_builder, value.location()).into(),
                 },
                 loc,
             ),
@@ -832,35 +842,51 @@ impl<'input> TypeAst<'input> {
             TypeAst::FixPoint { param_name, expr } => WithLocation::new(
                 BasicTypeAst::FixPoint {
                     param_name: param_name.clone(),
-                    expr: Box::new(expr.into_basic(expr.location())),
+                    expr: Box::new(expr.into_basic(multifile_builder, expr.location())),
                 },
                 loc,
             ),
             TypeAst::Namespace { tag, expr } => WithLocation::new(
                 BasicTypeAst::Namespace {
                     tag: tag.clone(),
-                    expr: Box::new(expr.into_basic(expr.location())),
+                    expr: Box::new(expr.into_basic(multifile_builder, expr.location())),
                 },
                 loc,
             ),
             TypeAst::Pattern { name, expr } => WithLocation::new(
                 BasicTypeAst::Pattern {
                     name: name.clone(),
-                    expr: Box::new(expr.into_basic(expr.location())),
+                    expr: Box::new(expr.into_basic(multifile_builder, expr.location())),
                 },
                 loc,
             ),
             TypeAst::Literal(inner) => WithLocation::new(
-                BasicTypeAst::Literal(Box::new(inner.into_basic(inner.location()))),
+                BasicTypeAst::Literal(Box::new(
+                    inner.into_basic(multifile_builder, inner.location()),
+                )),
                 loc,
             ),
+            TypeAst::Import(import_path) => {
+                // read from file
+                let path = PathBuf::from(import_path);
+                let path = path.canonicalize().unwrap_or(path);
+
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => multifile_builder
+                        .build(path, content)
+                        .unwrap_or(WithLocation::new(BasicTypeAst::Bottom, loc)),
+                    Err(e) => {
+                        multifile_builder
+                            .errors
+                            .push(WithLocation::new(MultiFileBuilderError::IOError(e), loc));
+                        WithLocation::new(BasicTypeAst::Bottom, loc)
+                    }
+                }
+            }
         }
     }
 
-    pub fn collect_errors(
-        &self,
-        errors: &mut Vec<ErrorRecovery<usize, LexerToken<'input>, LexicalError>>,
-    ) {
+    pub fn collect_errors(&self, errors: &mut Vec<ErrorRecovery<usize, LexerToken, LexicalError>>) {
         match self {
             TypeAst::ParseError(span) => {
                 errors.push(span.clone());
@@ -872,7 +898,8 @@ impl<'input> TypeAst<'input> {
             | TypeAst::DiscardPattern
             | TypeAst::IntLiteral(_)
             | TypeAst::CharLiteral(_)
-            | TypeAst::Variable(_) => {}
+            | TypeAst::Variable(_)
+            | TypeAst::Import(_) => {}
             TypeAst::Tuple(elements)
             | TypeAst::List(elements)
             | TypeAst::Generalize(elements)
@@ -952,6 +979,99 @@ impl<'input> TypeAst<'input> {
             }
         }
     }
+
+    pub fn sanitize(ast: WithLocation<Self>) -> WithLocation<Self> {
+        ast.map(|ast| match ast {
+            TypeAst::ParseError(_) => TypeAst::Bottom,
+            TypeAst::Int
+            | TypeAst::Char
+            | TypeAst::Top
+            | TypeAst::Bottom
+            | TypeAst::DiscardPattern
+            | TypeAst::IntLiteral(_)
+            | TypeAst::CharLiteral(_)
+            | TypeAst::Variable(_)
+            | TypeAst::Import(_) => ast,
+            TypeAst::Tuple(elements) => {
+                TypeAst::Tuple(elements.into_iter().map(Self::sanitize).collect())
+            }
+            TypeAst::List(elements) => {
+                TypeAst::List(elements.into_iter().map(Self::sanitize).collect())
+            }
+            TypeAst::Generalize(elements) => {
+                TypeAst::Generalize(elements.into_iter().map(Self::sanitize).collect())
+            }
+            TypeAst::Specialize(elements) => {
+                TypeAst::Specialize(elements.into_iter().map(Self::sanitize).collect())
+            }
+            TypeAst::Invoke {
+                func,
+                arg,
+                continuation,
+            } => TypeAst::Invoke {
+                func: Box::new(Self::sanitize(*func)),
+                arg: Box::new(Self::sanitize(*arg)),
+                continuation: Box::new(Self::sanitize(*continuation)),
+            },
+            TypeAst::Expression {
+                binding_patterns,
+                binding_types,
+                body,
+            } => TypeAst::Expression {
+                binding_patterns: binding_patterns.into_iter().map(Self::sanitize).collect(),
+                binding_types: binding_types.into_iter().map(Self::sanitize).collect(),
+                body: Box::new(Self::sanitize(*body)),
+            },
+            TypeAst::Match {
+                value,
+                match_branch,
+            } => TypeAst::Match {
+                value: value.map(|v| Box::new(Self::sanitize(*v))),
+                match_branch: match_branch
+                    .into_iter()
+                    .map(|(p, e)| (Self::sanitize(p), Self::sanitize(e)))
+                    .collect(),
+            },
+            TypeAst::Closure {
+                pattern,
+                body,
+                fail_branch,
+            } => TypeAst::Closure {
+                pattern: Box::new(Self::sanitize(*pattern)),
+                body: Box::new(Self::sanitize(*body)),
+                fail_branch: fail_branch.map(|b| Box::new(Self::sanitize(*b))),
+            },
+            TypeAst::Apply { func, arg } => TypeAst::Apply {
+                func: Box::new(Self::sanitize(*func)),
+                arg: Box::new(Self::sanitize(*arg)),
+            },
+            TypeAst::Eq { left, right } => TypeAst::Eq {
+                left: Box::new(Self::sanitize(*left)),
+                right: Box::new(Self::sanitize(*right)),
+            },
+            TypeAst::Neq { left, right } => TypeAst::Neq {
+                left: Box::new(Self::sanitize(*left)),
+                right: Box::new(Self::sanitize(*right)),
+            },
+            TypeAst::Not { value } => TypeAst::Not {
+                value: Box::new(Self::sanitize(*value)),
+            },
+            TypeAst::AtomicOpcode(op) => TypeAst::AtomicOpcode(op),
+            TypeAst::FixPoint { param_name, expr } => TypeAst::FixPoint {
+                param_name,
+                expr: Box::new(Self::sanitize(*expr)),
+            },
+            TypeAst::Namespace { tag, expr } => TypeAst::Namespace {
+                tag,
+                expr: Box::new(Self::sanitize(*expr)),
+            },
+            TypeAst::Pattern { name, expr } => TypeAst::Pattern {
+                name,
+                expr: Box::new(Self::sanitize(*expr)),
+            },
+            TypeAst::Literal(inner) => TypeAst::Literal(Box::new(Self::sanitize(*inner))),
+        })
+    }
 }
 
 pub struct PatternEnv {
@@ -1019,7 +1139,7 @@ impl<'ast> FlowResult<'ast> {
         }
     }
 
-    pub fn ty(&self) -> &WithLocation<LinearTypeAst, FlowedMetaData> {
+    pub fn ty(&self) -> &WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
         &self.ty
     }
 
@@ -1505,7 +1625,7 @@ impl<'ast> LinearTypeAst<'ast> {
         pattern_mode: bool,
         gc: &mut GC<FixPointInner>,
         loc: Option<&SourceLocation>,
-    ) -> Result<BuildResult, Result<TypeError, ParseError>> {
+    ) -> Result<BuildResult, Result<TypeError, ParseError<'ast>>> {
         match self {
             LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
             LinearTypeAst::Char => Ok(BuildResult::simple(Character::new())),

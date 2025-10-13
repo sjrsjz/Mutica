@@ -1,7 +1,6 @@
 let Option: any = T: any |-> (Some::T | None::());
 let println: any = x: any |-> {
-    discard print x;
-    discard print '\n';
+    discard println! x;
 };
 discard println[Option(1)];
 discard println[Option(2)];

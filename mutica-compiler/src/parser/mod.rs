@@ -1,13 +1,15 @@
 pub mod ast;
 pub mod lexer;
 pub use ast::TypeAst;
-use mutica_core::types::Type;
+use logos::Logos;
+use mutica_core::{types::Type, util::cycle_detector::FastCycleDetector};
 
 use std::{collections::HashMap, fmt::Debug, ops::Deref, path::PathBuf, sync::Arc};
 
 use crate::{
+    grammar::TypeParser,
     parser::{
-        ast::LinearTypeAst,
+        ast::{BasicTypeAst, LinearTypeAst},
         lexer::{LexerToken, LexicalError},
     },
     util::{byte_offset_to_char_offset, byte_offset_to_position},
@@ -302,8 +304,8 @@ impl<'ast> ParseError<'ast> {
 }
 
 /// 为 lalrpop 的 ErrorRecovery 生成美观的错误报告
-pub fn report_error_recovery<'input, 'a>(
-    error: &ErrorRecovery<usize, LexerToken<'input>, LexicalError>,
+pub fn report_error_recovery<'a>(
+    error: &ErrorRecovery<usize, LexerToken, LexicalError>,
     filepath: &'a str,
     source: &str,
 ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
@@ -798,5 +800,170 @@ where
     type Target = T;
     fn deref(&self) -> &T {
         &self.value
+    }
+}
+
+pub struct MultiFileBuilder<'a> {
+    imported_ast: &'a mut HashMap<PathBuf, WithLocation<BasicTypeAst>>,
+    path: &'a mut FastCycleDetector<PathBuf>,
+    errors: &'a mut Vec<WithLocation<MultiFileBuilderError>>,
+}
+
+pub enum MultiFileBuilderError {
+    SyntaxError(lalrpop_util::ParseError<usize, LexerToken, LexicalError>),
+    RecoveryError(ErrorRecovery<usize, LexerToken, LexicalError>),
+    IOError(std::io::Error),
+}
+
+impl<'a> MultiFileBuilder<'a> {
+    pub fn new(
+        imported_ast: &'a mut HashMap<PathBuf, WithLocation<BasicTypeAst>>,
+        path: &'a mut FastCycleDetector<PathBuf>,
+        errors: &'a mut Vec<WithLocation<MultiFileBuilderError>>,
+    ) -> Self {
+        Self {
+            imported_ast,
+            path,
+            errors,
+        }
+    }
+
+    pub fn build(&mut self, path: PathBuf, code: String) -> Option<WithLocation<BasicTypeAst>> {
+        let source = Arc::new(SourceFile::new(Some(path.clone()), code));
+        let lexer = lexer::LexerToken::lexer(source.content());
+        let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
+            let token = token_result?;
+            Ok((span.start, token, span.end))
+        });
+
+        let parser = TypeParser::new();
+        let parse_result = parser.parse(&source, spanned_lexer);
+        let ast = match parse_result {
+            Ok(ast) => ast,
+            Err(err) => {
+                self.errors.push(WithLocation::new(
+                    MultiFileBuilderError::SyntaxError(err),
+                    Some(&SourceLocation::new(source.clone(), 0..source.content().len())),
+                ));
+                return None;
+            }
+        };
+        let mut rec_errors = Vec::new();
+        ast.collect_errors(&mut rec_errors);
+        for err in rec_errors {
+            self.errors.push(WithLocation::new(
+                MultiFileBuilderError::RecoveryError(err),
+                Some(&SourceLocation::new(source.clone(), 0..source.content().len())),
+            ));
+        }
+        let ast = TypeAst::sanitize(ast);
+        // 将路径规范化为绝对路径以保证唯一性
+        let canonical_path = path.canonicalize().unwrap_or(path);
+
+        if self.imported_ast.contains_key(&canonical_path) {
+            return self.imported_ast.get(&canonical_path).cloned();
+        }
+        self.path.with_guard(canonical_path.clone(), |detector| {
+            let mut new_ctx = MultiFileBuilder {
+                imported_ast: self.imported_ast,
+                path: detector,
+                errors: self.errors,
+            };
+            let basic_ast = ast.into_basic(&mut new_ctx, ast.location());
+            self.imported_ast.insert(canonical_path, basic_ast.clone());
+            basic_ast
+        })
+    }
+}
+
+pub struct SyntaxError(lalrpop_util::ParseError<usize, LexerToken, LexicalError>);
+impl SyntaxError {
+    pub fn new(e: lalrpop_util::ParseError<usize, LexerToken, LexicalError>) -> Self {
+        SyntaxError(e)
+    }
+
+    /// 生成美观的 ariadne 错误报告
+    pub fn report(
+        &self,
+        filepath: String,
+        source: &str,
+    ) -> Report<'static, (String, std::ops::Range<usize>)> {
+        use lalrpop_util::ParseError::*;
+
+        match &self.0 {
+            InvalidToken { location } => {
+                let char_pos = byte_offset_to_char_offset(source, *location);
+                Report::build(ReportKind::Error, filepath.clone(), char_pos)
+                    .with_message("Invalid token")
+                    .with_label(
+                        Label::new((filepath, char_pos..char_pos + 1))
+                            .with_message("Invalid token found here")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+            }
+            UnrecognizedToken {
+                token: (start, token, end),
+                expected,
+            } => {
+                let char_start = byte_offset_to_char_offset(source, *start);
+                let char_end = byte_offset_to_char_offset(source, *end);
+                let mut report = Report::build(ReportKind::Error, filepath.clone(), char_start)
+                    .with_message(format!("Unrecognized token: {:?}", token))
+                    .with_label(
+                        Label::new((filepath.clone(), char_start..char_end))
+                            .with_message("Unexpected token")
+                            .with_color(Color::Red),
+                    );
+
+                if !expected.is_empty() {
+                    report = report.with_help(format!("Expected one of: {}", expected.join(", ")));
+                }
+
+                report.finish()
+            }
+            UnrecognizedEof { location, expected } => {
+                let char_pos = byte_offset_to_char_offset(source, *location);
+                let mut report = Report::build(ReportKind::Error, filepath.clone(), char_pos)
+                    .with_message("Unexpected end of input")
+                    .with_label(
+                        Label::new((filepath.clone(), char_pos..char_pos))
+                            .with_message("Expected more input here")
+                            .with_color(Color::Red),
+                    );
+
+                if !expected.is_empty() {
+                    report = report.with_help(format!("Expected one of: {}", expected.join(", ")));
+                }
+
+                report.finish()
+            }
+            ExtraToken {
+                token: (start, token, end),
+            } => {
+                let char_start = byte_offset_to_char_offset(source, *start);
+                let char_end = byte_offset_to_char_offset(source, *end);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
+                    .with_message(format!("Extra token: {:?}", token))
+                    .with_label(
+                        Label::new((filepath, char_start..char_end))
+                            .with_message("This token should not be here")
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+            }
+            User { error } => {
+                let char_start = byte_offset_to_char_offset(source, error.span.start);
+                let char_end = byte_offset_to_char_offset(source, error.span.end);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
+                    .with_message("Lexical error")
+                    .with_label(
+                        Label::new((filepath, char_start..char_end))
+                            .with_message(format!("{:?}", error))
+                            .with_color(Color::Red),
+                    )
+                    .finish()
+            }
+        }
     }
 }

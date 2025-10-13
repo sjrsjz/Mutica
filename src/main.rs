@@ -1,13 +1,11 @@
 use clap::{Parser, Subcommand};
-use std::{fs, path::PathBuf, process, sync::Arc};
+use std::{collections::HashMap, fs, path::PathBuf, process};
 
 use mutica_compiler::{
-    SyntaxError, ariadne,
-    grammar::TypeParser,
-    logos::Logos,
+    ariadne,
     parser::{
-        BuildContext, ParseContext, PatternCounter, SourceFile, ast::LinearizeContext,
-        lexer::LexerToken,
+        BuildContext, MultiFileBuilder, MultiFileBuilderError, ParseContext, PatternCounter,
+        SyntaxError, ast::LinearizeContext,
     },
 };
 use mutica_core::{
@@ -51,135 +49,149 @@ fn main() {
 }
 
 pub fn parse_and_reduce(expr: &str, path: PathBuf) {
-    let source_file = Arc::new(SourceFile::new(Some(path), expr.into()));
-
     #[cfg(debug_assertions)]
     println!("Parsing expression:\n{}\n", expr);
-    let lexer = LexerToken::lexer(expr);
-    let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
-        let token = token_result?;
-        Ok((span.start, token, span.end))
-    });
 
-    let parser = TypeParser::new();
-    let parsed = parser.parse(&source_file, spanned_lexer);
-    match parsed {
-        Ok(ast) => {
-            let mut errors = Vec::new();
-            ast.collect_errors(&mut errors);
-            if !errors.is_empty() {
-                for e in errors {
-                    let filepath = source_file.filepath();
-                    let report =
-                        mutica_compiler::parser::report_error_recovery(&e, &filepath, expr);
-                    let cache: (&str, ariadne::Source) =
-                        (&filepath, ariadne::Source::from(expr.to_string()));
-                    report.eprint(cache).ok();
-                }
-                return;
-            }
-            let basic = ast.into_basic(ast.location());
-            // println!("Basic AST: {:#?}", basic);
-            let linearized = basic
-                .linearize(&mut LinearizeContext::new(), basic.location())
-                .finalize();
-            // println!("Linearized AST: {:#?}", linearized);
-            let mut flow_errors = Vec::new();
-            let flowed = linearized.flow(
-                &mut ParseContext::new(),
-                false,
-                linearized.location(),
-                &mut flow_errors,
-            );
+    // 使用 MultiFileBuilder 来构建整个项目
+    let mut imported_ast = HashMap::new();
+    let mut cycle_detector = FastCycleDetector::new();
+    let mut builder_errors = Vec::new();
+    let mut multifile_builder =
+        MultiFileBuilder::new(&mut imported_ast, &mut cycle_detector, &mut builder_errors);
 
-            if !flow_errors.is_empty() {
-                // 获取源文件信息用于错误报告
-                let (filepath, source_content) = if let Some(location) = linearized.location() {
+    // 直接使用 MultiFileBuilder 构建
+    let basic = match multifile_builder.build(path.clone(), expr.to_string()) {
+        Some(ast) => ast,
+        None => {
+            // 报告构建错误
+            for error_with_loc in &builder_errors {
+                let (filepath, source_content) = if let Some(location) = error_with_loc.location() {
                     let source = location.source();
                     (source.filepath(), source.content().to_string())
                 } else {
-                    (source_file.filepath(), expr.to_string())
+                    (path.to_string_lossy().to_string(), expr.to_string())
                 };
-                // 报告所有错误
-                let mut has_error = false;
-                for e in &flow_errors {
-                    e.report()
-                        .eprint((
-                            filepath.clone(),
-                            ariadne::Source::from(source_content.clone()),
-                        ))
-                        .ok();
-                    if !e.is_warning() {
-                        has_error = true;
+
+                match error_with_loc.value() {
+                    MultiFileBuilderError::SyntaxError(e) => {
+                        let syntax_error = SyntaxError::new(e.clone());
+                        let report = syntax_error.report(filepath.clone(), &source_content);
+                        report
+                            .eprint((filepath, ariadne::Source::from(source_content)))
+                            .ok();
+                    }
+                    MultiFileBuilderError::RecoveryError(e) => {
+                        let report = mutica_compiler::parser::report_error_recovery(
+                            e,
+                            &filepath,
+                            &source_content,
+                        );
+                        report
+                            .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                            .ok();
+                    }
+                    MultiFileBuilderError::IOError(e) => {
+                        eprintln!("IO Error: {}", e);
                     }
                 }
-                if has_error {
-                    return;
-                }
             }
+            return;
+        }
+    };
 
-            let flowed = flowed.ty().clone();
+    // println!("Basic AST: {:#?}", basic);
+    let linearized = basic
+        .linearize(&mut LinearizeContext::new(), basic.location())
+        .finalize();
+    // println!("Linearized AST: {:#?}", linearized);
+    let mut flow_errors = Vec::new();
+    let flowed = linearized.flow(
+        &mut ParseContext::new(),
+        false,
+        linearized.location(),
+        &mut flow_errors,
+    );
 
-            let mut gc = GC::new();
-            let built_type = match flowed.to_type(
-                &mut BuildContext::new(),
-                &mut PatternCounter::new(),
-                false,
-                &mut gc,
-                flowed.location(),
-            ) {
-                Ok(result) => result,
-                Err(Ok(type_error)) => {
-                    println!("Type building error: {:?}", type_error);
-                    return;
-                }
-                Err(Err(parse_error)) => {
-                    // 获取源文件信息用于错误报告
-                    let (filepath, source_content) = if let Some(location) = flowed.location() {
-                        let source = location.source();
-                        (source.filepath(), source.content().to_string())
-                    } else {
-                        ("<input>".to_string(), expr.to_string())
-                    };
-                    parse_error
-                        .report()
-                        .eprint((filepath, ariadne::Source::from(source_content)))
-                        .ok();
-                    return;
-                }
-            };
-            #[cfg(debug_assertions)]
-            println!(
-                "Built type: {}\n",
-                built_type.ty().display(&mut FastCycleDetector::new())
-            );
-            let mut linear_scheduler = scheduler::LinearScheduler::new(built_type.ty().clone());
-            let result = loop {
-                match linear_scheduler.step(&mut gc) {
-                    Ok(true) => continue,
-                    Ok(false) => break Ok(linear_scheduler.current_type().clone()),
-                    Err(e) => break Err(e),
-                }
-            };
-            match result {
-                Ok(v) => v
-                    .map(&mut FastCycleDetector::new(), |_, ty| match ty {
-                        Type::Tuple(tuple) if tuple.is_empty() => (),
-                        _ => {
-                            println!("{}", v.display(&mut FastCycleDetector::new()));
-                            ()
-                        }
-                    })
-                    .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e)),
-                Err(e) => eprintln!("Runtime Error: {:?}", e),
+    if !flow_errors.is_empty() {
+        // 获取源文件信息用于错误报告
+        let (filepath, source_content) = if let Some(location) = linearized.location() {
+            let source = location.source();
+            (source.filepath(), source.content().to_string())
+        } else {
+            (path.to_string_lossy().to_string(), expr.to_string())
+        };
+        // 报告所有错误
+        let mut has_error = false;
+        for e in &flow_errors {
+            e.report()
+                .eprint((
+                    filepath.clone(),
+                    ariadne::Source::from(source_content.clone()),
+                ))
+                .ok();
+            if !e.is_warning() {
+                has_error = true;
             }
         }
-        Err(e) => {
-            let syntax_error = SyntaxError::new(e);
-            let filepath = source_file.filepath();
-            let report = syntax_error.report(filepath.clone(), expr);
-            report.eprint((filepath, ariadne::Source::from(expr))).ok();
+        if has_error {
+            return;
         }
+    }
+
+    let flowed = flowed.ty().clone();
+
+    let mut gc = GC::new();
+    let built_type = match flowed.to_type(
+        &mut BuildContext::new(),
+        &mut PatternCounter::new(),
+        false,
+        &mut gc,
+        flowed.location(),
+    ) {
+        Ok(result) => result,
+        Err(Ok(type_error)) => {
+            println!("Type building error: {:?}", type_error);
+            return;
+        }
+        Err(Err(parse_error)) => {
+            // 获取源文件信息用于错误报告
+            let (filepath, source_content) = if let Some(location) = flowed.location() {
+                let source = location.source();
+                (source.filepath(), source.content().to_string())
+            } else {
+                (path.to_string_lossy().to_string(), expr.to_string())
+            };
+            parse_error
+                .report()
+                .eprint((filepath, ariadne::Source::from(source_content)))
+                .ok();
+            return;
+        }
+    };
+    #[cfg(debug_assertions)]
+    println!(
+        "Built type: {}\n",
+        built_type.ty().display(&mut FastCycleDetector::new())
+    );
+    let mut linear_scheduler = scheduler::LinearScheduler::new(built_type.ty().clone());
+    let result = loop {
+        match linear_scheduler.step(&mut gc) {
+            Ok(true) => continue,
+            Ok(false) => break Ok(linear_scheduler.current_type().clone()),
+            Err(e) => break Err(e),
+        }
+    };
+    match result {
+        Ok(v) => v
+            .map(&mut FastCycleDetector::new(), |_, ty| match ty {
+                Type::Tuple(tuple) if tuple.is_empty() => (),
+                _ => {
+                    println!("{}", v.display(&mut FastCycleDetector::new()));
+                    ()
+                }
+            })
+            .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e)),
+        Err(e) => eprintln!("Runtime Error: {:?}", e),
     }
 }
 
