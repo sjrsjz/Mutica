@@ -874,6 +874,7 @@ impl TypeAst {
                 match std::fs::read_to_string(&path) {
                     Ok(content) => multifile_builder
                         .build(path, content)
+                        .0
                         .unwrap_or(WithLocation::new(BasicTypeAst::Bottom, loc)),
                     Err(e) => {
                         multifile_builder

@@ -828,7 +828,11 @@ impl<'a> MultiFileBuilder<'a> {
         }
     }
 
-    pub fn build(&mut self, path: PathBuf, code: String) -> Option<WithLocation<BasicTypeAst>> {
+    pub fn build(
+        &mut self,
+        path: PathBuf,
+        code: String,
+    ) -> (Option<WithLocation<BasicTypeAst>>, Arc<SourceFile>) {
         let source = Arc::new(SourceFile::new(Some(path.clone()), code));
         let lexer = lexer::LexerToken::lexer(source.content());
         let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
@@ -843,9 +847,12 @@ impl<'a> MultiFileBuilder<'a> {
             Err(err) => {
                 self.errors.push(WithLocation::new(
                     MultiFileBuilderError::SyntaxError(err),
-                    Some(&SourceLocation::new(source.clone(), 0..source.content().len())),
+                    Some(&SourceLocation::new(
+                        source.clone(),
+                        0..source.content().len(),
+                    )),
                 ));
-                return None;
+                return (None, source);
             }
         };
         let mut rec_errors = Vec::new();
@@ -853,7 +860,10 @@ impl<'a> MultiFileBuilder<'a> {
         for err in rec_errors {
             self.errors.push(WithLocation::new(
                 MultiFileBuilderError::RecoveryError(err),
-                Some(&SourceLocation::new(source.clone(), 0..source.content().len())),
+                Some(&SourceLocation::new(
+                    source.clone(),
+                    0..source.content().len(),
+                )),
             ));
         }
         let ast = TypeAst::sanitize(ast);
@@ -861,18 +871,21 @@ impl<'a> MultiFileBuilder<'a> {
         let canonical_path = path.canonicalize().unwrap_or(path);
 
         if self.imported_ast.contains_key(&canonical_path) {
-            return self.imported_ast.get(&canonical_path).cloned();
+            return (self.imported_ast.get(&canonical_path).cloned(), source);
         }
-        self.path.with_guard(canonical_path.clone(), |detector| {
-            let mut new_ctx = MultiFileBuilder {
-                imported_ast: self.imported_ast,
-                path: detector,
-                errors: self.errors,
-            };
-            let basic_ast = ast.into_basic(&mut new_ctx, ast.location());
-            self.imported_ast.insert(canonical_path, basic_ast.clone());
-            basic_ast
-        })
+        self.path
+            .with_guard(canonical_path.clone(), |detector| {
+                let mut new_ctx = MultiFileBuilder {
+                    imported_ast: self.imported_ast,
+                    path: detector,
+                    errors: self.errors,
+                };
+                let basic_ast = ast.into_basic(&mut new_ctx, ast.location());
+                self.imported_ast.insert(canonical_path, basic_ast.clone());
+                basic_ast
+            })
+            .map(|ast| (Some(ast), source.clone()))
+            .unwrap_or((None, source))
     }
 }
 

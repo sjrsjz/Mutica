@@ -58,9 +58,9 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
     let mut builder_errors = Vec::new();
     let mut multifile_builder =
         MultiFileBuilder::new(&mut imported_ast, &mut cycle_detector, &mut builder_errors);
-
+    let (ast, source) = multifile_builder.build(path.clone(), expr.to_string());
     // 直接使用 MultiFileBuilder 构建
-    let basic = match multifile_builder.build(path.clone(), expr.to_string()) {
+    let basic = match ast {
         Some(ast) => ast,
         None => {
             // 报告构建错误
@@ -114,12 +114,8 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
 
     if !flow_errors.is_empty() {
         // 获取源文件信息用于错误报告
-        let (filepath, source_content) = if let Some(location) = linearized.location() {
-            let source = location.source();
-            (source.filepath(), source.content().to_string())
-        } else {
-            (path.to_string_lossy().to_string(), expr.to_string())
-        };
+        let filepath = source.filepath();
+        let source_content = source.content().to_string();
         // 报告所有错误
         let mut has_error = false;
         for e in &flow_errors {
@@ -155,12 +151,8 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         }
         Err(Err(parse_error)) => {
             // 获取源文件信息用于错误报告
-            let (filepath, source_content) = if let Some(location) = flowed.location() {
-                let source = location.source();
-                (source.filepath(), source.content().to_string())
-            } else {
-                (path.to_string_lossy().to_string(), expr.to_string())
-            };
+            let filepath = source.filepath();
+            let source_content = source.content().to_string();
             parse_error
                 .report()
                 .eprint((filepath, ariadne::Source::from(source_content)))

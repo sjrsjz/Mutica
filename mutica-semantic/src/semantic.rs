@@ -181,114 +181,132 @@ impl<'ast> SourceMapping<'ast> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
     use mutica_compiler::{
-        SyntaxError, ariadne,
-        grammar::TypeParser,
-        logos::{Logos, Source},
+        ariadne,
+        logos::Source,
         parser::{
-            ParseContext, SourceFile,
+            ParseContext,
             ast::{LinearTypeAst, LinearizeContext},
-            lexer::LexerToken,
         },
     };
 
     use crate::semantic::SourceMapping;
 
     pub fn parse_and_test_mapping(expr: &str, byte_offsets: Vec<usize>) {
-        let source_file = Arc::new(SourceFile::new(None, expr.into()));
+        use mutica_compiler::parser::{MultiFileBuilder, MultiFileBuilderError, SyntaxError};
+        use std::collections::HashMap;
+        use std::path::PathBuf;
 
         #[cfg(debug_assertions)]
         println!("Parsing expression:\n{}\n", expr);
-        let lexer = LexerToken::lexer(expr);
-        let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
-            let token = token_result?;
-            Ok((span.start, token, span.end))
-        });
 
-        let parser = TypeParser::new();
-        let parsed = parser.parse(&source_file, spanned_lexer);
-        match parsed {
-            Ok(ast) => {
-                let mut errors = Vec::new();
-                ast.collect_errors(&mut errors);
-                if !errors.is_empty() {
-                    for e in errors {
-                        mutica_compiler::parser::report_error_recovery(&e, "<input>", expr);
-                    }
-                    return;
-                }
-                let basic = ast.into_basic(ast.location());
-                // println!("Basic AST: {:?}", basic);
-                let linearized = basic
-                    .linearize(&mut LinearizeContext::new(), basic.location())
-                    .finalize();
-                // println!("Linearized AST: {:?}", linearized);
-                let mut flow_errors = Vec::new();
-                let flowed = linearized.flow(
-                    &mut ParseContext::new(),
-                    false,
-                    linearized.location(),
-                    &mut flow_errors,
-                );
+        let path = PathBuf::from("<test>");
 
-                if !flow_errors.is_empty() {
-                    // 获取源文件信息用于错误报告
-                    let (filepath, source_content) = if let Some(location) = linearized.location() {
-                        let source = location.source();
-                        (source.filepath(), source.content().to_string())
-                    } else {
-                        ("<input>".to_string(), expr.to_string())
-                    };
-                    // 报告所有错误
-                    for e in &flow_errors {
-                        e.report()
-                            .eprint((
-                                filepath.clone(),
-                                ariadne::Source::from(source_content.clone()),
-                            ))
-                            .ok();
-                    }
-                    return;
-                }
+        // 使用 MultiFileBuilder 来构建整个项目
+        let mut imported_ast = HashMap::new();
+        let mut cycle_detector = mutica_core::util::cycle_detector::FastCycleDetector::new();
+        let mut builder_errors = Vec::new();
+        let mut multifile_builder =
+            MultiFileBuilder::new(&mut imported_ast, &mut cycle_detector, &mut builder_errors);
+        let (ast, source) = multifile_builder.build(path.clone(), expr.to_string());
+        // 直接使用 MultiFileBuilder 构建
+        let basic = match ast {
+            Some(ast) => ast,
+            None => {
+                // 报告构建错误
+                for error_with_loc in &builder_errors {
+                    let (filepath, source_content) =
+                        if let Some(location) = error_with_loc.location() {
+                            let source = location.source();
+                            (source.filepath(), source.content().to_string())
+                        } else {
+                            (path.to_string_lossy().to_string(), expr.to_string())
+                        };
 
-                let flowed = flowed.ty().clone();
-
-                let mapping = SourceMapping::from_ast(&flowed, &source_file);
-
-                for byte_offset in byte_offsets {
-                    //
-                    // 测试字节偏移到 AST 节点的映射
-                    if let Some(node) = mapping.at(byte_offset) {
-                        // println!(
-                        //     "Byte offset {} maps to location {:?}\nSource: {:?}\n",
-                        //     byte_offset,
-                        //     node.location(),
-                        //     node.location()
-                        //         .map(|loc| loc.source().content().slice(loc.span().clone()))
-                        // );
-                        if let Some(reference) = node.payload().reference() {
-                            println!(
-                                "Byte offset {} maps at location {:?} reference to {:?}, context: {:?}",
-                                byte_offset,
-                                node.location().map(|loc| loc.span().clone()),
-                                reference
-                                    .location()
-                                    .map(|loc| loc.source().content().slice(loc.span().clone())),
-                                node.payload().variable_context()
-                            );
+                    match error_with_loc.value() {
+                        MultiFileBuilderError::SyntaxError(e) => {
+                            let syntax_error = SyntaxError::new(e.clone());
+                            let report = syntax_error.report(filepath.clone(), &source_content);
+                            report
+                                .eprint((filepath, ariadne::Source::from(source_content)))
+                                .ok();
                         }
-                    } else {
-                        println!("Byte offset {} does not map to any AST node", byte_offset);
+                        MultiFileBuilderError::RecoveryError(e) => {
+                            let report = mutica_compiler::parser::report_error_recovery(
+                                e,
+                                &filepath,
+                                &source_content,
+                            );
+                            report
+                                .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                                .ok();
+                        }
+                        MultiFileBuilderError::IOError(e) => {
+                            eprintln!("IO Error: {}", e);
+                        }
                     }
+                }
+                return;
+            }
+        };
+
+        let linearized = basic
+            .linearize(&mut LinearizeContext::new(), basic.location())
+            .finalize();
+
+        let mut flow_errors = Vec::new();
+        let flowed = linearized.flow(
+            &mut ParseContext::new(),
+            false,
+            linearized.location(),
+            &mut flow_errors,
+        );
+
+        if !flow_errors.is_empty() {
+            // 获取源文件信息用于错误报告
+            let filepath = source.filepath();
+            let source_content = source.content().to_string();
+            // 报告所有错误
+            let mut has_error = false;
+            for e in &flow_errors {
+                e.report()
+                    .eprint((
+                        filepath.clone(),
+                        ariadne::Source::from(source_content.clone()),
+                    ))
+                    .ok();
+                if !e.is_warning() {
+                    has_error = true;
                 }
             }
-            Err(e) => {
-                let syntax_error = SyntaxError::new(e);
-                let filepath = "<input>".to_string();
-                let report = syntax_error.report(filepath.clone(), expr);
-                report.eprint((filepath, ariadne::Source::from(expr))).ok();
+            if has_error {
+                return;
+            }
+        }
+
+        let flowed = flowed.ty().clone();
+
+        // 获取 source_file 用于构建映射
+        let source_file = source;
+
+        let mapping = SourceMapping::from_ast(&flowed, &source_file);
+
+        for byte_offset in byte_offsets {
+            // 测试字节偏移到 AST 节点的映射
+            if let Some(node) = mapping.at(byte_offset) {
+                if let Some(reference) = node.payload().reference() {
+                    println!(
+                        "Byte offset {} maps at location {:?} reference to {:?}, context: {:?}",
+                        byte_offset,
+                        node.location().map(|loc| loc.span().clone()),
+                        reference
+                            .location()
+                            .map(|loc| loc.source().content().slice(loc.span().clone())),
+                        node.payload().variable_context()
+                    );
+                }
+            } else {
+                println!("Byte offset {} does not map to any AST node", byte_offset);
             }
         }
     }
@@ -341,109 +359,113 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
     /// 打印带颜色的源代码映射
     pub fn print_colored_mapping(expr: &str) {
         use colored::Colorize;
+        use mutica_compiler::parser::{MultiFileBuilder, MultiFileBuilderError, SyntaxError};
+        use std::collections::HashMap;
+        use std::path::PathBuf;
 
-        let source_file = Arc::new(SourceFile::new(None, expr.into()));
+        let path = PathBuf::from("<test>");
 
         println!(
             "\n{}\n",
             "=== Parsing and building mapping ===".bright_white().bold()
         );
-        let lexer = LexerToken::lexer(expr);
-        let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
-            let token = token_result?;
-            Ok((span.start, token, span.end))
-        });
 
-        let parser = TypeParser::new();
-        let parsed = parser.parse(&source_file, spanned_lexer);
-        match parsed {
-            Ok(ast) => {
-                let mut errors = Vec::new();
-                ast.collect_errors(&mut errors);
-                if !errors.is_empty() {
-                    for e in errors {
-                        mutica_compiler::parser::report_error_recovery(&e, "<input>", expr);
-                    }
-                    return;
-                }
-                let basic = ast.into_basic(ast.location());
-                let linearized = basic
-                    .linearize(&mut LinearizeContext::new(), basic.location())
-                    .finalize();
-                let mut flow_errors = Vec::new();
-                let flowed = linearized.flow(
-                    &mut ParseContext::new(),
-                    false,
-                    linearized.location(),
-                    &mut flow_errors,
-                );
-
-                if !flow_errors.is_empty() {
-                    let (filepath, source_content) = if let Some(location) = linearized.location() {
-                        let source = location.source();
-                        (source.filepath(), source.content().to_string())
-                    } else {
-                        ("<input>".to_string(), expr.to_string())
-                    };
-                    // 报告所有错误
-                    for e in &flow_errors {
-                        e.report()
-                            .eprint((
-                                filepath.clone(),
-                                ariadne::Source::from(source_content.clone()),
-                            ))
-                            .ok();
-                    }
-                    return;
-                }
-
-                let flowed = flowed.ty().clone();
-
-                let mapping = SourceMapping::from_ast(&flowed, &source_file);
-
-                println!("{}\n", "=== Colored Source Code ===".bright_white().bold());
-
-                // 遍历源代码的每个字符
-                let mut current_color = None;
-                let mut buffer = String::new();
-
-                for (byte_offset, ch) in expr.char_indices() {
-                    let color = if let Some(node) = mapping.at(byte_offset) {
-                        Some(get_color_for_ast(node.value()))
-                    } else {
-                        None
-                    };
-
-                    // 如果颜色改变，先输出缓冲区的内容
-                    if color != current_color {
-                        if !buffer.is_empty() {
-                            match current_color {
-                                Some("green") => print!("{}", buffer.green()),
-                                Some("yellow") => print!("{}", buffer.yellow()),
-                                Some("blue") => print!("{}", buffer.blue()),
-                                Some("bright blue") => print!("{}", buffer.bright_blue()),
-                                Some("red") => print!("{}", buffer.red()),
-                                Some("magenta") => print!("{}", buffer.magenta()),
-                                Some("cyan") => print!("{}", buffer.cyan()),
-                                Some("bright cyan") => print!("{}", buffer.bright_cyan()),
-                                Some("bright green") => print!("{}", buffer.bright_green()),
-                                Some("bright yellow") => print!("{}", buffer.bright_yellow()),
-                                Some("bright magenta") => print!("{}", buffer.bright_magenta()),
-                                Some("bright red") => print!("{}", buffer.bright_red()),
-                                Some("white") => print!("{}", buffer.white()),
-                                Some("bright white") => print!("{}", buffer.bright_white()),
-                                None => print!("{}", buffer.dimmed()),
-                                _ => print!("{}", buffer),
-                            }
-                            buffer.clear();
+        // 使用 MultiFileBuilder 来构建整个项目
+        let mut imported_ast = HashMap::new();
+        let mut cycle_detector = mutica_core::util::cycle_detector::FastCycleDetector::new();
+        let mut builder_errors = Vec::new();
+        let mut multifile_builder =
+            MultiFileBuilder::new(&mut imported_ast, &mut cycle_detector, &mut builder_errors);
+        let (ast, source) = multifile_builder.build(path.clone(), expr.to_string());
+        // 直接使用 MultiFileBuilder 构建
+        let basic = match ast {
+            Some(ast) => ast,
+            None => {
+                // 报告构建错误
+                for error_with_loc in &builder_errors {
+                    let filepath = source.filepath();
+                    let source_content = source.content().to_string();
+                    match error_with_loc.value() {
+                        MultiFileBuilderError::SyntaxError(e) => {
+                            let syntax_error = SyntaxError::new(e.clone());
+                            let report = syntax_error.report(filepath.clone(), &source_content);
+                            report
+                                .eprint((filepath, ariadne::Source::from(source_content)))
+                                .ok();
                         }
-                        current_color = color;
+                        MultiFileBuilderError::RecoveryError(e) => {
+                            let report = mutica_compiler::parser::report_error_recovery(
+                                e,
+                                &filepath,
+                                &source_content,
+                            );
+                            report
+                                .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                                .ok();
+                        }
+                        MultiFileBuilderError::IOError(e) => {
+                            eprintln!("IO Error: {}", e);
+                        }
                     }
-
-                    buffer.push(ch);
                 }
+                return;
+            }
+        };
 
-                // 输出最后的缓冲区内容
+        let linearized = basic
+            .linearize(&mut LinearizeContext::new(), basic.location())
+            .finalize();
+
+        let mut flow_errors = Vec::new();
+        let flowed = linearized.flow(
+            &mut ParseContext::new(),
+            false,
+            linearized.location(),
+            &mut flow_errors,
+        );
+
+        if !flow_errors.is_empty() {
+            let filepath = source.filepath();
+            let source_content = source.content().to_string();
+            // 报告所有错误
+            let mut has_error = false;
+            for e in &flow_errors {
+                e.report()
+                    .eprint((
+                        filepath.clone(),
+                        ariadne::Source::from(source_content.clone()),
+                    ))
+                    .ok();
+                if !e.is_warning() {
+                    has_error = true;
+                }
+            }
+            if has_error {
+                return;
+            }
+        }
+
+        let flowed = flowed.ty().clone();
+
+        // 获取 source_file 用于构建映射
+        let source_file = source;
+        let mapping = SourceMapping::from_ast(&flowed, &source_file);
+
+        println!("{}\n", "=== Colored Source Code ===".bright_white().bold());
+
+        // 遍历源代码的每个字符
+        let mut current_color = None;
+        let mut buffer = String::new();
+
+        for (byte_offset, ch) in expr.char_indices() {
+            let color = if let Some(node) = mapping.at(byte_offset) {
+                Some(get_color_for_ast(node.value()))
+            } else {
+                None
+            };
+
+            // 如果颜色改变,先输出缓冲区的内容
+            if color != current_color {
                 if !buffer.is_empty() {
                     match current_color {
                         Some("green") => print!("{}", buffer.green()),
@@ -463,32 +485,52 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
                         None => print!("{}", buffer.dimmed()),
                         _ => print!("{}", buffer),
                     }
+                    buffer.clear();
                 }
-
-                println!("\n\n{}", "=== Color Legend ===".bright_white().bold());
-                println!("{}: Variable", "green".green());
-                println!("{}: Literal (Int/Char)", "yellow".yellow());
-                println!("{}: Type (Int/Char)", "blue".blue());
-                println!("{}: Top/Bottom", "bright blue".bright_blue());
-                println!("{}: Closure", "red".red());
-                println!("{}: Invoke", "magenta".magenta());
-                println!("{}: Tuple", "cyan".cyan());
-                println!("{}: List", "bright cyan".bright_cyan());
-                println!("{}: Generalize", "bright green".bright_green());
-                println!("{}: Specialize", "bright yellow".bright_yellow());
-                println!("{}: AtomicOpcode", "bright magenta".bright_magenta());
-                println!("{}: FixPoint", "bright red".bright_red());
-                println!("{}: Namespace", "white".white());
-                println!("{}: Pattern", "bright white".bright_white());
-                println!("{}: No mapping", "dimmed".dimmed());
+                current_color = color;
             }
-            Err(e) => {
-                let syntax_error = SyntaxError::new(e);
-                let filepath = "<input>".to_string();
-                let report = syntax_error.report(filepath.clone(), expr);
-                report.eprint((filepath, ariadne::Source::from(expr))).ok();
+
+            buffer.push(ch);
+        }
+
+        // 输出最后的缓冲区内容
+        if !buffer.is_empty() {
+            match current_color {
+                Some("green") => print!("{}", buffer.green()),
+                Some("yellow") => print!("{}", buffer.yellow()),
+                Some("blue") => print!("{}", buffer.blue()),
+                Some("bright blue") => print!("{}", buffer.bright_blue()),
+                Some("red") => print!("{}", buffer.red()),
+                Some("magenta") => print!("{}", buffer.magenta()),
+                Some("cyan") => print!("{}", buffer.cyan()),
+                Some("bright cyan") => print!("{}", buffer.bright_cyan()),
+                Some("bright green") => print!("{}", buffer.bright_green()),
+                Some("bright yellow") => print!("{}", buffer.bright_yellow()),
+                Some("bright magenta") => print!("{}", buffer.bright_magenta()),
+                Some("bright red") => print!("{}", buffer.bright_red()),
+                Some("white") => print!("{}", buffer.white()),
+                Some("bright white") => print!("{}", buffer.bright_white()),
+                None => print!("{}", buffer.dimmed()),
+                _ => print!("{}", buffer),
             }
         }
+
+        println!("\n\n{}", "=== Color Legend ===".bright_white().bold());
+        println!("{}: Variable", "green".green());
+        println!("{}: Literal (Int/Char)", "yellow".yellow());
+        println!("{}: Type (Int/Char)", "blue".blue());
+        println!("{}: Top/Bottom", "bright blue".bright_blue());
+        println!("{}: Closure", "red".red());
+        println!("{}: Invoke", "magenta".magenta());
+        println!("{}: Tuple", "cyan".cyan());
+        println!("{}: List", "bright cyan".bright_cyan());
+        println!("{}: Generalize", "bright green".bright_green());
+        println!("{}: Specialize", "bright yellow".bright_yellow());
+        println!("{}: AtomicOpcode", "bright magenta".bright_magenta());
+        println!("{}: FixPoint", "bright red".bright_red());
+        println!("{}: Namespace", "white".white());
+        println!("{}: Pattern", "bright white".bright_white());
+        println!("{}: No mapping", "dimmed".dimmed());
     }
 
     #[test]
