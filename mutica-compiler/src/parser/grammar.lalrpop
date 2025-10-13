@@ -33,6 +33,7 @@ extern {
         "false" => LexerToken::False,
         "any" => LexerToken::Any,
         "none" => LexerToken::None,
+        "import" => LexerToken::Import,
         "__add" => LexerToken::DunderAdd,
         "__sub" => LexerToken::DunderSub,
         "__mul" => LexerToken::DunderMul,
@@ -131,6 +132,7 @@ AtomType: WithLocation<TypeAst> = {
         WithLocation::new(TypeAst::List(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <io: Ident> "!" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "import" <s: StringLiteral> <r:@R> => WithLocation::new(TypeAst::Import(s), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
 }
 
 Term: WithLocation<TypeAst> = {

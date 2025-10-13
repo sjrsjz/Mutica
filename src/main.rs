@@ -61,8 +61,8 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
     let (ast, source) = multifile_builder.build(path.clone(), expr.to_string());
     // 直接使用 MultiFileBuilder 构建
     let basic = match ast {
-        Some(ast) => ast,
-        None => {
+        Some(ast) if builder_errors.is_empty() => ast,
+        None | Some(_) => {
             // 报告构建错误
             for error_with_loc in &builder_errors {
                 let (filepath, source_content) = if let Some(location) = error_with_loc.location() {
@@ -91,7 +91,19 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                             .ok();
                     }
                     MultiFileBuilderError::IOError(e) => {
-                        eprintln!("IO Error: {}", e);
+                        let range = error_with_loc
+                            .location()
+                            .map(|r| r.span().clone())
+                            .unwrap_or(0..0);
+                        ariadne::Report::build(
+                            ariadne::ReportKind::Error,
+                            filepath.as_str(),
+                            range.start,
+                        )
+                        .with_label(ariadne::Label::new((filepath.as_str(), range)).with_message(e))
+                        .finish()
+                        .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                        .ok();
                     }
                 }
             }
@@ -115,15 +127,12 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
     if !flow_errors.is_empty() {
         // 获取源文件信息用于错误报告
         let filepath = source.filepath();
-        let source_content = source.content().to_string();
+        let source_content = source.content();
         // 报告所有错误
         let mut has_error = false;
         for e in &flow_errors {
             e.report()
-                .eprint((
-                    filepath.clone(),
-                    ariadne::Source::from(source_content.clone()),
-                ))
+                .eprint((filepath.clone(), ariadne::Source::from(source_content)))
                 .ok();
             if !e.is_warning() {
                 has_error = true;
@@ -573,5 +582,11 @@ mod tests {
         let (_x: int, _x: char) = (1, 'a');
         "#;
         parse_and_reduce(expr, PathBuf::from("test_multipattern.mutica"));
+    }
+
+    #[test]
+    fn test_import() {
+        let expr = r#"import "./iter.mu""#;
+        parse_and_reduce(expr, PathBuf::from("test_import.mutica"));
     }
 }

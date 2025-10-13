@@ -57,7 +57,8 @@ pub enum LexerToken {
     False,
     #[token("any")]
     Any,
-
+    #[token("import")]
+    Import,
     #[token("none")]
     None,
     #[token("__add")]
