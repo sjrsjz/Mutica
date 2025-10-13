@@ -1168,7 +1168,7 @@ impl<'ast> LinearTypeAst<'ast> {
         ctx: &mut ParseContext,
         pattern_mode: bool,
         loc: Option<&SourceLocation>,
-        errors: &mut Vec<ParseError<'ast>>,
+        errors: &mut Vec<WithLocation<ParseError<'ast>>>,
     ) -> FlowResult<'ast> {
         match self {
             LinearTypeAst::Int => FlowResult::simple(
@@ -1212,9 +1212,12 @@ impl<'ast> LinearTypeAst<'ast> {
                 }
                 Err(context_error) => match context_error {
                     ContextError::NotDeclared(name) => {
-                        errors.push(ParseError::UseBeforeDeclaration(
-                            WithLocation::new(self.clone(), loc),
-                            name,
+                        errors.push(WithLocation::new(
+                            ParseError::UseBeforeDeclaration(
+                                WithLocation::new(self.clone(), loc),
+                                name,
+                            ),
+                            loc,
                         ));
                         // 返回一个简单的变量引用作为恢复
                         FlowResult::simple(
@@ -1288,10 +1291,10 @@ impl<'ast> LinearTypeAst<'ast> {
                 }
                 if !all_patterns.is_empty() {
                     // 泛化类型中不允许出现模式变量，因为泛化类型是乱序的
-                    errors.push(ParseError::AmbiguousPattern(WithLocation::new(
-                        self.clone(),
+                    errors.push(WithLocation::new(
+                        ParseError::AmbiguousPattern(WithLocation::new(self.clone(), loc)),
                         loc,
-                    )));
+                    ));
                     all_patterns = PatternEnv::new(); // 清空模式变量
                 }
                 FlowResult::complex(
@@ -1317,10 +1320,10 @@ impl<'ast> LinearTypeAst<'ast> {
                 }
                 if !all_patterns.is_empty() {
                     // 专化类型中不允许出现模式变量，因为专化类型是乱序的
-                    errors.push(ParseError::AmbiguousPattern(WithLocation::new(
-                        self.clone(),
+                    errors.push(WithLocation::new(
+                        ParseError::AmbiguousPattern(WithLocation::new(self.clone(), loc)),
                         loc,
-                    )));
+                    ));
                     all_patterns = PatternEnv::new(); // 清空模式变量
                 }
                 FlowResult::complex(
@@ -1385,9 +1388,9 @@ impl<'ast> LinearTypeAst<'ast> {
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        errors.push(ParseError::UnusedVariable(
-                            WithLocation::new(self.clone(), loc),
-                            v,
+                        errors.push(WithLocation::new(
+                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                            loc,
                         ));
                     }
                 }
@@ -1400,9 +1403,9 @@ impl<'ast> LinearTypeAst<'ast> {
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        errors.push(ParseError::UnusedVariable(
-                            WithLocation::new(self.clone(), loc),
-                            v,
+                        errors.push(WithLocation::new(
+                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                            loc,
                         ));
                     }
                 }
@@ -1438,8 +1441,12 @@ impl<'ast> LinearTypeAst<'ast> {
             }
             LinearTypeAst::Pattern { name, expr } => {
                 if !pattern_mode {
-                    errors.push(ParseError::PatternOutOfParameterDefinition(
-                        WithLocation::new(self.clone(), loc),
+                    errors.push(WithLocation::new(
+                        ParseError::PatternOutOfParameterDefinition(WithLocation::new(
+                            self.clone(),
+                            loc,
+                        )),
+                        loc,
                     ));
                     // 继续处理，但返回简单的结果
                     return FlowResult::simple(
@@ -1481,9 +1488,9 @@ impl<'ast> LinearTypeAst<'ast> {
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        pattern_errors.push(ParseError::UnusedVariable(
-                            WithLocation::new(self.clone(), loc),
-                            v,
+                        pattern_errors.push(WithLocation::new(
+                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                            loc,
                         ));
                     }
                 }
@@ -1491,8 +1498,8 @@ impl<'ast> LinearTypeAst<'ast> {
                 errors.extend(pattern_errors);
 
                 ctx.enter_scope();
-                for (var, loc) in auto_captures {
-                    match ctx.declare_variable(var.clone(), loc.location()) {
+                for (var, var_loc) in auto_captures {
+                    match ctx.declare_variable(var.clone(), var_loc.location()) {
                         Ok(_) => {}
                         Err(ContextError::EmptyContext) => {
                             panic!(
@@ -1501,9 +1508,12 @@ impl<'ast> LinearTypeAst<'ast> {
                         }
                         Err(ContextError::NotDeclared(_)) => unreachable!(),
                         Err(ContextError::NotUsed(v)) => {
-                            errors.push(ParseError::UnusedVariable(
-                                WithLocation::new(self.clone(), loc.location()),
-                                v,
+                            errors.push(WithLocation::new(
+                                ParseError::UnusedVariable(
+                                    WithLocation::new(self.clone(), var_loc.location()),
+                                    v,
+                                ),
+                                loc,
                             ));
                         }
                     }
@@ -1518,9 +1528,9 @@ impl<'ast> LinearTypeAst<'ast> {
                         }
                         Err(ContextError::NotDeclared(_)) => unreachable!(),
                         Err(ContextError::NotUsed(v)) => {
-                            errors.push(ParseError::UnusedVariable(
-                                WithLocation::new(self.clone(), loc),
-                                v,
+                            errors.push(WithLocation::new(
+                                ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                                loc,
                             ));
                         }
                     }
@@ -1533,9 +1543,9 @@ impl<'ast> LinearTypeAst<'ast> {
                     }
                     Err(ContextError::NotDeclared(_)) => unreachable!(),
                     Err(ContextError::NotUsed(v)) => {
-                        errors.push(ParseError::UnusedVariable(
-                            WithLocation::new(self.clone(), loc),
-                            v,
+                        errors.push(WithLocation::new(
+                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                            loc,
                         ));
                     }
                 }

@@ -138,8 +138,16 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         // 报告所有错误
         let mut has_error = false;
         for e in &flow_errors {
+            let filepath = e
+                .location()
+                .map(|loc| loc.source().filepath())
+                .unwrap_or_else(|| filepath.clone());
+            let source_content = e
+                .location()
+                .map(|loc| loc.source().content().to_string())
+                .unwrap_or_else(|| source_content.to_string());
             e.report()
-                .eprint((filepath.clone(), ariadne::Source::from(source_content)))
+                .eprint((filepath, ariadne::Source::from(source_content)))
                 .ok();
             if !e.is_warning() {
                 has_error = true;
