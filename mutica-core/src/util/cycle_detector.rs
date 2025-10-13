@@ -22,4 +22,8 @@ impl<T: PartialEq> FastCycleDetector<T> {
             visited: smallvec![],
         }
     }
+
+    pub fn last(&self) -> Option<&T> {
+        self.visited.last()
+    }
 }

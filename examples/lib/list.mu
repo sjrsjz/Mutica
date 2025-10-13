@@ -1,3 +1,4 @@
+let maybe_pkg: any = import "maybe.mu";
 let List: any = T: any |-> rec list: (() | (T, list));
 let Nil: any = ();
 let cons: any = (head: any, tail: any) |-> (head, tail);
@@ -98,10 +99,10 @@ let drop: any = lst: List(any) |-> n: int |-> {
 };
 let find: any = lst: List(any) |-> pred: any |-> {
     let loop: any = rec go: match
-        | () => Nothing::()
+        | () => maybe_pkg.Nothing
         | (h: any, t: any) => match pred(h)
             | false => go(t)
-            | true => Just::h
+            | true => maybe_pkg.Just(h)
             | panic
         | panic;
     loop(lst)

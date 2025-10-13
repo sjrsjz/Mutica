@@ -36,13 +36,6 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Run { file } => {
-            std::env::set_current_dir(
-                PathBuf::from(&file)
-                    .parent()
-                    .unwrap_or(&PathBuf::from("."))
-                    .to_path_buf(),
-            )
-            .unwrap_or(());
             let code = match fs::read_to_string(&file) {
                 Ok(c) => c,
                 Err(e) => {

@@ -4,7 +4,13 @@ pub use ast::TypeAst;
 use logos::Logos;
 use mutica_core::{types::Type, util::cycle_detector::FastCycleDetector};
 
-use std::{collections::HashMap, fmt::Debug, ops::Deref, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::{
     grammar::TypeParser,
@@ -873,8 +879,10 @@ impl<'a> MultiFileBuilder<'a> {
         if self.imported_ast.contains_key(&canonical_path) {
             return (self.imported_ast.get(&canonical_path).cloned(), source);
         }
-        self.path
+        let result = self
+            .path
             .with_guard(canonical_path.clone(), |detector| {
+                std::env::set_current_dir(canonical_path.parent().unwrap_or(Path::new("."))).ok();
                 let mut new_ctx = MultiFileBuilder {
                     imported_ast: self.imported_ast,
                     path: detector,
@@ -897,7 +905,11 @@ impl<'a> MultiFileBuilder<'a> {
                     )),
                 ));
                 (None, source)
-            })
+            });
+        self.path
+            .last()
+            .map(|path| std::env::set_current_dir(path.parent().unwrap_or(Path::new("."))).ok());
+        result
     }
 }
 
