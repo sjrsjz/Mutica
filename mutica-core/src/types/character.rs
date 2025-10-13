@@ -3,8 +3,8 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
-        type_bound::TypeBound,
+        Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
+        character_value::CharacterValue, fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
 };
@@ -52,10 +52,25 @@ impl CoinductiveType<Type, StabilizedType> for Character {
         Ok(self.clone().dispatch().stabilize())
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
-        Err(TypeError::NonApplicableType(
-            self.clone().dispatch().stabilize().into(),
-        ))
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+        ctx.arg
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                Type::IntegerValue(iv) => {
+                    let v = iv.value();
+                    if v > std::char::MAX as i64 || v < 0 {
+                        return Err(TypeError::TypeMismatch(
+                            ctx.arg.clone().stabilize().into(),
+                            "Expected a valid Unicode code point".to_string(),
+                        ));
+                    }
+                    Ok(CharacterValue::new(std::char::from_u32(v as u32).unwrap()))
+                }
+                Type::CharValue(_) => Ok(arg.clone().stabilize()),
+                _ => Err(TypeError::TypeMismatch(
+                    ctx.arg.clone().stabilize().into(),
+                    "IntegerValue or CharValue".to_string(),
+                )),
+            })?
     }
 }
 

@@ -81,7 +81,17 @@ extern {
     }
 }
 
-Num: isize = <s:r"[0-9]+"> => s.parse().unwrap();
+Num: i64 = <s:r"[0-9]+"> => {
+    if s.starts_with("0x") || s.starts_with("0X") {
+        i64::from_str_radix(&s[2..], 16).unwrap()
+    } else if s.starts_with("0o") || s.starts_with("0O") {
+        i64::from_str_radix(&s[2..], 8).unwrap()
+    } else if s.starts_with("0b") || s.starts_with("0B") {
+        i64::from_str_radix(&s[2..], 2).unwrap()
+    } else {
+        s.parse().unwrap()
+    }
+};
 Ident: String = <s:r"[a-zA-Z_][a-zA-Z0-9_]*"> => s.to_string();
 
 CharLiteral: char = {
@@ -272,6 +282,7 @@ Factor: WithLocation<TypeAst> = {
     <l:@L> "!" <a: Factor> <r:@R> => WithLocation::new(TypeAst::Not {
         value: Box::new(a),
     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "-" <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(-n), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <id: Ident> ":" <a: Factor> <r:@R> => WithLocation::new(TypeAst::Pattern {
         name: id,
         expr: Box::new(a),

@@ -51,7 +51,7 @@ pub enum TypeAst {
     Top,
     Bottom,
     DiscardPattern, // 用于表示_模式
-    IntLiteral(isize),
+    IntLiteral(i64),
     CharLiteral(char),
     Variable(Option<String>),
     Tuple(Vec<WithLocation<TypeAst>>),
@@ -114,7 +114,7 @@ pub enum BasicTypeAst {
     Char,
     Top,
     Bottom,
-    IntLiteral(isize),
+    IntLiteral(i64),
     CharLiteral(char),
     Variable(Option<String>), // None 表示续体
     Tuple(Vec<WithLocation<BasicTypeAst>>),
@@ -480,7 +480,7 @@ pub enum LinearTypeAst<'ast> {
     Char,
     Top,
     Bottom,
-    IntLiteral(isize),
+    IntLiteral(i64),
     CharLiteral(char),
     Variable(Option<String>), // None 表示续体
     Tuple(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),

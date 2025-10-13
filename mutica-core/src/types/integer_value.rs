@@ -11,7 +11,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct IntegerValue {
-    value: isize,
+    value: i64,
 }
 
 impl GCTraceable<FixPointInner> for IntegerValue {
@@ -75,11 +75,11 @@ impl Representable for IntegerValue {
 }
 
 impl IntegerValue {
-    pub fn new(value: isize) -> StabilizedType {
+    pub fn new(value: i64) -> StabilizedType {
         Self { value }.dispatch().stabilize()
     }
 
-    pub fn value(&self) -> isize {
+    pub fn value(&self) -> i64 {
         self.value
     }
 }

@@ -885,7 +885,19 @@ impl<'a> MultiFileBuilder<'a> {
                 basic_ast
             })
             .map(|ast| (Some(ast), source.clone()))
-            .unwrap_or((None, source))
+            .unwrap_or_else(|| {
+                self.errors.push(WithLocation::new(
+                    MultiFileBuilderError::IOError(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Cyclic import detected",
+                    )),
+                    Some(&SourceLocation::new(
+                        source.clone(),
+                        0..source.content().len(),
+                    )),
+                ));
+                (None, source)
+            })
     }
 }
 

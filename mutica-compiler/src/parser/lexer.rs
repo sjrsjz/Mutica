@@ -20,7 +20,8 @@ impl Default for LexicalError {
 #[logos(skip r"/\*([^*]|\*[^/])*\*/")]
 #[logos(error = LexicalError)]
 pub enum LexerToken {
-    #[regex("[0-9]+", |lex| lex.slice().to_owned())]
+    // 支持十进制、十六进制(0x)、八进制(0o)、二进制(0b)
+    #[regex("0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+", |lex| lex.slice().to_owned())]
     Num(String),
     #[token("_", priority = 3)]
     Wildcard,

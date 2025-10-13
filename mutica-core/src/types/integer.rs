@@ -4,7 +4,7 @@ use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
         Rootable, StabilizedType, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
-        type_bound::TypeBound,
+        integer_value::IntegerValue, type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
 };
@@ -52,10 +52,16 @@ impl CoinductiveType<Type, StabilizedType> for Integer {
         Ok(self.clone().dispatch().stabilize())
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
-        Err(TypeError::NonApplicableType(
-            self.clone().dispatch().stabilize().into(),
-        ))
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+        ctx.arg
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                Type::IntegerValue(_) => Ok(arg.clone().stabilize()),
+                Type::CharValue(c) => Ok(IntegerValue::new(c.value() as i64)),
+                _ => Err(super::TypeError::TypeMismatch(
+                    ctx.arg.clone().stabilize().into(),
+                    "IntegerValue or CharValue".to_string(),
+                )),
+            })?
     }
 }
 
