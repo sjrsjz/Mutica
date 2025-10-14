@@ -6,12 +6,11 @@ use logos::Logos;
 use mutica_core::{types::Type, util::cycle_detector::FastCycleDetector};
 
 use std::{
-    cell::RefCell,
     collections::HashMap,
     fmt::Debug,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use crate::{
@@ -656,7 +655,7 @@ impl BuildContext {
 pub struct SourceFile {
     path: Option<PathBuf>,
     content: String,
-    color_mapping: RefCell<Vec<TokenColor>>,
+    color_mapping: RwLock<Vec<TokenColor>>,
 }
 
 impl Debug for SourceFile {
@@ -680,7 +679,7 @@ impl SourceFile {
     pub fn new(path: Option<PathBuf>, content: String) -> Self {
         Self {
             path,
-            color_mapping: RefCell::new(TokenColor::new_buffer(content.len())),
+            color_mapping: RwLock::new(TokenColor::new_buffer(content.len())),
             content,
         }
     }
@@ -701,12 +700,16 @@ impl SourceFile {
         &self.content
     }
 
-    pub fn color_mapping(&self) -> std::cell::Ref<'_, Vec<TokenColor>> {
-        self.color_mapping.borrow()
+    pub fn color_mapping(&self) -> std::sync::RwLockReadGuard<'_, Vec<TokenColor>> {
+        self.color_mapping
+            .read()
+            .expect("Failed to acquire read lock on color mapping")
     }
 
-    pub fn color_mapping_mut(&self) -> std::cell::RefMut<'_, Vec<TokenColor>> {
-        self.color_mapping.borrow_mut()
+    pub fn color_mapping_mut(&self) -> std::sync::RwLockWriteGuard<'_, Vec<TokenColor>> {
+        self.color_mapping
+            .write()
+            .expect("Failed to acquire write lock on color mapping")
     }
 }
 
