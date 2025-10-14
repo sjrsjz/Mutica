@@ -184,10 +184,7 @@ mod test {
     use mutica_compiler::{
         ariadne,
         logos::Source,
-        parser::{
-            ParseContext,
-            ast::{LinearTypeAst, LinearizeContext},
-        },
+        parser::{ParseContext, ast::LinearizeContext, colorize::TokenColor},
     };
 
     use crate::semantic::SourceMapping;
@@ -251,7 +248,8 @@ mod test {
         };
 
         let linearized = basic
-            .linearize(&mut LinearizeContext::new(), basic.location())
+            .0
+            .linearize(&mut LinearizeContext::new(), basic.0.location())
             .finalize();
 
         let mut flow_errors = Vec::new();
@@ -331,31 +329,6 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
         }
         parse_and_test_mapping(expr, byte_offsets);
     }
-
-    /// 根据 AST 节点类型获取颜色名称和样式
-    fn get_color_for_ast(ast: &LinearTypeAst) -> &'static str {
-        match ast {
-            LinearTypeAst::Variable(_) => "green",
-            LinearTypeAst::IntLiteral(_) => "yellow",
-            LinearTypeAst::CharLiteral(_) => "yellow",
-            LinearTypeAst::Int => "blue",
-            LinearTypeAst::Char => "blue",
-            LinearTypeAst::Top => "bright blue",
-            LinearTypeAst::Bottom => "bright blue",
-            LinearTypeAst::Closure { .. } => "red",
-            LinearTypeAst::Invoke { .. } => "magenta",
-            LinearTypeAst::Tuple(_) => "cyan",
-            LinearTypeAst::List(_) => "bright cyan",
-            LinearTypeAst::Generalize(_) => "bright green",
-            LinearTypeAst::Specialize(_) => "bright yellow",
-            LinearTypeAst::AtomicOpcode(_) => "bright magenta",
-            LinearTypeAst::FixPoint { .. } => "bright red",
-            LinearTypeAst::Namespace { .. } => "white",
-            LinearTypeAst::Pattern { .. } => "bright white",
-            LinearTypeAst::Literal(_) => "yellow",
-        }
-    }
-
     /// 打印带颜色的源代码映射
     pub fn print_colored_mapping(expr: &str) {
         use colored::Colorize;
@@ -412,108 +385,54 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
             }
         };
 
-        let linearized = basic
-            .linearize(&mut LinearizeContext::new(), basic.location())
-            .finalize();
-
-        let mut flow_errors = Vec::new();
-        let flowed = linearized.flow(
-            &mut ParseContext::new(),
-            false,
-            linearized.location(),
-            &mut flow_errors,
-        );
-
-        if !flow_errors.is_empty() {
-            let filepath = source.filepath();
-            let source_content = source.content().to_string();
-            // 报告所有错误
-            let mut has_error = false;
-            for e in &flow_errors {
-                e.report()
-                    .eprint((
-                        filepath.clone(),
-                        ariadne::Source::from(source_content.clone()),
-                    ))
-                    .ok();
-                if !e.is_warning() {
-                    has_error = true;
-                }
-            }
-            if has_error {
-                return;
-            }
-        }
-
-        let flowed = flowed.ty().clone();
-
-        // 获取 source_file 用于构建映射
-        let source_file = source;
-        let mapping = SourceMapping::from_ast(&flowed, &source_file);
-
-        println!("{}\n", "=== Colored Source Code ===".bright_white().bold());
-
-        // 遍历源代码的每个字符
-        let mut current_color = None;
-        let mut buffer = String::new();
-
-        for (byte_offset, ch) in expr.char_indices() {
-            let color = if let Some(node) = mapping.at(byte_offset) {
-                Some(get_color_for_ast(node.value()))
+        let color_buffer = basic.1.color_mapping();
+        // 按照字节偏移打印带颜色的源代码
+        for (i, ch) in expr.char_indices() {
+            if i < color_buffer.len() {
+                let color = color_buffer[i];
+                let color_name = match color {
+                    TokenColor::UnSpecified => "dimmed",
+                    TokenColor::Keyword => "bright blue",
+                    TokenColor::Declaration => "underlined bright blue",
+                    TokenColor::Namespace => "underlined bright yellow",
+                    TokenColor::Identifier => "green",
+                    TokenColor::Literal => "yellow",
+                    TokenColor::Operator => "magenta",
+                    TokenColor::Comment => "bright black",
+                    TokenColor::Whitespace => "dimmed",
+                    TokenColor::Punctuation => "cyan",
+                    TokenColor::Function => "bright green",
+                    TokenColor::Type => "blue",
+                    TokenColor::Attribute => "bright yellow",
+                    TokenColor::Macro => "bright magenta",
+                    TokenColor::Number => "yellow",
+                    TokenColor::String => "yellow",
+                    TokenColor::Boolean => "bright blue",
+                    TokenColor::Error => "red",
+                };
+                let colored_char = match color_name {
+                    "dimmed" => ch.to_string().dimmed(),
+                    "bright blue" => ch.to_string().bright_blue().bold(),
+                    "green" => ch.to_string().green(),
+                    "yellow" => ch.to_string().yellow(),
+                    "magenta" => ch.to_string().magenta(),
+                    "bright black" => ch.to_string().bright_black().italic(),
+                    "cyan" => ch.to_string().cyan(),
+                    "bright green" => ch.to_string().bright_green().bold(),
+                    "blue" => ch.to_string().blue(),
+                    "bright yellow" => ch.to_string().bright_yellow().bold(),
+                    "bright magenta" => ch.to_string().bright_magenta().bold(),
+                    "red" => ch.to_string().red().bold(),
+                    "underlined bright blue" => ch.to_string().bright_blue().underline().bold(),
+                    "underlined bright yellow" => ch.to_string().bright_yellow().underline().bold(),
+                    _ => ch.to_string().normal(),
+                };
+                print!("{}", colored_char);
             } else {
-                None
-            };
-
-            // 如果颜色改变,先输出缓冲区的内容
-            if color != current_color {
-                if !buffer.is_empty() {
-                    match current_color {
-                        Some("green") => print!("{}", buffer.green()),
-                        Some("yellow") => print!("{}", buffer.yellow()),
-                        Some("blue") => print!("{}", buffer.blue()),
-                        Some("bright blue") => print!("{}", buffer.bright_blue()),
-                        Some("red") => print!("{}", buffer.red()),
-                        Some("magenta") => print!("{}", buffer.magenta()),
-                        Some("cyan") => print!("{}", buffer.cyan()),
-                        Some("bright cyan") => print!("{}", buffer.bright_cyan()),
-                        Some("bright green") => print!("{}", buffer.bright_green()),
-                        Some("bright yellow") => print!("{}", buffer.bright_yellow()),
-                        Some("bright magenta") => print!("{}", buffer.bright_magenta()),
-                        Some("bright red") => print!("{}", buffer.bright_red()),
-                        Some("white") => print!("{}", buffer.white()),
-                        Some("bright white") => print!("{}", buffer.bright_white()),
-                        None => print!("{}", buffer.dimmed()),
-                        _ => print!("{}", buffer),
-                    }
-                    buffer.clear();
-                }
-                current_color = color;
-            }
-
-            buffer.push(ch);
-        }
-
-        // 输出最后的缓冲区内容
-        if !buffer.is_empty() {
-            match current_color {
-                Some("green") => print!("{}", buffer.green()),
-                Some("yellow") => print!("{}", buffer.yellow()),
-                Some("blue") => print!("{}", buffer.blue()),
-                Some("bright blue") => print!("{}", buffer.bright_blue()),
-                Some("red") => print!("{}", buffer.red()),
-                Some("magenta") => print!("{}", buffer.magenta()),
-                Some("cyan") => print!("{}", buffer.cyan()),
-                Some("bright cyan") => print!("{}", buffer.bright_cyan()),
-                Some("bright green") => print!("{}", buffer.bright_green()),
-                Some("bright yellow") => print!("{}", buffer.bright_yellow()),
-                Some("bright magenta") => print!("{}", buffer.bright_magenta()),
-                Some("bright red") => print!("{}", buffer.bright_red()),
-                Some("white") => print!("{}", buffer.white()),
-                Some("bright white") => print!("{}", buffer.bright_white()),
-                None => print!("{}", buffer.dimmed()),
-                _ => print!("{}", buffer),
+                print!("{}", ch);
             }
         }
+        println!();
 
         println!("\n\n{}", "=== Color Legend ===".bright_white().bold());
         println!("{}: Variable", "green".green());
@@ -536,17 +455,156 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
     #[test]
     fn test_colored_source_mapping() {
         let expr = r#"
-let Just: any = T: any |-> Just::T;
-let Nothing: any = Nothing::();
-// let Maybe: any = T: any |-> (Just T | Nothing);
-let map: any = v: (Nothing::() | Just::any) |-> f: any |-> 
-    match v
-        | Just::(x: any) => Just(f(x))
-        | Nothing::() => Nothing
+let maybe_pkg: any = import "maybe.mu";
+let List: any = T: any |-> rec list: (() | (T, list));
+let Nil: any = ();
+let cons: any = (head: any, tail: any) |-> (head, tail);
+let head: any = match
+    | (h: any, _) => h
+    | panic;
+let tail: any = match
+    | (_, t: any) => t
+    | panic;
+let is_nil: any = match
+    | () => true
+    | _ => false
+    | panic;
+let iter: any = lst: List(any) |-> f: any |-> {
+    let loop: any = rec go: match
+        | () => ()
+        | (h: any, t: any) => {
+            discard f(h);
+            go(t)
+        }
         | panic;
-let v1: any = Just(41);
-let v2: any = Nothing;
-map(v1)(x: int |-> x + 1), map(v2)(x: int |-> x + 1)
+    loop(lst)
+};
+let map: any = lst: List(any) |-> f: any |-> {
+    let loop: any = rec go: match
+        | () => ()
+        | (h: any, t: any) => cons(f(h), go(t))
+        | panic;
+    loop(lst)
+};
+let len: any = lst: List(any) |-> {
+    let loop: any = rec go: match
+        | () => 0
+        | (_, t: any) => 1 + go(t)
+        | panic;
+    loop(lst)
+};
+let filter: any = lst: List(any) |-> pred: any |-> {
+    let loop: any = rec go: match
+        | () => ()
+        | (h: any, t: any) => match pred(h)
+            | false => go(t)
+            | true => cons(h, go(t))
+            | panic
+        | panic;
+    loop(lst)
+};
+let fold: any = lst: List(any) |-> acc: any |-> f: any |-> {
+    let loop: any = rec go: match
+        | ((), a: any) => a
+        | ((h: any, t: any), a: any) => go(t, f(a, h))
+        | panic;
+    loop(lst, acc)
+};
+let foldr: any = lst: List(any) |-> acc: any |-> f: any |-> {
+    let loop: any = rec go: match
+        | () => acc
+        | (h: any, t: any) => f(h, go(t))
+        | panic;
+    loop(lst)
+};
+let append: any = lst1: List(any) |-> lst2: List(any) |-> {
+    let loop: any = rec go: match
+        | () => lst2
+        | (h: any, t: any) => cons(h, go(t))
+        | panic;
+    loop(lst1)
+};
+let reverse: any = lst: List(any) |-> {
+    let loop: any = rec go: match
+        | ((), acc: any) => acc
+        | ((h: any, t: any), acc: any) => go(t, cons(h, acc))
+        | panic;
+    loop(lst, ())
+};
+let nth: any = lst: List(any) |-> n: int |-> {
+    let loop: any = rec go: match
+        | ((h: any, _), 0) => h
+        | ((_, t: any), i: any) => go(t, i - 1)
+        | panic;
+    loop(lst, n)
+};
+let take: any = lst: List(any) |-> n: int |-> {
+    let loop: any = rec go: match
+        | ((), _) => ()
+        | (_, 0) => ()
+        | ((h: any, t: any), i: any) => cons(h, go(t, i - 1))
+        | panic;
+    loop(lst, n)
+};
+let drop: any = lst: List(any) |-> n: int |-> {
+    let loop: any = rec go: match
+        | ((), _) => ()
+        | (l: any, 0) => l
+        | ((_, t: any), i: any) => go(t, i - 1)
+        | panic;
+    loop(lst, n)
+};
+let find: any = lst: List(any) |-> pred: any |-> {
+    let loop: any = rec go: match
+        | () => maybe_pkg.Nothing
+        | (h: any, t: any) => match pred(h)
+            | false => go(t)
+            | true => maybe_pkg.Just(h)
+            | panic
+        | panic;
+    loop(lst)
+};
+let list_all: any = lst: List(any) |-> pred: any |-> {
+    let loop: any = rec go: match
+        | () => true
+        | (h: any, t: any) => match pred(h)
+            | false => false
+            | true => go(t)
+            | panic
+        | panic;
+    loop(lst)
+};
+let list_any: any = lst: List(any) |-> pred: any |-> {
+    let loop: any = rec go: match
+        | () => false
+        | (h: any, t: any) => match pred(h)
+            | false => go(t)
+            | true => true
+            | panic
+        | panic;
+    loop(lst)
+};
+
+List::List &
+Nil::Nil &
+cons::cons &
+head::head &
+tail::tail &
+is_nil::is_nil &
+iter::iter &
+map::map &
+len::len &
+filter::filter &
+fold::fold &
+foldr::foldr &
+append::append &
+reverse::reverse &
+nth::nth &
+take::take &
+drop::drop &
+find::find &
+list_all::list_all &
+list_any::list_any
         "#;
 
         print_colored_mapping(expr);

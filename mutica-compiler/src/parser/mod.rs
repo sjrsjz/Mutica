@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod colorize;
 pub mod lexer;
 pub use ast::TypeAst;
 use logos::Logos;
@@ -9,13 +10,14 @@ use std::{
     fmt::Debug,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use crate::{
     grammar::TypeParser,
     parser::{
         ast::{BasicTypeAst, LinearTypeAst},
+        colorize::TokenColor,
         lexer::{LexerToken, LexicalError},
     },
     util::{byte_offset_to_char_offset, byte_offset_to_position},
@@ -650,10 +652,21 @@ impl BuildContext {
     }
 }
 
-#[derive(Debug)]
 pub struct SourceFile {
     path: Option<PathBuf>,
     content: String,
+    color_mapping: RwLock<Vec<TokenColor>>,
+}
+
+impl Debug for SourceFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "SourceFile {{ path: {:?}, content: <{} bytes> }}",
+            self.path,
+            self.content.len()
+        )
+    }
 }
 
 impl PartialEq for SourceFile {
@@ -664,7 +677,11 @@ impl PartialEq for SourceFile {
 
 impl SourceFile {
     pub fn new(path: Option<PathBuf>, content: String) -> Self {
-        Self { path, content }
+        Self {
+            path,
+            color_mapping: RwLock::new(TokenColor::new_buffer(content.len())),
+            content,
+        }
     }
 
     pub fn filepath(&self) -> String {
@@ -681,6 +698,18 @@ impl SourceFile {
 
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    pub fn color_mapping(&self) -> std::sync::RwLockReadGuard<'_, Vec<TokenColor>> {
+        self.color_mapping
+            .read()
+            .expect("Failed to acquire read lock on color mapping")
+    }
+
+    pub fn color_mapping_mut(&self) -> std::sync::RwLockWriteGuard<'_, Vec<TokenColor>> {
+        self.color_mapping
+            .write()
+            .expect("Failed to acquire write lock on color mapping")
     }
 }
 
@@ -810,7 +839,7 @@ where
 }
 
 pub struct MultiFileBuilder<'a> {
-    imported_ast: &'a mut HashMap<PathBuf, WithLocation<BasicTypeAst>>,
+    imported_ast: &'a mut HashMap<PathBuf, (WithLocation<BasicTypeAst>, Arc<SourceFile>)>,
     path: &'a mut FastCycleDetector<PathBuf>,
     errors: &'a mut Vec<WithLocation<MultiFileBuilderError>>,
 }
@@ -823,7 +852,7 @@ pub enum MultiFileBuilderError {
 
 impl<'a> MultiFileBuilder<'a> {
     pub fn new(
-        imported_ast: &'a mut HashMap<PathBuf, WithLocation<BasicTypeAst>>,
+        imported_ast: &'a mut HashMap<PathBuf, (WithLocation<BasicTypeAst>, Arc<SourceFile>)>,
         path: &'a mut FastCycleDetector<PathBuf>,
         errors: &'a mut Vec<WithLocation<MultiFileBuilderError>>,
     ) -> Self {
@@ -838,7 +867,10 @@ impl<'a> MultiFileBuilder<'a> {
         &mut self,
         path: PathBuf,
         code: String,
-    ) -> (Option<WithLocation<BasicTypeAst>>, Arc<SourceFile>) {
+    ) -> (
+        Option<(WithLocation<BasicTypeAst>, Arc<SourceFile>)>,
+        Arc<SourceFile>,
+    ) {
         let source = Arc::new(SourceFile::new(Some(path.clone()), code));
         let lexer = lexer::LexerToken::lexer(source.content());
         let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
@@ -847,7 +879,9 @@ impl<'a> MultiFileBuilder<'a> {
         });
 
         let parser = TypeParser::new();
-        let parse_result = parser.parse(&source, spanned_lexer);
+        let mut color_mapping = source.color_mapping_mut();
+        let parse_result = parser.parse(&source, &mut color_mapping, spanned_lexer);
+        drop(color_mapping); // 释放可变引用
         let ast = match parse_result {
             Ok(ast) => ast,
             Err(err) => {
@@ -889,8 +923,9 @@ impl<'a> MultiFileBuilder<'a> {
                     errors: self.errors,
                 };
                 let basic_ast = ast.into_basic(&mut new_ctx, ast.location());
-                self.imported_ast.insert(canonical_path, basic_ast.clone());
-                basic_ast
+                self.imported_ast
+                    .insert(canonical_path, (basic_ast.clone(), source.clone()));
+                (basic_ast, source.clone())
             })
             .map(|ast| (Some(ast), source.clone()))
             .unwrap_or_else(|| {
