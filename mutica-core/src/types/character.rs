@@ -3,7 +3,7 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, Type, TypeCheckContext, TypeEnum, TypeError, character_value::CharacterValue,
+        Rootable, Type, TypeCheckContext, TypeError, character_value::CharacterValue,
         fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -24,7 +24,7 @@ impl Rootable for Character {}
 
 impl CoinductiveType<Type> for Character {
     fn dispatch(self) -> Type {
-        Type::new_nf(TypeEnum::Char(self))
+        Type::Char(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
@@ -35,14 +35,14 @@ impl CoinductiveType<Type> for Character {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Char(_) => Ok(Some(())),
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+            match other {
+                Type::Char(_) => Ok(Some(())),
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -54,8 +54,8 @@ impl CoinductiveType<Type> for Character {
 
     fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         ctx.arg
-            .map(&mut FastCycleDetector::new(), |_, arg| match &arg.ty {
-                TypeEnum::IntegerValue(iv) => {
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                Type::IntegerValue(iv) => {
                     let v = iv.value();
                     if v > std::char::MAX as i64 || v < 0 {
                         return Err(TypeError::TypeMismatch(
@@ -68,11 +68,15 @@ impl CoinductiveType<Type> for Character {
                     }
                     Ok(CharacterValue::new(std::char::from_u32(v as u32).unwrap()))
                 }
-                TypeEnum::CharValue(_) => Ok(arg.clone()),
+                Type::CharValue(_) => Ok(arg.clone()),
                 _ => Err(TypeError::TypeMismatch(
                     (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
                 )),
             })?
+    }
+
+    fn is_normal_form(&self) -> bool {
+        true
     }
 }
 

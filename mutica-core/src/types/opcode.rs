@@ -3,8 +3,8 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, Type, TypeCheckContext, TypeError, TypeEnum, closure::ClosureEnv,
-        fixpoint::FixPointInner, integer_value::IntegerValue, type_bound::TypeBound,
+        Rootable, Type, TypeCheckContext, TypeError, closure::ClosureEnv, fixpoint::FixPointInner,
+        integer_value::IntegerValue, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -38,7 +38,7 @@ impl Rootable for Opcode {}
 
 impl CoinductiveType<Type> for Opcode {
     fn dispatch(self) -> Type {
-        Type::new_nf(TypeEnum::Opcode(self))
+        Type::Opcode(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -49,9 +49,9 @@ impl CoinductiveType<Type> for Opcode {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Opcode(Opcode::Opcode) => Ok(Some(())),
-                TypeEnum::Opcode(v) => match (self, v) {
+            match other {
+                Type::Opcode(Opcode::Opcode) => Ok(Some(())),
+                Type::Opcode(v) => match (self, v) {
                     (Opcode::Opcode, _) => Ok(Some(())),
                     (_, Opcode::Opcode) => Ok(Some(())),
                     (Opcode::Add, Opcode::Add)
@@ -65,12 +65,12 @@ impl CoinductiveType<Type> for Opcode {
                     (Opcode::IO(a), Opcode::IO(b)) => Ok(if a == b { Some(()) } else { None }),
                     _ => Ok(None),
                 },
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -107,7 +107,7 @@ impl CoinductiveType<Type> for Opcode {
             //     Ok(Tuple::new(Vec::<Type>::new()))
             // }
             Opcode::Is => {
-                if let TypeEnum::Tuple(tuple) = ctx.arg.ty() {
+                if let Type::Tuple(tuple) = ctx.arg {
                     if tuple.len() == 2 {
                         let left = &tuple.types()[0];
                         let right = &tuple.types()[1];
@@ -146,47 +146,45 @@ impl CoinductiveType<Type> for Opcode {
             | Opcode::Mod
             | Opcode::Less
             | Opcode::Greater => {
-                if let TypeEnum::Tuple(tuple) = ctx.arg.ty() {
+                if let Type::Tuple(tuple) = ctx.arg {
                     if tuple.len() == 2 {
                         let left = &tuple.types()[0];
                         let right = &tuple.types()[1];
-                        match (&left.ty, &right.ty) {
-                            (TypeEnum::IntegerValue(l), TypeEnum::IntegerValue(r)) => {
-                                match self {
-                                    Opcode::Add => Ok(IntegerValue::new(l.value() + r.value())),
-                                    Opcode::Sub => Ok(IntegerValue::new(l.value() - r.value())),
-                                    Opcode::Mul => Ok(IntegerValue::new(l.value() * r.value())),
-                                    Opcode::Div => {
-                                        if r.value() == 0 {
-                                            Err(TypeError::TypeMismatch(
-                                                (ctx.arg.clone(), "Non-zero".into()).into(),
-                                            ))
-                                        } else {
-                                            Ok(IntegerValue::new(l.value() / r.value()))
-                                        }
-                                    }
-                                    Opcode::Mod => {
-                                        if r.value() == 0 {
-                                            Err(TypeError::TypeMismatch(
-                                                (ctx.arg.clone(), "Non-zero".into()).into(),
-                                            ))
-                                        } else {
-                                            Ok(IntegerValue::new(l.value() % r.value()))
-                                        }
-                                    }
-                                    Opcode::Less => Ok(if l.value() < r.value() {
-                                        TypeBound::top()
+                        match (left, right) {
+                            (Type::IntegerValue(l), Type::IntegerValue(r)) => match self {
+                                Opcode::Add => Ok(IntegerValue::new(l.value() + r.value())),
+                                Opcode::Sub => Ok(IntegerValue::new(l.value() - r.value())),
+                                Opcode::Mul => Ok(IntegerValue::new(l.value() * r.value())),
+                                Opcode::Div => {
+                                    if r.value() == 0 {
+                                        Err(TypeError::TypeMismatch(
+                                            (ctx.arg.clone(), "Non-zero".into()).into(),
+                                        ))
                                     } else {
-                                        TypeBound::bottom()
-                                    }),
-                                    Opcode::Greater => Ok(if l.value() > r.value() {
-                                        TypeBound::top()
-                                    } else {
-                                        TypeBound::bottom()
-                                    }),
-                                    _ => unreachable!(),
+                                        Ok(IntegerValue::new(l.value() / r.value()))
+                                    }
                                 }
-                            }
+                                Opcode::Mod => {
+                                    if r.value() == 0 {
+                                        Err(TypeError::TypeMismatch(
+                                            (ctx.arg.clone(), "Non-zero".into()).into(),
+                                        ))
+                                    } else {
+                                        Ok(IntegerValue::new(l.value() % r.value()))
+                                    }
+                                }
+                                Opcode::Less => Ok(if l.value() < r.value() {
+                                    TypeBound::top()
+                                } else {
+                                    TypeBound::bottom()
+                                }),
+                                Opcode::Greater => Ok(if l.value() > r.value() {
+                                    TypeBound::top()
+                                } else {
+                                    TypeBound::bottom()
+                                }),
+                                _ => unreachable!(),
+                            },
                             // (Type::Tuple(l), Type::Tuple(r)) => {
 
                             // }
@@ -206,6 +204,10 @@ impl CoinductiveType<Type> for Opcode {
                 }
             }
         }
+    }
+
+    fn is_normal_form(&self) -> bool {
+        true
     }
 }
 

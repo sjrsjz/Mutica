@@ -6,7 +6,7 @@ use smallvec::smallvec;
 use crate::{
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError, closure::ClosureEnv,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
         fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
@@ -64,6 +64,7 @@ use crate::{
 #[derive(Clone)]
 pub struct Specialize {
     types: Arc<[Type]>,
+    is_nf: bool,
 }
 
 impl GCTraceable<FixPointInner> for Specialize {
@@ -87,7 +88,7 @@ impl Rootable for Specialize {
 
 impl CoinductiveType<Type> for Specialize {
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::Specialize(self))
+        Type::Specialize(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -98,12 +99,12 @@ impl CoinductiveType<Type> for Specialize {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+            match other {
+                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
 
                 _ if ctx.pattern_mode => {
                     // 当 pattern_mode 不为 false 时,表示需要匹配子模式
@@ -148,6 +149,10 @@ impl CoinductiveType<Type> for Specialize {
             result.push(sub.invoke(ctx)?);
         }
         Self::new(&result, ctx.closure_env)
+    }
+
+    fn is_normal_form(&self) -> bool {
+        self.is_nf
     }
 }
 
@@ -220,8 +225,8 @@ impl Specialize {
             t: &Type,
         ) -> Result<(), TypeError> {
             t.map(path, |path, t| -> Result<(), TypeError> {
-                match &t.ty {
-                    TypeEnum::Specialize(specialize) => {
+                match t {
+                    Type::Specialize(specialize) => {
                         for sub in specialize.types.iter() {
                             collect(collected, path, sub)?;
                         }
@@ -240,7 +245,7 @@ impl Specialize {
         types
             .into_iter()
             .map(|t| {
-                all_nf &= t.as_type_ref().is_nf();
+                all_nf &= t.as_type_ref().is_normal_form();
                 collect(
                     &mut collected,
                     &mut FastCycleDetector::new(),
@@ -280,24 +285,14 @@ impl Specialize {
             }
         }
 
-        let new_type = if all_nf {
-            match result.len() {
-                0 => TypeBound::Top.dispatch(),
-                1 => result.into_iter().next().unwrap(),
-                _ => Specialize {
-                    types: Arc::from(result),
-                }
-                .dispatch_nf(),
+        let new_type = match result.len() {
+            0 => TypeBound::Top.dispatch(),
+            1 => result.into_iter().next().unwrap(),
+            _ => Specialize {
+                is_nf: all_nf,
+                types: Arc::from(result),
             }
-        } else {
-            match result.len() {
-                0 => TypeBound::Top.dispatch(),
-                1 => result.into_iter().next().unwrap(),
-                _ => Specialize {
-                    types: Arc::from(result),
-                }
-                .dispatch(),
-            }
+            .dispatch(),
         };
         Ok(new_type)
     }
@@ -310,13 +305,10 @@ impl Specialize {
     {
         let collected: Vec<_> = types.into_iter().map(|t| t.into_type()).collect();
         Self {
+            is_nf: false,
             types: Arc::from(collected),
         }
         .dispatch()
-    }
-
-    fn dispatch_nf(self) -> Type {
-        Type::new_nf(TypeEnum::Specialize(self))
     }
 
     pub fn types(&self) -> &[Type] {

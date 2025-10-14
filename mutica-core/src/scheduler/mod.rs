@@ -5,7 +5,6 @@ use arc_gc::gc::GC;
 use crate::{
     types::{
         CoinductiveType, InvokeContext, ReductionContext, Representable, Type, TypeError,
-        TypeEnum,
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
         fixpoint::FixPointInner,
@@ -33,12 +32,10 @@ impl LinearScheduler {
 
     fn io(f: &Type, arg: &Type) -> Result<Option<Type>, TypeError> {
         f.map(&mut FastCycleDetector::new(), |_, f| {
-            if !matches!(f.ty(), TypeEnum::Opcode(_)) {
+            if !matches!(f, Type::Opcode(_)) {
                 return Ok(None);
             }
-            let TypeEnum::Opcode(op) = f.ty() else {
-                unreachable!()
-            };
+            let Type::Opcode(op) = f else { unreachable!() };
             if !matches!(op, Opcode::IO(_)) {
                 return Ok(None);
             }
@@ -98,29 +95,27 @@ impl LinearScheduler {
             }
         };
         let (next_type, updated) =
-            reduced.map(&mut FastCycleDetector::new(), |_, reduced| {
-                match reduced.ty() {
-                    TypeEnum::Invoke(invoke) => {
-                        let mut rec_assumptions2 = smallvec::SmallVec::new();
-                        let mut invoke_ctx = InvokeContext::new(
-                            invoke.arg(),
-                            &empty_v,
-                            &empty_p,
-                            Some(invoke.continuation()),
-                            &mut rec_assumptions2,
-                            gc,
-                            &mut self.roots,
-                        );
+            reduced.map(&mut FastCycleDetector::new(), |_, reduced| match reduced {
+                Type::Invoke(invoke) => {
+                    let mut rec_assumptions2 = smallvec::SmallVec::new();
+                    let mut invoke_ctx = InvokeContext::new(
+                        invoke.arg(),
+                        &empty_v,
+                        &empty_p,
+                        Some(invoke.continuation()),
+                        &mut rec_assumptions2,
+                        gc,
+                        &mut self.roots,
+                    );
 
-                        let result = match Self::io(invoke.func(), invoke.arg())? {
-                            Some(io_result) => io_result,
-                            None => invoke.func().invoke(&mut invoke_ctx)?,
-                        };
-                        let result = invoke.flat_compose(result, gc, &mut self.roots)?;
-                        Ok((result, true))
-                    }
-                    _ => Ok((reduced.clone(), false)),
+                    let result = match Self::io(invoke.func(), invoke.arg())? {
+                        Some(io_result) => io_result,
+                        None => invoke.func().invoke(&mut invoke_ctx)?,
+                    };
+                    let result = invoke.flat_compose(result, gc, &mut self.roots)?;
+                    Ok((result, true))
                 }
+                _ => Ok((reduced.clone(), false)),
             })??;
         self.current_type = Some(next_type);
         // println!(

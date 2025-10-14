@@ -6,7 +6,7 @@ use smallvec::smallvec;
 use crate::{
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError, closure::ClosureEnv,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
         fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
@@ -64,6 +64,7 @@ use crate::{
 #[derive(Clone)]
 pub struct Generalize {
     types: Arc<[Type]>,
+    is_nf: bool,
 }
 
 impl GCTraceable<FixPointInner> for Generalize {
@@ -87,7 +88,7 @@ impl Rootable for Generalize {
 
 impl CoinductiveType<Type> for Generalize {
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::Generalize(self))
+        Type::Generalize(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
@@ -98,12 +99,12 @@ impl CoinductiveType<Type> for Generalize {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+            match other {
+                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
                         if !sub.is(other, &mut inner_ctx)?.is_some() {
@@ -135,6 +136,10 @@ impl CoinductiveType<Type> for Generalize {
             result.push(sub.invoke(ctx)?);
         }
         Self::new(&result, ctx.closure_env)
+    }
+
+    fn is_normal_form(&self) -> bool {
+        self.is_nf
     }
 }
 
@@ -208,8 +213,8 @@ impl Generalize {
             t: &Type,
         ) -> Result<(), TypeError> {
             t.map(path, |path, t| -> Result<(), TypeError> {
-                match &t.ty {
-                    TypeEnum::Generalize(generalize) => {
+                match t {
+                    Type::Generalize(generalize) => {
                         for sub in generalize.types.iter() {
                             collect(collected, path, sub)?;
                         }
@@ -230,7 +235,7 @@ impl Generalize {
         types
             .into_iter()
             .map(|t| {
-                all_nf &= t.as_type_ref().is_nf();
+                all_nf &= t.as_type_ref().is_normal_form();
                 collect(
                     &mut collected,
                     &mut FastCycleDetector::new(),
@@ -269,30 +274,16 @@ impl Generalize {
                 result.push(t);
             }
         }
-        let new_type = if all_nf {
-            match result.len() {
-                0 => TypeBound::Bottom.dispatch(),
-                1 => result.into_iter().next().unwrap(),
-                _ => Generalize {
-                    types: Arc::from(result),
-                }
-                .dispatch_nf(),
+        let new_type = match result.len() {
+            0 => TypeBound::Bottom.dispatch(),
+            1 => result.into_iter().next().unwrap(),
+            _ => Generalize {
+                types: Arc::from(result),
+                is_nf: true,
             }
-        } else {
-            match result.len() {
-                0 => TypeBound::Bottom.dispatch(),
-                1 => result.into_iter().next().unwrap(),
-                _ => Generalize {
-                    types: Arc::from(result),
-                }
-                .dispatch(),
-            }
+            .dispatch(),
         };
         Ok(new_type)
-    }
-
-    fn dispatch_nf(self) -> Type {
-        Type::new_nf(TypeEnum::Generalize(self))
     }
 
     /// 构造只有被reduce后才会正确化简的Generalize类型，不进行吸收律和简化
@@ -304,6 +295,7 @@ impl Generalize {
         let collected: Vec<_> = types.into_iter().map(|t| t.into_type()).collect();
         Self {
             types: Arc::from(collected),
+            is_nf: false,
         }
         .dispatch()
     }

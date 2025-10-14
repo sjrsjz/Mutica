@@ -10,8 +10,7 @@ use crate::{
     as_type,
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError,
-        type_bound::TypeBound,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
@@ -129,7 +128,7 @@ impl FixPoint {
             reference: pointer.as_weak(),
         };
         roots.push(pointer);
-        Type::new(TypeEnum::FixPoint(fix_point))
+        Type::FixPoint(fix_point)
     }
 
     /// 设置递归类型的具体定义
@@ -155,7 +154,7 @@ impl FixPoint {
 
 impl CoinductiveType<Type> for FixPoint {
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::FixPoint(self))
+        Type::FixPoint(self)
     }
 
     /// 递归类型的子类型检查
@@ -183,10 +182,10 @@ impl CoinductiveType<Type> for FixPoint {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+            match other {
+                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = inner.as_ref().get().ok_or(TypeError::UnresolvableType)?;
@@ -236,7 +235,7 @@ impl CoinductiveType<Type> for FixPoint {
                 let (_, _, used) = ctx.rec_assumptions.pop().unwrap();
                 if used {
                     // 递归类型在展开中被使用,返回新的递归类型
-                    as_type!(&temp_fixpoint.ty, TypeEnum::FixPoint).set(result?)?;
+                    as_type!(&temp_fixpoint, Type::FixPoint).set(result?)?;
                     Ok(temp_fixpoint)
                 } else {
                     // 递归类型未被使用,直接返回展开结果
@@ -256,6 +255,10 @@ impl CoinductiveType<Type> for FixPoint {
                 .and_then(|t| t.invoke(ctx)),
             None => Err(TypeError::UnresolvableType), // reference is dead
         }
+    }
+
+    fn is_normal_form(&self) -> bool {
+        false
     }
 }
 

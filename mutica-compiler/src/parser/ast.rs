@@ -23,7 +23,7 @@ use mutica_core::types::specialize::Specialize;
 use mutica_core::types::tuple::Tuple;
 use mutica_core::types::type_bound::TypeBound;
 use mutica_core::types::variable::Variable;
-use mutica_core::types::{Type, TypeError, TypeEnum};
+use mutica_core::types::{Type, TypeError};
 use mutica_core::util::rootstack::RootStack;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -1858,7 +1858,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     expr.location(),
                 )?; // 递归函数的表达式中不允许出现模式变量，安全起见传入一个新的计数器
                 ctx.current_layer_mut().exit_fixpoint();
-                as_type!(placeholder.ty(), TypeEnum::FixPoint)
+                as_type!(&placeholder, Type::FixPoint)
                     .set(expr_type.ty)
                     .map_err(Ok)?;
                 Ok(BuildResult::simple(placeholder))

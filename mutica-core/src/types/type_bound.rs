@@ -3,7 +3,7 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, Type, TypeCheckContext, TypeError, TypeEnum, fixpoint::FixPointInner,
+        Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
     },
     util::cycle_detector::FastCycleDetector,
 };
@@ -33,19 +33,23 @@ impl CoinductiveType<Type> for TypeBound {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            if let TypeEnum::Pattern(p) = &other.ty {
+            if let Type::Pattern(p) = other {
                 return p.has(self, &mut inner_ctx);
             }
-            match (self, &other.ty) {
+            match (self, other) {
                 (TypeBound::Bottom, _) => Ok(Some(())),
-                (TypeBound::Top, TypeEnum::Bound(TypeBound::Top)) => Ok(Some(())),
+                (TypeBound::Top, Type::Bound(TypeBound::Top)) => Ok(Some(())),
                 _ => Ok(None),
             }
         })
     }
 
     fn dispatch(self) -> Type {
-        Type::new_nf(TypeEnum::Bound(self))
+        Type::Bound(self)
+    }
+
+    fn is_normal_form(&self) -> bool {
+        true
     }
 
     fn reduce(self, _ctx: &mut ReductionContext) -> Result<Type, TypeError> {

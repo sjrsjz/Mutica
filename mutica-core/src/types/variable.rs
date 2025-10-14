@@ -1,7 +1,7 @@
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, Type, TypeCheckContext, TypeEnum, TypeError, fixpoint::FixPointInner,
+        Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -26,7 +26,7 @@ impl Rootable for Variable {}
 impl CoinductiveType<Type> for Variable {
     // Variable 永远不能是 NF 类型，因为 reduce 随时能把它替换掉
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::Variable(self))
+        Type::Variable(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -37,12 +37,12 @@ impl CoinductiveType<Type> for Variable {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => {
+            match other {
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => {
                     let self_idx = self.index;
                     let v_idx = v.index;
                     if self_idx >= 0 || v_idx >= 0 {
@@ -57,7 +57,7 @@ impl CoinductiveType<Type> for Variable {
                     let value_r = ctx.closure_env.1.get(r)?;
                     value_l.is(value_r, &mut inner_ctx)
                 }
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
                 _ => {
                     if self.index >= 0 {
                         // 如果是正数,说明是全局变量,无法确定类型
@@ -86,6 +86,10 @@ impl CoinductiveType<Type> for Variable {
 
     fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn is_normal_form(&self) -> bool {
+        false
     }
 }
 

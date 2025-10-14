@@ -4,13 +4,14 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
     AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-    Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError, fixpoint::FixPointInner,
+    Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
 };
 
 #[derive(Clone)]
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
 // 但是为了实现的简洁性，这里就先分开了
 pub struct Pattern {
+    is_nf: bool,
     debruijn_index: usize,
     expr: Arc<Type>,
 }
@@ -41,7 +42,7 @@ impl Representable for Pattern {
 
 impl CoinductiveType<Type> for Pattern {
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::Pattern(self))
+        Type::Pattern(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -54,8 +55,8 @@ impl CoinductiveType<Type> for Pattern {
             );
             if !ctx.pattern_mode {
                 // 由于Pattern的特殊性，Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
-                return match &other.ty {
-                    TypeEnum::Pattern(v) => {
+                return match other {
+                    Type::Pattern(v) => {
                         if self.debruijn_index == v.debruijn_index {
                             self.expr.is(&v.expr, &mut inner_ctx)
                         } else {
@@ -82,6 +83,10 @@ impl CoinductiveType<Type> for Pattern {
 
     fn tagged_ptr(&self) -> super::TaggedPtr<()> {
         super::TaggedPtr::new_unique(&self as *const _ as *const ())
+    }
+
+    fn is_normal_form(&self) -> bool {
+        self.is_nf
     }
 }
 
@@ -115,22 +120,14 @@ impl CoinductiveTypeWithAny<Type> for Pattern {
 impl Pattern {
     pub fn new<T: AsType>(debruijn_index: usize, expr: T) -> Type {
         let expr = expr.into_type();
-        let is_nf = expr.is_nf();
-        let ty = Self {
+        let is_nf = expr.is_normal_form();
+        Self {
+            is_nf,
             debruijn_index,
             expr: Arc::new(expr),
-        };
-        if is_nf {
-            ty.dispatch_nf()
-        } else {
-            ty.dispatch()
         }
+        .dispatch()
     }
-
-    fn dispatch_nf(self) -> Type {
-        Type::new_nf(TypeEnum::Pattern(self))
-    }
-
     pub fn debruijn_index(&self) -> usize {
         self.debruijn_index
     }

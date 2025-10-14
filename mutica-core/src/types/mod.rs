@@ -55,36 +55,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct Type {
-    ty: TypeEnum,
-    is_nf: bool,
-}
-
-impl Type {
-    /// 指定一个未知是否为范式的类型
-    pub fn new(ty: TypeEnum) -> Self {
-        Self { ty, is_nf: false }
-    }
-
-    /// 指定一个已经是范式的类型（即 reduce 后不变的类型）
-    pub fn new_nf(ty: TypeEnum) -> Self {
-        Self { ty, is_nf: true }
-    }
-
-    /// 判断类型是否为范式
-    #[inline(always)]
-    pub fn is_nf(&self) -> bool {
-        self.is_nf
-    }
-
-    #[inline(always)]
-    pub fn ty(&self) -> &TypeEnum {
-        &self.ty
-    }
-}
-
-#[derive(Clone)]
-pub enum TypeEnum {
+pub enum Type {
     // 类型边界
     Bound(TypeBound),
     // 整数类型
@@ -162,23 +133,23 @@ impl Debug for TypeError {
 macro_rules! type_dispatch {
     ($self:expr, $method:ident $(, $args:expr)*) => {
         match $self {
-            TypeEnum::Bound(v) => v.$method($($args),*),
-            TypeEnum::Integer(v) => v.$method($($args),*),
-            TypeEnum::IntegerValue(v) => v.$method($($args),*),
-            TypeEnum::Tuple(v) => v.$method($($args),*),
-            TypeEnum::Generalize(v) => v.$method($($args),*),
-            TypeEnum::Specialize(v) => v.$method($($args),*),
-            TypeEnum::FixPoint(v) => v.$method($($args),*),
-            TypeEnum::Invoke(v) => v.$method($($args),*),
-            TypeEnum::Variable(v) => v.$method($($args),*),
-            TypeEnum::Closure(v) => v.$method($($args),*),
-            TypeEnum::Opcode(v) => v.$method($($args),*),
-            TypeEnum::List(v) => v.$method($($args),*),
-            TypeEnum::Char(v) => v.$method($($args),*),
-            TypeEnum::CharValue(v) => v.$method($($args),*),
-            TypeEnum::Namespace(v) => v.$method($($args),*),
-            TypeEnum::Pattern(v) => v.$method($($args),*),
-            TypeEnum::Lazy(v) => v.$method($($args),*),
+            Type::Bound(v) => v.$method($($args),*),
+            Type::Integer(v) => v.$method($($args),*),
+            Type::IntegerValue(v) => v.$method($($args),*),
+            Type::Tuple(v) => v.$method($($args),*),
+            Type::Generalize(v) => v.$method($($args),*),
+            Type::Specialize(v) => v.$method($($args),*),
+            Type::FixPoint(v) => v.$method($($args),*),
+            Type::Invoke(v) => v.$method($($args),*),
+            Type::Variable(v) => v.$method($($args),*),
+            Type::Closure(v) => v.$method($($args),*),
+            Type::Opcode(v) => v.$method($($args),*),
+            Type::List(v) => v.$method($($args),*),
+            Type::Char(v) => v.$method($($args),*),
+            Type::CharValue(v) => v.$method($($args),*),
+            Type::Namespace(v) => v.$method($($args),*),
+            Type::Pattern(v) => v.$method($($args),*),
+            Type::Lazy(v) => v.$method($($args),*),
         }
     };
 }
@@ -186,21 +157,21 @@ macro_rules! type_dispatch {
 impl GCTraceable<FixPointInner> for Type {
     #[stacksafe::stacksafe]
     fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<FixPointInner>>) {
-        type_dispatch!(&self.ty, collect, queue)
+        type_dispatch!(self, collect, queue)
     }
 }
 
 impl Rootable for Type {
     #[stacksafe::stacksafe]
     fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<FixPointInner>>) {
-        type_dispatch!(&self.ty, upgrade, collected)
+        type_dispatch!(self, upgrade, collected)
     }
 }
 
 impl CoinductiveType<Type> for Type {
     #[stacksafe::stacksafe]
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
-        type_dispatch!(&self.ty, is, other, ctx)
+        type_dispatch!(self, is, other, ctx)
     }
 
     fn dispatch(self) -> Type {
@@ -210,27 +181,49 @@ impl CoinductiveType<Type> for Type {
     #[stacksafe::stacksafe]
     fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
         // 如果已经是范式类型则直接返回
-        if self.is_nf {
+        if self.is_normal_form() {
             return Ok(self);
         }
-        type_dispatch!(self.ty, reduce, ctx)
+        type_dispatch!(self, reduce, ctx)
     }
 
     #[stacksafe::stacksafe]
     fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
-        type_dispatch!(&self.ty, invoke, ctx)
+        type_dispatch!(self, invoke, ctx)
+    }
+
+    fn is_normal_form(&self) -> bool {
+        match self {
+            Type::Bound(v) => v.is_normal_form(),
+            Type::Integer(v) => v.is_normal_form(),
+            Type::IntegerValue(v) => v.is_normal_form(),
+            Type::Char(v) => v.is_normal_form(),
+            Type::CharValue(v) => v.is_normal_form(),
+            Type::Tuple(v) => v.is_normal_form(),
+            Type::List(v) => v.is_normal_form(),
+            Type::Generalize(v) => v.is_normal_form(),
+            Type::Specialize(v) => v.is_normal_form(),
+            Type::FixPoint(v) => v.is_normal_form(),
+            Type::Invoke(v) => v.is_normal_form(),
+            Type::Variable(v) => v.is_normal_form(),
+            Type::Closure(v) => v.is_normal_form(),
+            Type::Opcode(v) => v.is_normal_form(),
+            Type::Namespace(v) => v.is_normal_form(),
+            Type::Pattern(v) => v.is_normal_form(),
+            Type::Lazy(v) => v.is_normal_form(),
+        }
     }
 }
 
 impl Representable for Type {
     #[stacksafe::stacksafe]
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
-        type_dispatch!(&self.ty, represent, path)
+        type_dispatch!(self, represent, path)
     }
 
     #[stacksafe::stacksafe]
     fn display(&self, path: &mut FastCycleDetector<*const ()>) -> String {
-        type_dispatch!(&self.ty, display, path)
+        type_dispatch!(self, display, path)
     }
 }
 
@@ -250,8 +243,8 @@ impl Type {
     where
         F: FnOnce(&mut FastCycleDetector<*const ()>, &Type) -> R,
     {
-        match &self.ty {
-            TypeEnum::FixPoint(v) => v.map(path, f),
+        match self {
+            Type::FixPoint(v) => v.map(path, f),
             _ => Ok(f(path, self)),
         }
     }
@@ -428,6 +421,8 @@ pub trait CoinductiveType<T: CoinductiveType<T>>: Clone {
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         TaggedPtr::new_unique(self as *const _ as *const ())
     }
+
+    fn is_normal_form(&self) -> bool;
 }
 
 pub trait CoinductiveTypeWithAny<T: CoinductiveType<T>> {

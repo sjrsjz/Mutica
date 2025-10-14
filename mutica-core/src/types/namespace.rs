@@ -5,14 +5,15 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use crate::{
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError,
-        fixpoint::FixPointInner, type_bound::TypeBound,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
 };
 
 #[derive(Clone)]
 pub struct Namespace {
+    is_nf: bool,
     tag: Box<String>,
     expr: Arc<Type>,
 }
@@ -39,7 +40,7 @@ impl Representable for Namespace {
 
 impl CoinductiveType<Type> for Namespace {
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::Namespace(self))
+        Type::Namespace(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -50,20 +51,20 @@ impl CoinductiveType<Type> for Namespace {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Namespace(v) => {
+            match other {
+                Type::Namespace(v) => {
                     if self.tag == v.tag {
                         self.expr.is(&v.expr, &mut inner_ctx)
                     } else {
                         Ok(None)
                     }
                 }
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -77,24 +78,22 @@ impl CoinductiveType<Type> for Namespace {
     fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         self.expr.invoke(ctx)
     }
+
+    fn is_normal_form(&self) -> bool {
+        self.is_nf
+    }
 }
 
 impl Namespace {
     pub fn new<T: Into<Box<String>>, I: AsType>(tag: T, expr: I) -> Type {
         let expr = expr.into_type();
-        let is_nf = expr.is_nf();
-        let ty = Self {
+        let is_nf = expr.is_normal_form();
+        Self {
+            is_nf,
             tag: tag.into(),
             expr: Arc::new(expr),
-        };
-        if is_nf {
-            ty.dispatch_nf()
-        } else {
-            ty.dispatch()
         }
-    }
-    fn dispatch_nf(self) -> Type {
-        Type::new_nf(TypeEnum::Namespace(self))
+        .dispatch()
     }
 
     pub fn expr(&self) -> &Type {

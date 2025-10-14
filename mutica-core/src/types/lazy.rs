@@ -4,12 +4,13 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
     AsType, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable, Type,
-    TypeCheckContext, TypeEnum, fixpoint::FixPointInner, type_bound::TypeBound,
+    TypeCheckContext, fixpoint::FixPointInner, type_bound::TypeBound,
 };
 
 #[derive(Clone)]
 pub struct Lazy {
     value: Arc<Type>,
+    is_nf: bool,
 }
 
 impl GCTraceable<FixPointInner> for Lazy {
@@ -37,7 +38,7 @@ impl Representable for Lazy {
 }
 impl CoinductiveType<Type> for Lazy {
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::Lazy(self))
+        Type::Lazy(self)
     }
 
     fn is(
@@ -52,14 +53,14 @@ impl CoinductiveType<Type> for Lazy {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Lazy(v) => self.value.is(&v.value, &mut inner_ctx),
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+            match other {
+                Type::Lazy(v) => self.value.is(&v.value, &mut inner_ctx),
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -74,22 +75,20 @@ impl CoinductiveType<Type> for Lazy {
             self.clone().dispatch().into(),
         ))
     }
+
+    fn is_normal_form(&self) -> bool {
+        self.is_nf
+    }
 }
 
 impl Lazy {
     pub fn new<T: AsType>(value: T) -> Type {
         let value = value.into_type();
-        let ty = Self {
+        let is_nf = value.is_normal_form();
+        Self {
             value: Arc::new(value),
-        };
-        if ty.value.is_nf() {
-            ty.dispatch_nf()
-        } else {
-            ty.dispatch()
+            is_nf,
         }
-    }
-
-    fn dispatch_nf(self) -> Type {
-        Type::new_nf(TypeEnum::Lazy(self))
+        .dispatch()
     }
 }

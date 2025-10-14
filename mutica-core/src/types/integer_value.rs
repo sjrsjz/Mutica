@@ -3,7 +3,7 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, Type, TypeCheckContext, TypeError, TypeEnum, fixpoint::FixPointInner,
+        Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -26,7 +26,7 @@ impl Rootable for IntegerValue {}
 
 impl CoinductiveType<Type> for IntegerValue {
     fn dispatch(self) -> Type {
-        Type::new_nf(TypeEnum::IntegerValue(self))
+        Type::IntegerValue(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -37,21 +37,21 @@ impl CoinductiveType<Type> for IntegerValue {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::IntegerValue(v) => {
+            match other {
+                Type::IntegerValue(v) => {
                     if self.value == v.value {
                         Ok(Some(()))
                     } else {
                         Ok(None)
                     }
                 }
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeEnum::Integer(_) => Ok(Some(())),
-                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Integer(_) => Ok(Some(())),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -63,6 +63,10 @@ impl CoinductiveType<Type> for IntegerValue {
 
     fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn is_normal_form(&self) -> bool {
+        true
     }
 }
 

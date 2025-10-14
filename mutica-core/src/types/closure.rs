@@ -5,8 +5,8 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use crate::{
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError,
-        fixpoint::FixPointInner, type_bound::TypeBound,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -196,6 +196,7 @@ impl ClosureInner {
 #[derive(Clone)]
 pub struct Closure {
     inner: Arc<ClosureInner>,
+    is_nf: bool,
 }
 
 impl GCTraceable<FixPointInner> for Closure {
@@ -215,7 +216,7 @@ impl Rootable for Closure {
 
 impl CoinductiveType<Type> for Closure {
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::Closure(self))
+        Type::Closure(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -226,8 +227,8 @@ impl CoinductiveType<Type> for Closure {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Closure(v) => {
+            match other {
+                Type::Closure(v) => {
                     // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                     // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
 
@@ -279,12 +280,12 @@ impl CoinductiveType<Type> for Closure {
 
                     Ok(Some(()))
                 }
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -362,6 +363,10 @@ impl CoinductiveType<Type> for Closure {
                 .reduce(&mut reduce_ctx)
         }
     }
+
+    fn is_normal_form(&self) -> bool {
+        self.is_nf
+    }
 }
 
 impl Representable for Closure {
@@ -401,11 +406,11 @@ impl Closure {
         let pattern = pattern.into_type();
         let expr = expr.into_type();
         let fail_branch = fail_branch.map(|fb| fb.into_type());
-        let all_nf = pattern.is_nf()
-            && expr.is_nf()
-            && fail_branch.as_ref().map_or(true, |fb| fb.is_nf());
+        let all_nf = pattern.is_normal_form()
+            && expr.is_normal_form()
+            && fail_branch.as_ref().map_or(true, |fb| fb.is_normal_form());
 
-        let ty = Self {
+        Self {
             inner: Arc::new(ClosureInner {
                 env,
                 pattern,
@@ -413,17 +418,9 @@ impl Closure {
                 expr,
                 fail_branch: fail_branch.map(|fb| fb.into_type()),
             }),
-        };
-
-        if all_nf {
-            ty.dispatch_nf()
-        } else {
-            ty.dispatch()
+            is_nf: all_nf,
         }
-    }
-
-    fn dispatch_nf(self) -> Type {
-        Type::new_nf(TypeEnum::Closure(self))
+        .dispatch()
     }
 
     pub fn env(&self) -> &ClosureEnv {

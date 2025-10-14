@@ -5,7 +5,7 @@ use arc_gc::{arc::GCArc, gc::GC, traceable::GCTraceable};
 use crate::{
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError,
+        Representable, Rootable, Type, TypeCheckContext, TypeError,
         closure::{Closure, ClosureEnv, ParamEnv},
         fixpoint::FixPointInner,
         pattern::Pattern,
@@ -21,6 +21,7 @@ pub struct Invoke {
     // 1: argument
     // 2: continuation
     inner: Arc<(Type, Type, Type)>,
+    is_nf: bool,
 }
 
 impl GCTraceable<FixPointInner> for Invoke {
@@ -44,7 +45,7 @@ impl Rootable for Invoke {
 
 impl CoinductiveType<Type> for Invoke {
     fn dispatch(self) -> Type {
-        Type::new(TypeEnum::Invoke(self))
+        Type::Invoke(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
@@ -55,8 +56,8 @@ impl CoinductiveType<Type> for Invoke {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match &other.ty {
-                TypeEnum::Invoke(v) => {
+            match other {
+                Type::Invoke(v) => {
                     let func_eq = self.inner.0.is(&v.inner.0, &mut inner_ctx)?;
                     if func_eq.is_none() {
                         return Ok(None);
@@ -71,12 +72,12 @@ impl CoinductiveType<Type> for Invoke {
                     }
                     Ok(Some(()))
                 }
-                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
+                Type::Bound(TypeBound::Top) => Ok(Some(())),
+                Type::Specialize(v) => v.has(self, &mut inner_ctx),
+                Type::Generalize(v) => v.has(self, &mut inner_ctx),
+                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
+                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                Type::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -93,6 +94,10 @@ impl CoinductiveType<Type> for Invoke {
     fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
+
+    fn is_normal_form(&self) -> bool {
+        self.is_nf
+    }
 }
 
 impl Representable for Invoke {
@@ -108,19 +113,15 @@ impl Representable for Invoke {
 
 impl Invoke {
     pub fn new<U: AsType, V: AsType, W: AsType>(func: U, arg: V, continuation: W) -> Type {
-        let all_nf = func.as_type_ref().is_nf()
-            && arg.as_type_ref().is_nf()
-            && continuation.as_type_ref().is_nf();
+        let all_nf = func.as_type_ref().is_normal_form()
+            && arg.as_type_ref().is_normal_form()
+            && continuation.as_type_ref().is_normal_form();
         let inner = Arc::new((func.into_type(), arg.into_type(), continuation.into_type()));
-        if all_nf {
-            Self { inner }.dispatch_nf()
-        } else {
-            Self { inner }.dispatch()
+        Self {
+            inner,
+            is_nf: all_nf,
         }
-    }
-
-    fn dispatch_nf(self) -> Type {
-        Type::new_nf(TypeEnum::Invoke(self))
+        .dispatch()
     }
 
     pub fn func(&self) -> &Type {
@@ -197,9 +198,9 @@ impl Invoke {
     ) -> Result<Type, TypeError> {
         // The `map` here is used to traverse the type structure without deep recursion
         // if `v` is already a value.
-        v.map(&mut FastCycleDetector::new(), |_, ty| match &ty.ty {
+        v.map(&mut FastCycleDetector::new(), |_, ty| match ty {
             // Case 1: The result `v` is another `Invoke` instruction (the nested case).
-            TypeEnum::Invoke(invoke) => {
+            Type::Invoke(invoke) => {
                 // We are in the k(Invoke<A, B, C>) case.
                 // We construct the new continuation: λx. k(C(x))
                 // which translates to: λx. self.continuation(invoke.continuation(x))
