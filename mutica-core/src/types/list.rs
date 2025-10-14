@@ -183,7 +183,7 @@ impl List {
         if start > self.len() {
             panic!("List view start index out of bounds");
         }
-        let is_nf = self.iter().skip(start).all(|e| e.is_normal_form());
+        let is_nf = self.is_nf || self.iter().skip(start).all(|e| e.is_normal_form());
         Self {
             elements: self.elements.clone(),
             head: self.head + start,
