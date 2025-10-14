@@ -4,8 +4,8 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
     AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-    Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
-    type_bound::TypeBound,
+    Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeEnum, TypeError,
+    fixpoint::FixPointInner, type_bound::TypeBound,
 };
 
 // 抽象链表类型，实际实现为 Vec<T>
@@ -56,7 +56,7 @@ impl Rootable for List {
 
 impl CoinductiveType<Type> for List {
     fn dispatch(self) -> Type {
-        Type::List(self)
+        Type::new(TypeEnum::List(self))
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -67,8 +67,8 @@ impl CoinductiveType<Type> for List {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match other {
-                Type::List(v) => {
+            match &other.ty {
+                TypeEnum::List(v) => {
                     if self.len() != v.len() {
                         return Ok(None);
                     }
@@ -79,7 +79,7 @@ impl CoinductiveType<Type> for List {
                     }
                     Ok(Some(()))
                 }
-                Type::Tuple(v) => {
+                TypeEnum::Tuple(v) => {
                     if self.len() == 0 && v.is_empty() {
                         return Ok(Some(()));
                     }
@@ -95,28 +95,28 @@ impl CoinductiveType<Type> for List {
                     let second = &v.types()[1];
                     view.is(second, &mut inner_ctx)
                 }
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
+    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
         let mut reduced_elements = Vec::with_capacity(self.len());
         for element in self.iter() {
-            reduced_elements.push(element.reduce(ctx)?);
+            reduced_elements.push(element.clone().reduce(ctx)?);
         }
         Ok(Self::new(reduced_elements))
     }
 
     fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
-        match ctx.arg {
-            Type::IntegerValue(iv) => match iv.value() {
+        match &ctx.arg.ty {
+            TypeEnum::IntegerValue(iv) => match iv.value() {
                 0 => self.head().map(|t| t.clone()).ok_or_else(|| {
                     TypeError::TupleIndexOutOfBounds(Box::new((
                         self.clone().dispatch(),
@@ -165,11 +165,19 @@ impl List {
         T: AsType,
     {
         let elements: Vec<Type> = types.into_iter().map(|t| t.into_type()).collect();
-        Self {
-            elements: Arc::new(elements),
+        let ty = Self {
+            elements: Arc::from(elements),
             head: 0,
+        };
+        if ty.elements.iter().all(|e| e.is_nf()) {
+            ty.dispatch_nf()
+        } else {
+            ty.dispatch()
         }
-        .dispatch()
+    }
+
+    fn dispatch_nf(self) -> Type {
+        Type::new_nf(TypeEnum::List(self))
     }
 
     pub fn view(&self, start: usize) -> Type {

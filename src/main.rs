@@ -11,7 +11,7 @@ use mutica_compiler::{
 use mutica_core::{
     arc_gc::gc::GC,
     scheduler,
-    types::{Representable, Type},
+    types::{Representable, TypeEnum},
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
@@ -211,15 +211,16 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         }
     };
     match result {
-        Ok(v) => v
-            .map(&mut FastCycleDetector::new(), |_, ty| match ty {
-                Type::Tuple(tuple) if tuple.is_empty() => (),
+        Ok(Some(v)) => v
+            .map(&mut FastCycleDetector::new(), |_, ty| match ty.ty() {
+                TypeEnum::Tuple(tuple) if tuple.is_empty() => (),
                 _ => {
                     println!("{}", v.display(&mut FastCycleDetector::new()));
                     ()
                 }
             })
             .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e)),
+        Ok(None) => println!("Computation finished with no result."),
         Err(e) => eprintln!("Runtime Error: {:?}", e),
     }
 }

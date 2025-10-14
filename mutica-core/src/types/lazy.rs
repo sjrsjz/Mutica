@@ -4,7 +4,7 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
     AsType, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable, Type,
-    TypeCheckContext, fixpoint::FixPointInner, type_bound::TypeBound,
+    TypeCheckContext, TypeEnum, fixpoint::FixPointInner, type_bound::TypeBound,
 };
 
 #[derive(Clone)]
@@ -37,7 +37,7 @@ impl Representable for Lazy {
 }
 impl CoinductiveType<Type> for Lazy {
     fn dispatch(self) -> Type {
-        Type::Lazy(self)
+        Type::new(TypeEnum::Lazy(self))
     }
 
     fn is(
@@ -52,21 +52,21 @@ impl CoinductiveType<Type> for Lazy {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match other {
-                Type::Lazy(v) => self.value.is(&v.value, &mut inner_ctx),
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+            match &other.ty {
+                TypeEnum::Lazy(v) => self.value.is(&v.value, &mut inner_ctx),
+                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
     }
 
-    fn reduce(&self, ctx: &mut super::ReductionContext) -> Result<Type, super::TypeError> {
-        self.value.reduce(ctx).map(Self::new)
+    fn reduce(self, ctx: &mut super::ReductionContext) -> Result<Type, super::TypeError> {
+        self.value.as_ref().clone().reduce(ctx).map(Self::new)
     }
 
     fn invoke(&self, _ctx: &mut super::InvokeContext) -> Result<Type, super::TypeError> {
@@ -78,9 +78,18 @@ impl CoinductiveType<Type> for Lazy {
 
 impl Lazy {
     pub fn new<T: AsType>(value: T) -> Type {
-        Self {
-            value: Arc::new(value.into_type()),
+        let value = value.into_type();
+        let ty = Self {
+            value: Arc::new(value),
+        };
+        if ty.value.is_nf() {
+            ty.dispatch_nf()
+        } else {
+            ty.dispatch()
         }
-        .dispatch()
+    }
+
+    fn dispatch_nf(self) -> Type {
+        Type::new_nf(TypeEnum::Lazy(self))
     }
 }

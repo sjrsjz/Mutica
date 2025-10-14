@@ -5,8 +5,8 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use crate::{
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
-        type_bound::TypeBound,
+        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError,
+        fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -137,6 +137,7 @@ impl ParamEnv {
     }
 }
 
+#[derive(Clone)]
 pub struct ClosureInner {
     env: ClosureEnv,
     pattern: Type,
@@ -178,6 +179,18 @@ impl ClosureInner {
     pub fn expr(&self) -> &Type {
         &self.expr
     }
+
+    pub fn pattern(&self) -> &Type {
+        &self.pattern
+    }
+
+    pub fn fail_branch(&self) -> Option<&Type> {
+        self.fail_branch.as_ref()
+    }
+
+    pub fn pattern_param_size(&self) -> usize {
+        self.pattern_param_size
+    }
 }
 
 #[derive(Clone)]
@@ -202,7 +215,7 @@ impl Rootable for Closure {
 
 impl CoinductiveType<Type> for Closure {
     fn dispatch(self) -> Type {
-        Type::Closure(self)
+        Type::new(TypeEnum::Closure(self))
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -213,8 +226,8 @@ impl CoinductiveType<Type> for Closure {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match other {
-                Type::Closure(v) => {
+            match &other.ty {
+                TypeEnum::Closure(v) => {
                     // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                     // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
 
@@ -266,32 +279,32 @@ impl CoinductiveType<Type> for Closure {
 
                     Ok(Some(()))
                 }
-                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
         // 先把闭包环境中的类型都化简
         let env = self
             .inner
             .env
             .0
             .iter()
-            .map(|ty| ty.reduce(ctx))
+            .map(|ty| ty.clone().reduce(ctx))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self::new(
             self.inner.pattern_param_size,
-            self.inner.pattern.reduce(ctx)?,
-            &self.inner.expr,
+            self.inner.pattern.clone().reduce(ctx)?,
+            self.inner.expr.clone(), // expr 是惰性求值的,不应当在这里化简
             match &self.inner.fail_branch {
-                Some(fb) => Some(fb.reduce(ctx)?),
+                Some(fb) => Some(fb.clone().reduce(ctx)?),
                 None => None,
             },
             ClosureEnv::new(env), // 不能拆开成中间变量否则会导致临时变量被drop后fixpoint失效（极其罕见）
@@ -325,7 +338,7 @@ impl CoinductiveType<Type> for Closure {
                 ctx.gc,
                 ctx.roots,
             );
-            self.inner.expr.reduce(&mut reduce_ctx)
+            self.inner.expr.clone().reduce(&mut reduce_ctx)
         } else {
             if self.inner.fail_branch.is_none() {
                 return Err(TypeError::AssertFailed(
@@ -345,6 +358,7 @@ impl CoinductiveType<Type> for Closure {
                 .fail_branch
                 .as_ref()
                 .unwrap()
+                .clone()
                 .reduce(&mut reduce_ctx)
         }
     }
@@ -384,16 +398,32 @@ impl Closure {
         V: AsType,
         W: AsType,
     {
-        Self {
+        let pattern = pattern.into_type();
+        let expr = expr.into_type();
+        let fail_branch = fail_branch.map(|fb| fb.into_type());
+        let all_nf = pattern.is_nf()
+            && expr.is_nf()
+            && fail_branch.as_ref().map_or(true, |fb| fb.is_nf());
+
+        let ty = Self {
             inner: Arc::new(ClosureInner {
                 env,
-                pattern: pattern.into_type(),
+                pattern,
                 pattern_param_size,
-                expr: expr.into_type(),
+                expr,
                 fail_branch: fail_branch.map(|fb| fb.into_type()),
             }),
+        };
+
+        if all_nf {
+            ty.dispatch_nf()
+        } else {
+            ty.dispatch()
         }
-        .dispatch()
+    }
+
+    fn dispatch_nf(self) -> Type {
+        Type::new_nf(TypeEnum::Closure(self))
     }
 
     pub fn env(&self) -> &ClosureEnv {

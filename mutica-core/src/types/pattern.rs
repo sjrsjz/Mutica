@@ -4,7 +4,7 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
     AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-    Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+    Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError, fixpoint::FixPointInner,
 };
 
 #[derive(Clone)]
@@ -41,7 +41,7 @@ impl Representable for Pattern {
 
 impl CoinductiveType<Type> for Pattern {
     fn dispatch(self) -> Type {
-        Type::Pattern(self)
+        Type::new(TypeEnum::Pattern(self))
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -54,8 +54,8 @@ impl CoinductiveType<Type> for Pattern {
             );
             if !ctx.pattern_mode {
                 // 由于Pattern的特殊性，Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
-                return match other {
-                    Type::Pattern(v) => {
+                return match &other.ty {
+                    TypeEnum::Pattern(v) => {
                         if self.debruijn_index == v.debruijn_index {
                             self.expr.is(&v.expr, &mut inner_ctx)
                         } else {
@@ -73,8 +73,11 @@ impl CoinductiveType<Type> for Pattern {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
-        Ok(Self::new(self.debruijn_index, self.expr.reduce(ctx)?))
+    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+        Ok(Self::new(
+            self.debruijn_index,
+            self.expr.as_ref().clone().reduce(ctx)?,
+        ))
     }
 
     fn tagged_ptr(&self) -> super::TaggedPtr<()> {
@@ -111,10 +114,28 @@ impl CoinductiveTypeWithAny<Type> for Pattern {
 
 impl Pattern {
     pub fn new<T: AsType>(debruijn_index: usize, expr: T) -> Type {
-        Self {
+        let expr = expr.into_type();
+        let is_nf = expr.is_nf();
+        let ty = Self {
             debruijn_index,
-            expr: Arc::new(expr.into_type()),
+            expr: Arc::new(expr),
+        };
+        if is_nf {
+            ty.dispatch_nf()
+        } else {
+            ty.dispatch()
         }
-        .dispatch()
+    }
+
+    fn dispatch_nf(self) -> Type {
+        Type::new_nf(TypeEnum::Pattern(self))
+    }
+
+    pub fn debruijn_index(&self) -> usize {
+        self.debruijn_index
+    }
+
+    pub fn expr(&self) -> &Type {
+        &self.expr
     }
 }

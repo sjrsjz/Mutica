@@ -6,7 +6,7 @@ use smallvec::smallvec;
 use crate::{
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
+        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError, closure::ClosureEnv,
         fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
@@ -87,7 +87,7 @@ impl Rootable for Generalize {
 
 impl CoinductiveType<Type> for Generalize {
     fn dispatch(self) -> Type {
-        Type::Generalize(self)
+        Type::new(TypeEnum::Generalize(self))
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
@@ -98,12 +98,12 @@ impl CoinductiveType<Type> for Generalize {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match other {
-                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+            match &other.ty {
+                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
                         if !sub.is(other, &mut inner_ctx)?.is_some() {
@@ -121,10 +121,10 @@ impl CoinductiveType<Type> for Generalize {
     /// `Max<T₁, ..., Tₙ>[V] = Max<T₁[V], ..., Tₙ[V]>`
     ///
     /// 类型应用操作分布到不可约集合中的每个类型上。
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
         let mut result = smallvec::SmallVec::<[Type; 8]>::new();
-        for sub in self.types.iter() {
-            result.push(sub.reduce(ctx)?);
+        for sub in self.types.into_iter() {
+            result.push(sub.clone().reduce(ctx)?);
         }
         Self::new(&result, ctx.closure_env)
     }
@@ -203,13 +203,13 @@ impl Generalize {
         T: AsType,
     {
         fn collect(
-            collected: &mut smallvec::SmallVec<[Type; 8]>,
+            collected: &mut Vec<Type>,
             path: &mut FastCycleDetector<*const ()>,
             t: &Type,
         ) -> Result<(), TypeError> {
             t.map(path, |path, t| -> Result<(), TypeError> {
-                match t {
-                    Type::Generalize(generalize) => {
+                match &t.ty {
+                    TypeEnum::Generalize(generalize) => {
                         for sub in generalize.types.iter() {
                             collect(collected, path, sub)?;
                         }
@@ -221,10 +221,16 @@ impl Generalize {
                 Ok(())
             })?
         }
-        let mut collected = smallvec::SmallVec::<[Type; 8]>::new();
+        let mut collected = Vec::new();
+
+        // 检测是否所有类型都是NF形式
+        // 如果他们全部是NF形式,那么结果也是NF形式
+        let mut all_nf = true;
+
         types
             .into_iter()
             .map(|t| {
+                all_nf &= t.as_type_ref().is_nf();
                 collect(
                     &mut collected,
                     &mut FastCycleDetector::new(),
@@ -257,22 +263,36 @@ impl Generalize {
             }
         }
 
-        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
+        let mut result = Vec::new();
         for (i, t) in collected.into_iter().enumerate() {
             if !absorbed[i] {
                 result.push(t);
             }
         }
-
-        let new_type = match result.len() {
-            0 => TypeBound::Bottom.dispatch(),
-            1 => result.into_iter().next().unwrap(),
-            _ => Generalize {
-                types: Arc::from(result.into_boxed_slice()),
+        let new_type = if all_nf {
+            match result.len() {
+                0 => TypeBound::Bottom.dispatch(),
+                1 => result.into_iter().next().unwrap(),
+                _ => Generalize {
+                    types: Arc::from(result),
+                }
+                .dispatch_nf(),
             }
-            .dispatch(),
+        } else {
+            match result.len() {
+                0 => TypeBound::Bottom.dispatch(),
+                1 => result.into_iter().next().unwrap(),
+                _ => Generalize {
+                    types: Arc::from(result),
+                }
+                .dispatch(),
+            }
         };
         Ok(new_type)
+    }
+
+    fn dispatch_nf(self) -> Type {
+        Type::new_nf(TypeEnum::Generalize(self))
     }
 
     /// 构造只有被reduce后才会正确化简的Generalize类型，不进行吸收律和简化
@@ -281,10 +301,9 @@ impl Generalize {
         I: IntoIterator<Item = T>,
         T: AsType,
     {
-        let collected: smallvec::SmallVec<[Type; 8]> =
-            types.into_iter().map(|t| t.into_type()).collect();
+        let collected: Vec<_> = types.into_iter().map(|t| t.into_type()).collect();
         Self {
-            types: Arc::from(collected.into_boxed_slice()),
+            types: Arc::from(collected),
         }
         .dispatch()
     }

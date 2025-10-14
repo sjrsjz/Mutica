@@ -43,7 +43,6 @@ extern {
         "__mod" => LexerToken::DunderMod,
         "__is" => LexerToken::DunderIs,
         "__opcode" => LexerToken::DunderOpcode,
-        "__continuation" => LexerToken::DunderContinuation,
 
         "->" => LexerToken::Arrow,
         "|->" => LexerToken::FatArrow,
@@ -183,12 +182,8 @@ AtomType: WithLocation<TypeAst> = {
         TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
         WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> "__continuation" <r:@R> => {
-        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
-        WithLocation::new(TypeAst::Variable(None), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
     <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(n), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(Some(id)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(id), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <s: StringLiteral> <r:@R> => {
         let chars: Vec<WithLocation<TypeAst>> = s.chars().map(|ch| WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref())).collect();
@@ -248,7 +243,7 @@ Apply: WithLocation<TypeAst> = {
                         expr: Box::new(WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                 }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                body: Box::new(WithLocation::new(TypeAst::Variable(Some("projection#obj".to_string())), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                body: Box::new(WithLocation::new(TypeAst::Variable("projection#obj".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                 fail_branch: None,
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(obj),

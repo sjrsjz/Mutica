@@ -3,7 +3,7 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        Rootable, Type, TypeCheckContext, TypeEnum, TypeError, fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -26,7 +26,7 @@ impl Rootable for CharacterValue {}
 
 impl CoinductiveType<Type> for CharacterValue {
     fn dispatch(self) -> Type {
-        Type::CharValue(self)
+        Type::new_nf(TypeEnum::CharValue(self))
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -37,34 +37,32 @@ impl CoinductiveType<Type> for CharacterValue {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match other {
-                Type::CharValue(v) => {
+            match &other.ty {
+                TypeEnum::CharValue(v) => {
                     if self.value == v.value {
                         Ok(Some(()))
                     } else {
                         Ok(None)
                     }
                 }
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Char(_) => Ok(Some(())),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeEnum::Char(_) => Ok(Some(())),
+                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
     }
 
-    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<Type, TypeError> {
-        Ok(self.clone().dispatch())
+    fn reduce(self, _ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+        Ok(self.dispatch())
     }
 
     fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, TypeError> {
-        Err(TypeError::NonApplicableType(
-            self.clone().dispatch().into(),
-        ))
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 }
 

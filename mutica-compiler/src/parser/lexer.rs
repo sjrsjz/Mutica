@@ -76,8 +76,6 @@ pub enum LexerToken {
     DunderIs,
     #[token("__opcode")]
     DunderOpcode,
-    #[token("__continuation")]
-    DunderContinuation,
 
     #[token("->")]
     Arrow,

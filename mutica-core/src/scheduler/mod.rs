@@ -1,10 +1,11 @@
-use std::io::Write;
+use std::{io::Write, sync::Arc};
 
 use arc_gc::gc::GC;
 
 use crate::{
     types::{
         CoinductiveType, InvokeContext, ReductionContext, Representable, Type, TypeError,
+        TypeEnum,
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
         fixpoint::FixPointInner,
@@ -16,7 +17,7 @@ use crate::{
 };
 
 pub struct LinearScheduler {
-    current_type: Type,
+    current_type: Option<Type>,
     roots: RootStack,
 }
 
@@ -25,24 +26,26 @@ impl LinearScheduler {
         let mut roots = RootStack::new();
         roots.sweep(&initial_type);
         Self {
-            current_type: initial_type,
+            current_type: Some(initial_type),
             roots,
         }
     }
 
     fn io(f: &Type, arg: &Type) -> Result<Option<Type>, TypeError> {
         f.map(&mut FastCycleDetector::new(), |_, f| {
-            if !matches!(f, Type::Opcode(_)) {
+            if !matches!(f.ty(), TypeEnum::Opcode(_)) {
                 return Ok(None);
             }
-            let Type::Opcode(op) = f else { unreachable!() };
+            let TypeEnum::Opcode(op) = f.ty() else {
+                unreachable!()
+            };
             if !matches!(op, Opcode::IO(_)) {
                 return Ok(None);
             }
             let Opcode::IO(io_name) = op else {
                 unreachable!()
             };
-            match io_name.as_str() {
+            match io_name.as_ref().as_str() {
                 "print" => {
                     let str = arg.display(&mut FastCycleDetector::new());
                     print!("{}", str);
@@ -85,31 +88,41 @@ impl LinearScheduler {
             &mut self.roots,
         );
 
-        let reduced = self.current_type.reduce(&mut reduction_ctx)?;
+        let reduced = match self.current_type.take() {
+            Some(t) => t.reduce(&mut reduction_ctx)?,
+            None => {
+                return Err(TypeError::RuntimeError(Arc::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "No current type",
+                ))));
+            }
+        };
         let (next_type, updated) =
-            reduced.map(&mut FastCycleDetector::new(), |_, reduced| match reduced {
-                Type::Invoke(invoke) => {
-                    let mut rec_assumptions2 = smallvec::SmallVec::new();
-                    let mut invoke_ctx = InvokeContext::new(
-                        invoke.arg(),
-                        &empty_v,
-                        &empty_p,
-                        Some(invoke.continuation()),
-                        &mut rec_assumptions2,
-                        gc,
-                        &mut self.roots,
-                    );
+            reduced.map(&mut FastCycleDetector::new(), |_, reduced| {
+                match reduced.ty() {
+                    TypeEnum::Invoke(invoke) => {
+                        let mut rec_assumptions2 = smallvec::SmallVec::new();
+                        let mut invoke_ctx = InvokeContext::new(
+                            invoke.arg(),
+                            &empty_v,
+                            &empty_p,
+                            Some(invoke.continuation()),
+                            &mut rec_assumptions2,
+                            gc,
+                            &mut self.roots,
+                        );
 
-                    let result = match Self::io(invoke.func(), invoke.arg())? {
-                        Some(io_result) => io_result,
-                        None => invoke.func().invoke(&mut invoke_ctx)?,
-                    };
-                    let result = invoke.flat_compose(&result, gc, &mut self.roots)?;
-                    Ok((result, true))
+                        let result = match Self::io(invoke.func(), invoke.arg())? {
+                            Some(io_result) => io_result,
+                            None => invoke.func().invoke(&mut invoke_ctx)?,
+                        };
+                        let result = invoke.flat_compose(result, gc, &mut self.roots)?;
+                        Ok((result, true))
+                    }
+                    _ => Ok((reduced.clone(), false)),
                 }
-                _ => Ok((reduced.clone(), false)),
             })??;
-        self.current_type = next_type;
+        self.current_type = Some(next_type);
         // println!(
         //     "-> Current type: {}\n",
         //     self.current_type.represent(&mut FastCycleDetector::new())
@@ -118,10 +131,12 @@ impl LinearScheduler {
     }
 
     pub fn sweep_roots(&mut self) {
-        self.roots.sweep(&self.current_type);
+        if let Some(current_type) = &self.current_type {
+            self.roots.sweep(current_type);
+        }
     }
 
-    pub fn current_type(&self) -> &Type {
-        &self.current_type
+    pub fn current_type(&self) -> Option<&Type> {
+        self.current_type.as_ref()
     }
 }

@@ -23,7 +23,7 @@ use mutica_core::types::specialize::Specialize;
 use mutica_core::types::tuple::Tuple;
 use mutica_core::types::type_bound::TypeBound;
 use mutica_core::types::variable::Variable;
-use mutica_core::types::{Type, TypeError};
+use mutica_core::types::{Type, TypeError, TypeEnum};
 use mutica_core::util::rootstack::RootStack;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -54,7 +54,7 @@ pub enum TypeAst {
     DiscardPattern, // 用于表示_模式
     IntLiteral(i64),
     CharLiteral(char),
-    Variable(Option<String>),
+    Variable(String),
     Tuple(Vec<WithLocation<TypeAst>>),
     List(Vec<WithLocation<TypeAst>>),
     Generalize(Vec<WithLocation<TypeAst>>),
@@ -117,7 +117,7 @@ pub enum BasicTypeAst {
     Bottom,
     IntLiteral(i64),
     CharLiteral(char),
-    Variable(Option<String>), // None 表示续体
+    Variable(String),
     Tuple(Vec<WithLocation<BasicTypeAst>>),
     List(Vec<WithLocation<BasicTypeAst>>),
     Generalize(Vec<WithLocation<BasicTypeAst>>),
@@ -217,7 +217,7 @@ impl<'ast> LinearizeResult<'ast> {
         bindings.push((func.tail_type, arg.tail_type, allocated_tmpvar_name.clone()));
         Self {
             bindings,
-            tail_type: LinearTypeAst::Variable(Some(allocated_tmpvar_name)).into(),
+            tail_type: LinearTypeAst::Variable(allocated_tmpvar_name).into(),
         }
     }
 
@@ -483,7 +483,7 @@ pub enum LinearTypeAst<'ast> {
     Bottom,
     IntLiteral(i64),
     CharLiteral(char),
-    Variable(Option<String>), // None 表示续体
+    Variable(String), // None 表示续体
     Tuple(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     List(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     Generalize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
@@ -639,9 +639,9 @@ impl TypeAst {
                             body: branch_expr.into(),
                             fail_branch: expr,
                         })),
-                        arg: Box::new(WithLocation::from(BasicTypeAst::Variable(Some(
+                        arg: Box::new(WithLocation::from(BasicTypeAst::Variable(
                             "match#value".to_string(),
-                        )))),
+                        ))),
                     })));
                 }
                 match value {
@@ -745,15 +745,15 @@ impl TypeAst {
                                             arg: Box::new(WithLocation::new(
                                                 BasicTypeAst::Tuple(vec![
                                                     WithLocation::new(
-                                                        BasicTypeAst::Variable(Some(
+                                                        BasicTypeAst::Variable(
                                                             "eq#left".to_string(),
-                                                        )),
+                                                        ),
                                                         loc,
                                                     ),
                                                     WithLocation::new(
-                                                        BasicTypeAst::Variable(Some(
+                                                        BasicTypeAst::Variable(
                                                             "eq#right".to_string(),
-                                                        )),
+                                                        ),
                                                         loc,
                                                     ),
                                                 ]),
@@ -771,15 +771,15 @@ impl TypeAst {
                                             arg: Box::new(WithLocation::new(
                                                 BasicTypeAst::Tuple(vec![
                                                     WithLocation::new(
-                                                        BasicTypeAst::Variable(Some(
+                                                        BasicTypeAst::Variable(
                                                             "eq#right".to_string(),
-                                                        )),
+                                                        ),
                                                         loc,
                                                     ),
                                                     WithLocation::new(
-                                                        BasicTypeAst::Variable(Some(
+                                                        BasicTypeAst::Variable(
                                                             "eq#left".to_string(),
-                                                        )),
+                                                        ),
                                                         loc,
                                                     ),
                                                 ]),
@@ -1197,12 +1197,12 @@ impl<'ast> LinearTypeAst<'ast> {
                 WithLocation::new(LinearTypeAst::CharLiteral(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
-            LinearTypeAst::Variable(Some(name)) => match ctx.use_variable(name) {
+            LinearTypeAst::Variable(name) => match ctx.use_variable(name) {
                 Ok(var_loc) => {
                     let mut captures = HashMap::new();
                     captures.insert(name.clone(), var_loc.clone());
                     FlowResult::complex(
-                        WithLocation::new(LinearTypeAst::Variable(Some(name.clone())), loc),
+                        WithLocation::new(LinearTypeAst::Variable(name.clone()), loc),
                         captures,
                         PatternEnv::new(),
                     )
@@ -1221,9 +1221,8 @@ impl<'ast> LinearTypeAst<'ast> {
                             ),
                             loc,
                         ));
-                        // 返回一个简单的变量引用作为恢复
                         FlowResult::simple(
-                            WithLocation::new(LinearTypeAst::Variable(None), loc).with_payload(
+                            WithLocation::new(LinearTypeAst::Bottom, loc).with_payload(
                                 FlowedMetaData::default().with_variable_context(ctx.capture()),
                             ),
                         )
@@ -1231,10 +1230,6 @@ impl<'ast> LinearTypeAst<'ast> {
                     _ => unreachable!(),
                 },
             },
-            LinearTypeAst::Variable(None) => FlowResult::simple(
-                WithLocation::new(LinearTypeAst::Variable(None), loc)
-                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            ), // None 表示续体,不会捕获任何变量（因为续体对于任何函数都是存在的）
             LinearTypeAst::Tuple(elements) => {
                 let mut new_elements = Vec::new();
                 let mut all_captures = HashMap::new();
@@ -1647,7 +1642,7 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom())),
             LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(*v))),
             LinearTypeAst::CharLiteral(v) => Ok(BuildResult::simple(CharacterValue::new(*v))),
-            LinearTypeAst::Variable(Some(var)) => {
+            LinearTypeAst::Variable(var) => {
                 if let Some(ty) = ctx.current_layer().get(var) {
                     match ty {
                         Ok(t) => Ok(BuildResult::simple(t.clone())), // fixpoint类型
@@ -1660,7 +1655,6 @@ impl<'ast> LinearTypeAst<'ast> {
                     )))
                 }
             }
-            LinearTypeAst::Variable(None) => Ok(BuildResult::simple(Variable::new_continuation())),
             LinearTypeAst::Tuple(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
@@ -1848,7 +1842,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     AtomicOpcode::Less => Opcode::Less,
                     AtomicOpcode::Greater => Opcode::Greater,
                     AtomicOpcode::Is => Opcode::Is,
-                    AtomicOpcode::IO(v) => Opcode::IO(v.clone()),
+                    AtomicOpcode::IO(v) => Opcode::IO(v.clone().into()),
                 })))
             }
             LinearTypeAst::FixPoint { param_name, expr } => {
@@ -1864,7 +1858,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     expr.location(),
                 )?; // 递归函数的表达式中不允许出现模式变量，安全起见传入一个新的计数器
                 ctx.current_layer_mut().exit_fixpoint();
-                as_type!(&placeholder, Type::FixPoint)
+                as_type!(placeholder.ty(), TypeEnum::FixPoint)
                     .set(expr_type.ty)
                     .map_err(Ok)?;
                 Ok(BuildResult::simple(placeholder))

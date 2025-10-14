@@ -5,8 +5,8 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use crate::{
     types::{
         AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
-        type_bound::TypeBound,
+        Representable, Rootable, Type, TypeCheckContext, TypeEnum, TypeError,
+        fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
 };
@@ -29,7 +29,7 @@ impl GCTraceable<FixPointInner> for Tuple {
 
 impl CoinductiveType<Type> for Tuple {
     fn dispatch(self) -> Type {
-        Type::Tuple(self)
+        Type::new(TypeEnum::Tuple(self))
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
@@ -40,9 +40,9 @@ impl CoinductiveType<Type> for Tuple {
                 pattern_env,
                 ctx.pattern_mode,
             );
-            match other {
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Tuple(other_types) => {
+            match &other.ty {
+                TypeEnum::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeEnum::Tuple(other_types) => {
                     if self.types.len() != other_types.len() {
                         return Ok(None);
                     }
@@ -53,7 +53,7 @@ impl CoinductiveType<Type> for Tuple {
                     }
                     Ok(Some(()))
                 }
-                Type::List(v) => {
+                TypeEnum::List(v) => {
                     if self.is_empty() && v.len() == 0 {
                         return Ok(Some(()));
                     }
@@ -67,20 +67,20 @@ impl CoinductiveType<Type> for Tuple {
                     }
                     self.types[1].is(&v.view(1), &mut inner_ctx)
                 }
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeEnum::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
+    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
         let mut result = smallvec::SmallVec::<[Type; 8]>::new();
-        for sub in self.types.iter() {
-            result.push(sub.reduce(ctx)?);
+        for sub in self.types.into_iter() {
+            result.push(sub.clone().reduce(ctx)?);
         }
 
         Ok(Self::new(&result))
@@ -88,8 +88,8 @@ impl CoinductiveType<Type> for Tuple {
 
     fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
         ctx.arg
-            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::IntegerValue(iv) => {
+            .map(&mut FastCycleDetector::new(), |_, arg| match &arg.ty {
+                TypeEnum::IntegerValue(iv) => {
                     if self.types.is_empty() {
                         return Err(super::TypeError::TupleIndexOutOfBounds(Box::new((
                             self.clone().dispatch(),
@@ -106,8 +106,7 @@ impl CoinductiveType<Type> for Tuple {
                     Ok(self.types[index].clone())
                 }
                 _ => Err(super::TypeError::TypeMismatch(
-                    Box::new(ctx.arg.clone()),
-                    "IntegerValue".to_string(),
+                    (ctx.arg.clone(), "IntegerValue".into()).into(),
                 )),
             })?
     }
@@ -149,10 +148,18 @@ impl Tuple {
             .into_iter()
             .map(|t| t.into_type())
             .collect::<Arc<[Type]>>();
-        Tuple { types }.dispatch()
+        if types.iter().all(|t| t.is_nf()) {
+            Self { types }.dispatch_nf()
+        } else {
+            Self { types }.dispatch()
+        }
     }
 
-    pub fn types(&self) -> &Arc<[Type]> {
+    fn dispatch_nf(self) -> Type {
+        Type::new_nf(TypeEnum::Tuple(self))
+    }
+
+    pub fn types(&self) -> &[Type] {
         &self.types
     }
 
