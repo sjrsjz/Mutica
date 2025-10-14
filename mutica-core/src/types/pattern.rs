@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use arc_gc::traceable::GCTraceable;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
-    AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-    Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
-    fixpoint::FixPointInner,
+    AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+    Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
 };
 
 #[derive(Clone)]
@@ -26,7 +25,7 @@ impl GCTraceable<FixPointInner> for Pattern {
 }
 
 impl Rootable for Pattern {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         self.expr.upgrade(collected);
     }
 }
@@ -40,7 +39,7 @@ impl Representable for Pattern {
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for Pattern {
+impl CoinductiveType<Type> for Pattern {
     fn dispatch(self) -> Type {
         Type::Pattern(self)
     }
@@ -70,13 +69,11 @@ impl CoinductiveType<Type, StabilizedType> for Pattern {
         })
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
-        Err(TypeError::NonApplicableType(
-            self.clone().dispatch().stabilize().into(),
-        ))
+    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, TypeError> {
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
         Ok(Self::new(self.debruijn_index, self.expr.reduce(ctx)?))
     }
 
@@ -85,8 +82,8 @@ impl CoinductiveType<Type, StabilizedType> for Pattern {
     }
 }
 
-impl CoinductiveTypeWithAny<Type, StabilizedType> for Pattern {
-    fn has<V: CoinductiveType<Type, StabilizedType> + Clone>(
+impl CoinductiveTypeWithAny<Type> for Pattern {
+    fn has<V: CoinductiveType<Type> + Clone>(
         &self,
         other: &V,
         ctx: &mut TypeCheckContext,
@@ -113,12 +110,11 @@ impl CoinductiveTypeWithAny<Type, StabilizedType> for Pattern {
 }
 
 impl Pattern {
-    pub fn new<T: AsTypeRef>(debruijn_index: usize, expr: T) -> StabilizedType {
+    pub fn new<T: AsType>(debruijn_index: usize, expr: T) -> Type {
         Self {
             debruijn_index,
             expr: Arc::new(expr.into_type()),
         }
         .dispatch()
-        .stabilize()
     }
 }

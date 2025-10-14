@@ -2,7 +2,7 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable, StabilizedType,
+        CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
         Type, TypeError,
         
         fixpoint::FixPointInner,
@@ -26,7 +26,7 @@ impl GCTraceable<FixPointInner> for TypeBound {
 
 impl Rootable for TypeBound {}
 
-impl CoinductiveType<Type, StabilizedType> for TypeBound {
+impl CoinductiveType<Type> for TypeBound {
     fn is(
         &self,
         other: &Type,
@@ -52,16 +52,16 @@ impl CoinductiveType<Type, StabilizedType> for TypeBound {
     fn reduce(
         &self,
         _ctx: &mut ReductionContext,
-    ) -> Result<StabilizedType, TypeError> {
-        Ok(self.clone().dispatch().stabilize())
+    ) -> Result<Type, TypeError> {
+        Ok(self.clone().dispatch())
     }
 
     fn invoke(
         &self,
         _ctx: &mut InvokeContext,
-    ) -> Result<StabilizedType, TypeError> {
+    ) -> Result<Type, TypeError> {
         Err(TypeError::NonApplicableType(
-            self.clone().dispatch().stabilize().into(),
+            self.clone().dispatch().into(),
         ))
     }
 }
@@ -82,11 +82,11 @@ impl Representable for TypeBound {
 }
 
 impl TypeBound {
-    pub fn top() -> StabilizedType {
-        Self::Top.dispatch().stabilize()
+    pub fn top() -> Type {
+        Self::Top.dispatch()
     }
 
-    pub fn bottom() -> StabilizedType {
-        Self::Bottom.dispatch().stabilize()
+    pub fn bottom() -> Type {
+        Self::Bottom.dispatch()
     }
 }

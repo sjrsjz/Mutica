@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use arc_gc::traceable::GCTraceable;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use smallvec::smallvec;
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
-        closure::ClosureEnv, fixpoint::FixPointInner, type_bound::TypeBound,
+        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
+        fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -78,14 +78,14 @@ impl GCTraceable<FixPointInner> for Generalize {
 }
 
 impl Rootable for Generalize {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         for sub in self.types.iter() {
             sub.upgrade(collected);
         }
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for Generalize {
+impl CoinductiveType<Type> for Generalize {
     fn dispatch(self) -> Type {
         Type::Generalize(self)
     }
@@ -121,16 +121,16 @@ impl CoinductiveType<Type, StabilizedType> for Generalize {
     /// `Max<T₁, ..., Tₙ>[V] = Max<T₁[V], ..., Tₙ[V]>`
     ///
     /// 类型应用操作分布到不可约集合中的每个类型上。
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
-        let mut result = smallvec::SmallVec::<[StabilizedType; 8]>::new();
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
         for sub in self.types.iter() {
             result.push(sub.reduce(ctx)?);
         }
         Self::new(&result, ctx.closure_env)
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
-        let mut result = smallvec::SmallVec::<[StabilizedType; 8]>::new();
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
+        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
         for sub in self.types.iter() {
             result.push(sub.invoke(ctx)?);
         }
@@ -138,8 +138,8 @@ impl CoinductiveType<Type, StabilizedType> for Generalize {
     }
 }
 
-impl CoinductiveTypeWithAny<Type, StabilizedType> for Generalize {
-    fn has<V: CoinductiveType<Type, StabilizedType> + Clone>(
+impl CoinductiveTypeWithAny<Type> for Generalize {
+    fn has<V: CoinductiveType<Type> + Clone>(
         &self,
         other: &V,
         ctx: &mut TypeCheckContext,
@@ -197,10 +197,10 @@ impl Generalize {
     ///
     /// 最终结果保证：集合中任意两个类型都不存在子类型关系，
     /// 且保留的都是最泛化的类型。
-    pub fn new<I, T>(types: I, closure_env: &ClosureEnv) -> Result<StabilizedType, TypeError>
+    pub fn new<I, T>(types: I, closure_env: &ClosureEnv) -> Result<Type, TypeError>
     where
         I: IntoIterator<Item = T>,
-        T: AsTypeRef,
+        T: AsType,
     {
         fn collect(
             collected: &mut smallvec::SmallVec<[Type; 8]>,
@@ -272,14 +272,14 @@ impl Generalize {
             }
             .dispatch(),
         };
-        Ok(StabilizedType::new(new_type))
+        Ok(new_type)
     }
 
     /// 构造只有被reduce后才会正确化简的Generalize类型，不进行吸收律和简化
-    pub fn new_raw<I, T>(types: I) -> StabilizedType
+    pub fn new_raw<I, T>(types: I) -> Type
     where
         I: IntoIterator<Item = T>,
-        T: AsTypeRef,
+        T: AsType,
     {
         let collected: smallvec::SmallVec<[Type; 8]> =
             types.into_iter().map(|t| t.into_type()).collect();
@@ -287,7 +287,6 @@ impl Generalize {
             types: Arc::from(collected.into_boxed_slice()),
         }
         .dispatch()
-        .stabilize()
     }
 
     pub fn types(&self) -> &[Type] {

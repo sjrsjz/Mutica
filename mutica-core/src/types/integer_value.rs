@@ -3,7 +3,7 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -24,7 +24,7 @@ impl GCTraceable<FixPointInner> for IntegerValue {
 
 impl Rootable for IntegerValue {}
 
-impl CoinductiveType<Type, StabilizedType> for IntegerValue {
+impl CoinductiveType<Type> for IntegerValue {
     fn dispatch(self) -> Type {
         Type::IntegerValue(self)
     }
@@ -57,13 +57,13 @@ impl CoinductiveType<Type, StabilizedType> for IntegerValue {
         })
     }
 
-    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
-        Ok(self.clone().dispatch().stabilize())
+    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         Err(TypeError::NonApplicableType(
-            self.clone().dispatch().stabilize().into(),
+            self.clone().dispatch().into(),
         ))
     }
 }
@@ -75,8 +75,8 @@ impl Representable for IntegerValue {
 }
 
 impl IntegerValue {
-    pub fn new(value: i64) -> StabilizedType {
-        Self { value }.dispatch().stabilize()
+    pub fn new(value: i64) -> Type {
+        Self { value }.dispatch()
     }
 
     pub fn value(&self) -> i64 {

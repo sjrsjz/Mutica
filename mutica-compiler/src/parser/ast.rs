@@ -23,7 +23,8 @@ use mutica_core::types::specialize::Specialize;
 use mutica_core::types::tuple::Tuple;
 use mutica_core::types::type_bound::TypeBound;
 use mutica_core::types::variable::Variable;
-use mutica_core::types::{Stabilized, StabilizedType, Type, TypeError};
+use mutica_core::types::{Type, TypeError};
+use mutica_core::util::rootstack::RootStack;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -1592,23 +1593,23 @@ impl<'ast> LinearTypeAst<'ast> {
 }
 
 pub struct BuildResult {
-    ty: StabilizedType,
+    ty: Type,
     patterns: Vec<WithLocation<String>>, // 按照de Bruijn索引顺序排列的模式变量
 }
 
 impl BuildResult {
-    pub fn simple(ty: StabilizedType) -> Self {
+    pub fn simple(ty: Type) -> Self {
         BuildResult {
             ty,
             patterns: Vec::new(),
         }
     }
 
-    pub fn complex(ty: StabilizedType, patterns: Vec<WithLocation<String>>) -> Self {
+    pub fn complex(ty: Type, patterns: Vec<WithLocation<String>>) -> Self {
         BuildResult { ty, patterns }
     }
 
-    pub fn fold(results: Vec<Self>) -> (Vec<StabilizedType>, Vec<WithLocation<String>>) {
+    pub fn fold(results: Vec<Self>) -> (Vec<Type>, Vec<WithLocation<String>>) {
         let mut types = Vec::new();
         let mut patterns = Vec::new();
         for res in results {
@@ -1618,7 +1619,7 @@ impl BuildResult {
         (types, patterns)
     }
 
-    pub fn ty(&self) -> &StabilizedType {
+    pub fn ty(&self) -> &Type {
         &self.ty
     }
 
@@ -1629,12 +1630,13 @@ impl BuildResult {
 
 impl<'ast> LinearTypeAst<'ast> {
     #[stacksafe::stacksafe]
-    pub fn to_type(
+    pub fn to_type<'roots>(
         &self,
         ctx: &mut BuildContext,
         pattern_counter: &mut PatternCounter,
         pattern_mode: bool,
         gc: &mut GC<FixPointInner>,
+        roots: &'roots mut RootStack,
         loc: Option<&SourceLocation>,
     ) -> Result<BuildResult, Result<TypeError, ParseError<'ast>>> {
         match self {
@@ -1647,7 +1649,7 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Variable(Some(var)) => {
                 if let Some(ty) = ctx.current_layer().get(var) {
                     match ty {
-                        Ok(t) => Ok(BuildResult::simple(t.clone().stabilize())), // fixpoint类型
+                        Ok(t) => Ok(BuildResult::simple(t.clone())), // fixpoint类型
                         Err(index) => Ok(BuildResult::simple(Variable::new_deburijn(index))),
                     }
                 } else {
@@ -1666,6 +1668,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         pattern_counter,
                         pattern_mode,
                         gc,
+                        roots,
                         bta.location(),
                     )?);
                 }
@@ -1680,6 +1683,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         pattern_counter,
                         pattern_mode,
                         gc,
+                        roots,
                         bta.location(),
                     )?);
                 }
@@ -1694,6 +1698,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         &mut PatternCounter::new(), // 泛化类型内不允许出现模式变量，安全起见传入一个新的计数器
                         false,
                         gc,
+                        roots,
                         bta.location(),
                     )?);
                 }
@@ -1709,6 +1714,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         &mut PatternCounter::new(), // 专化类型内不允许出现模式变量，安全起见传入一个新的计数器
                         false,
                         gc,
+                        roots,
                         bta.location(),
                     )?);
                 }
@@ -1727,14 +1733,22 @@ impl<'ast> LinearTypeAst<'ast> {
                 arg,
                 continuation,
             } => {
-                let func_type = func.to_type(ctx, pattern_counter, false, gc, func.location())?;
-                let arg_type =
-                    arg.to_type(ctx, pattern_counter, pattern_mode, gc, arg.location())?;
+                let func_type =
+                    func.to_type(ctx, pattern_counter, false, gc, roots, func.location())?;
+                let arg_type = arg.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    arg.location(),
+                )?;
                 let continuation_type = continuation.to_type(
                     ctx,
                     pattern_counter,
                     false,
                     gc,
+                    roots,
                     continuation.location(),
                 )?;
                 let (types, patterns) =
@@ -1758,7 +1772,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 for (var, loc) in &auto_captures {
                     if let Some(ty) = ctx.current_layer().get(var) {
                         match ty {
-                            Ok(t) => closure_env.push(t.clone().stabilize()), // fixpoint类型
+                            Ok(t) => closure_env.push(t.clone()), // fixpoint类型
                             Err(index) => closure_env.push(Variable::new_deburijn(index)),
                         }
                     } else {
@@ -1775,6 +1789,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     &mut PatternCounter::new(), // 进入模式定义，重新计数
                     true,
                     gc,
+                    roots,
                     pattern.location(),
                 )?; // 模式现在允许捕获环境变量
 
@@ -1797,6 +1812,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     &mut PatternCounter::new(), // 进入闭包体，闭包体不允许出现模式变量，安全起见传入一个新的计数器
                     false,
                     gc,
+                    roots,
                     body.location(),
                 )?;
                 ctx.exit_layer();
@@ -1806,6 +1822,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         &mut PatternCounter::new(), // 进入失败分支，失败分支不允许出现模式变量，安全起见传入一个新的计数器
                         false,
                         gc,
+                        roots,
                         fb.location(),
                     )?)
                 } else {
@@ -1834,20 +1851,32 @@ impl<'ast> LinearTypeAst<'ast> {
                 })))
             }
             LinearTypeAst::FixPoint { param_name, expr } => {
-                let placeholder = FixPoint::new_placeholder(gc);
+                let placeholder = FixPoint::new_placeholder(gc, roots);
                 ctx.current_layer_mut()
-                    .enter_fixpoint(param_name.clone(), placeholder.weak().clone());
-                let expr_type =
-                    expr.to_type(ctx, &mut PatternCounter::new(), false, gc, expr.location())?; // 递归函数的表达式中不允许出现模式变量，安全起见传入一个新的计数器
+                    .enter_fixpoint(param_name.clone(), placeholder.clone());
+                let expr_type = expr.to_type(
+                    ctx,
+                    &mut PatternCounter::new(),
+                    false,
+                    gc,
+                    roots,
+                    expr.location(),
+                )?; // 递归函数的表达式中不允许出现模式变量，安全起见传入一个新的计数器
                 ctx.current_layer_mut().exit_fixpoint();
-                as_type!(placeholder.weak(), Type::FixPoint)
+                as_type!(&placeholder, Type::FixPoint)
                     .set(expr_type.ty)
                     .map_err(Ok)?;
                 Ok(BuildResult::simple(placeholder))
             }
             LinearTypeAst::Namespace { tag, expr } => {
-                let expr_type =
-                    expr.to_type(ctx, pattern_counter, pattern_mode, gc, expr.location())?;
+                let expr_type = expr.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    expr.location(),
+                )?;
                 Ok(BuildResult::complex(
                     Namespace::new(tag.clone(), &expr_type.ty),
                     expr_type.patterns,
@@ -1859,8 +1888,14 @@ impl<'ast> LinearTypeAst<'ast> {
                         WithLocation::new(self.clone(), loc),
                     )));
                 }
-                let expr_type =
-                    expr.to_type(ctx, pattern_counter, pattern_mode, gc, expr.location())?;
+                let expr_type = expr.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    expr.location(),
+                )?;
                 let mut patterns = expr_type.patterns;
                 let debruijn_index = pattern_counter.alloc(name.clone());
                 patterns.extend(vec![WithLocation::new(name.clone(), loc)]);
@@ -1870,8 +1905,14 @@ impl<'ast> LinearTypeAst<'ast> {
                 ))
             }
             LinearTypeAst::Literal(inner) => {
-                let inner_type =
-                    inner.to_type(ctx, pattern_counter, pattern_mode, gc, inner.location())?;
+                let inner_type = inner.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    inner.location(),
+                )?;
                 Ok(BuildResult::complex(
                     Lazy::new(&inner_type.ty),
                     inner_type.patterns,

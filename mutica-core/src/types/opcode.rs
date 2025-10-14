@@ -3,8 +3,8 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
-        fixpoint::FixPointInner, integer_value::IntegerValue, type_bound::TypeBound,
+        Rootable, Type, TypeCheckContext, TypeError, closure::ClosureEnv, fixpoint::FixPointInner,
+        integer_value::IntegerValue, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -36,7 +36,7 @@ impl GCTraceable<FixPointInner> for Opcode {
 
 impl Rootable for Opcode {}
 
-impl CoinductiveType<Type, StabilizedType> for Opcode {
+impl CoinductiveType<Type> for Opcode {
     fn dispatch(self) -> Type {
         Type::Opcode(self)
     }
@@ -76,15 +76,13 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
         })
     }
 
-    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
-        Ok(self.clone().dispatch().stabilize())
+    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         match self {
-            Opcode::Opcode => Err(TypeError::NonApplicableType(
-                self.clone().dispatch().stabilize().into(),
-            )),
+            Opcode::Opcode => Err(TypeError::NonApplicableType(self.clone().dispatch().into())),
             Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
                 std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -132,13 +130,13 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            ctx.arg.clone().stabilize().into(),
+                            ctx.arg.clone().into(),
                             "(Any, Any)".to_string(),
                         ))
                     }
                 } else {
                     Err(TypeError::TypeMismatch(
-                        ctx.arg.clone().stabilize().into(),
+                        ctx.arg.clone().into(),
                         "Tuple".to_string(),
                     ))
                 }
@@ -162,7 +160,7 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
                                 Opcode::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            ctx.arg.clone().stabilize().into(),
+                                            ctx.arg.clone().into(),
                                             "Non-zero".to_string(),
                                         ))
                                     } else {
@@ -172,7 +170,7 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
                                 Opcode::Mod => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            ctx.arg.clone().stabilize().into(),
+                                            ctx.arg.clone().into(),
                                             "Non-zero".to_string(),
                                         ))
                                     } else {
@@ -195,19 +193,19 @@ impl CoinductiveType<Type, StabilizedType> for Opcode {
 
                             // }
                             _ => Err(TypeError::TypeMismatch(
-                                ctx.arg.clone().stabilize().into(),
+                                ctx.arg.clone().into(),
                                 "(IntegerValue, IntegerValue)".to_string(),
                             )),
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            ctx.arg.clone().stabilize().into(),
+                            ctx.arg.clone().into(),
                             "Tuple".to_string(),
                         ))
                     }
                 } else {
                     Err(TypeError::TypeMismatch(
-                        ctx.arg.clone().stabilize().into(),
+                        ctx.arg.clone().into(),
                         "Tuple".to_string(),
                     ))
                 }
@@ -223,7 +221,7 @@ impl Representable for Opcode {
 }
 
 impl Opcode {
-    pub fn new(op: Opcode) -> StabilizedType {
-        op.dispatch().stabilize()
+    pub fn new(op: Opcode) -> Type {
+        op.dispatch()
     }
 }

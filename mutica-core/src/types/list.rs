@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use arc_gc::traceable::GCTraceable;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
-    AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-    Representable, Rootable, StabilizedType, TaggedPtr, Type, TypeCheckContext, TypeError,
-    fixpoint::FixPointInner, type_bound::TypeBound,
+    AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+    Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+    type_bound::TypeBound,
 };
 
 // 抽象链表类型，实际实现为 Vec<T>
@@ -46,7 +46,7 @@ impl GCTraceable<FixPointInner> for List {
 }
 
 impl Rootable for List {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         for element in self.iter() {
             // 我们不关心 head 之前的元素，他们对于本类型是不可达的
             element.upgrade(collected);
@@ -54,7 +54,7 @@ impl Rootable for List {
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for List {
+impl CoinductiveType<Type> for List {
     fn dispatch(self) -> Type {
         Type::List(self)
     }
@@ -106,7 +106,7 @@ impl CoinductiveType<Type, StabilizedType> for List {
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, super::TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
         let mut reduced_elements = Vec::with_capacity(self.len());
         for element in self.iter() {
             reduced_elements.push(element.reduce(ctx)?);
@@ -114,24 +114,24 @@ impl CoinductiveType<Type, StabilizedType> for List {
         Ok(Self::new(reduced_elements))
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, super::TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
         match ctx.arg {
             Type::IntegerValue(iv) => match iv.value() {
-                0 => self.head().map(|t| t.clone().stabilize()).ok_or_else(|| {
+                0 => self.head().map(|t| t.clone()).ok_or_else(|| {
                     TypeError::TupleIndexOutOfBounds(Box::new((
-                        self.clone().dispatch().stabilize(),
-                        ctx.arg.clone().stabilize(),
+                        self.clone().dispatch(),
+                        ctx.arg.clone(),
                     )))
                 }),
                 1 => self.tail().ok_or_else(|| {
                     TypeError::TupleIndexOutOfBounds(Box::new((
-                        self.clone().dispatch().stabilize(),
-                        ctx.arg.clone().stabilize(),
+                        self.clone().dispatch(),
+                        ctx.arg.clone(),
                     )))
                 }),
                 _ => Err(TypeError::TupleIndexOutOfBounds(Box::new((
-                    self.clone().dispatch().stabilize(),
-                    ctx.arg.clone().stabilize(),
+                    self.clone().dispatch(),
+                    ctx.arg.clone(),
                 )))),
             },
             _ => Ok(TypeBound::bottom()),
@@ -159,10 +159,10 @@ impl List {
         self.elements.get(self.head + index)
     }
 
-    pub fn new<I, T>(types: I) -> StabilizedType
+    pub fn new<I, T>(types: I) -> Type
     where
         I: IntoIterator<Item = T>,
-        T: AsTypeRef,
+        T: AsType,
     {
         let elements: Vec<Type> = types.into_iter().map(|t| t.into_type()).collect();
         Self {
@@ -170,7 +170,6 @@ impl List {
             head: 0,
         }
         .dispatch()
-        .stabilize()
     }
 
     pub fn view(&self, start: usize) -> Type {
@@ -188,7 +187,7 @@ impl List {
         self.iter().next()
     }
 
-    pub fn tail(&self) -> Option<StabilizedType> {
+    pub fn tail(&self) -> Option<Type> {
         if self.len() == 0 {
             return None;
         }
@@ -197,8 +196,7 @@ impl List {
                 elements: self.elements.clone(),
                 head: self.head + 1,
             }
-            .dispatch()
-            .stabilize(),
+            .dispatch(),
         )
     }
 }

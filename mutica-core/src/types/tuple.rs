@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use arc_gc::traceable::GCTraceable;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
-        fixpoint::FixPointInner, type_bound::TypeBound,
+        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
 };
@@ -27,7 +27,7 @@ impl GCTraceable<FixPointInner> for Tuple {
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for Tuple {
+impl CoinductiveType<Type> for Tuple {
     fn dispatch(self) -> Type {
         Type::Tuple(self)
     }
@@ -77,8 +77,8 @@ impl CoinductiveType<Type, StabilizedType> for Tuple {
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, super::TypeError> {
-        let mut result = smallvec::SmallVec::<[StabilizedType; 8]>::new();
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
+        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
         for sub in self.types.iter() {
             result.push(sub.reduce(ctx)?);
         }
@@ -86,27 +86,27 @@ impl CoinductiveType<Type, StabilizedType> for Tuple {
         Ok(Self::new(&result))
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, super::TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
         ctx.arg
             .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 Type::IntegerValue(iv) => {
                     if self.types.is_empty() {
                         return Err(super::TypeError::TupleIndexOutOfBounds(Box::new((
-                            self.clone().dispatch().stabilize(),
-                            ctx.arg.clone().stabilize(),
+                            self.clone().dispatch(),
+                            ctx.arg.clone(),
                         ))));
                     }
                     let index = iv.value() as usize;
                     if index >= self.types.len() {
                         return Err(super::TypeError::TupleIndexOutOfBounds(Box::new((
-                            self.clone().dispatch().stabilize(),
-                            ctx.arg.clone().stabilize(),
+                            self.clone().dispatch(),
+                            ctx.arg.clone(),
                         ))));
                     }
-                    Ok(self.types[index].clone().stabilize())
+                    Ok(self.types[index].clone())
                 }
                 _ => Err(super::TypeError::TypeMismatch(
-                    Box::new(ctx.arg.clone().stabilize()),
+                    Box::new(ctx.arg.clone()),
                     "IntegerValue".to_string(),
                 )),
             })?
@@ -114,7 +114,7 @@ impl CoinductiveType<Type, StabilizedType> for Tuple {
 }
 
 impl Rootable for Tuple {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         for ty in self.types.iter() {
             ty.upgrade(collected);
         }
@@ -140,16 +140,16 @@ impl Representable for Tuple {
 }
 
 impl Tuple {
-    pub fn new<I, T>(types: I) -> StabilizedType
+    pub fn new<I, T>(types: I) -> Type
     where
         I: IntoIterator<Item = T>,
-        T: AsTypeRef,
+        T: AsType,
     {
         let types = types
             .into_iter()
             .map(|t| t.into_type())
             .collect::<Arc<[Type]>>();
-        Tuple { types }.dispatch().stabilize()
+        Tuple { types }.dispatch()
     }
 
     pub fn types(&self) -> &Arc<[Type]> {

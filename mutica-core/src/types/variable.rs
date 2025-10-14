@@ -1,7 +1,7 @@
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -24,7 +24,7 @@ impl GCTraceable<FixPointInner> for Variable {
 
 impl Rootable for Variable {}
 
-impl CoinductiveType<Type, StabilizedType> for Variable {
+impl CoinductiveType<Type> for Variable {
     fn dispatch(self) -> Type {
         Type::Variable(self)
     }
@@ -75,7 +75,7 @@ impl CoinductiveType<Type, StabilizedType> for Variable {
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
         match self {
             Variable::Deburijn(idx) if *idx >= 0 => Ok(ctx
                 .param_env
@@ -85,23 +85,23 @@ impl CoinductiveType<Type, StabilizedType> for Variable {
             Variable::Deburijn(idx) => ctx
                 .closure_env
                 .get((-1 - *idx) as usize)
-                .map(|t| t.clone().stabilize()),
+                .map(|t| t.clone()),
             Variable::Continuation => match ctx.continuation {
-                Some(t) => Ok(t.clone().stabilize()),
+                Some(t) => Ok(t.clone()),
                 None => Err(TypeError::MissingContinuation),
             },
         }
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         Err(TypeError::NonApplicableType(
-            self.clone().dispatch().stabilize().into(),
+            self.clone().dispatch().into(),
         ))
     }
 }
 
-impl CoinductiveTypeWithAny<Type, StabilizedType> for Variable {
-    fn has<V: CoinductiveType<Type, StabilizedType>>(
+impl CoinductiveTypeWithAny<Type> for Variable {
+    fn has<V: CoinductiveType<Type>>(
         &self,
         other: &V,
         ctx: &mut TypeCheckContext,
@@ -134,10 +134,10 @@ impl Representable for Variable {
 }
 
 impl Variable {
-    pub fn new_deburijn(debruijn_index: isize) -> StabilizedType {
-        Self::Deburijn(debruijn_index).dispatch().stabilize()
+    pub fn new_deburijn(debruijn_index: isize) -> Type {
+        Self::Deburijn(debruijn_index).dispatch()
     }
-    pub fn new_continuation() -> StabilizedType {
-        Self::Continuation.dispatch().stabilize()
+    pub fn new_continuation() -> Type {
+        Self::Continuation.dispatch()
     }
 }

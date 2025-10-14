@@ -1,12 +1,12 @@
 use std::{ops::Deref, sync::Arc};
 
-use arc_gc::traceable::GCTraceable;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
-        fixpoint::FixPointInner, type_bound::TypeBound,
+        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -34,7 +34,7 @@ impl GCTraceable<FixPointInner> for ClosureEnv {
 }
 
 impl Rootable for ClosureEnv {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         for v in self.0.iter() {
             v.upgrade(collected);
         }
@@ -65,7 +65,7 @@ impl Representable for ClosureEnv {
 }
 
 impl ClosureEnv {
-    pub fn new<T: AsTypeRef>(v: impl IntoIterator<Item = T>) -> Self {
+    pub fn new<T: AsType>(v: impl IntoIterator<Item = T>) -> Self {
         ClosureEnv(v.into_iter().map(|t| t.into_type()).collect())
     }
 
@@ -77,9 +77,9 @@ impl ClosureEnv {
     }
 }
 
-pub struct ParamEnv(Vec<StabilizedType>);
+pub struct ParamEnv(Vec<Type>);
 impl Deref for ParamEnv {
-    type Target = Vec<StabilizedType>;
+    type Target = Vec<Type>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -107,7 +107,7 @@ impl ParamEnv {
         let mut stabilized_vec = Vec::with_capacity(vec.len());
         for types in vec.into_iter() {
             if Self::check_equivalent(&types)? {
-                stabilized_vec.push(types[0].clone().stabilize());
+                stabilized_vec.push(types[0].clone());
             } else {
                 return Ok(None);
             }
@@ -130,7 +130,7 @@ impl ParamEnv {
         Ok(true)
     }
 
-    pub fn get(&self, index: usize) -> Result<&StabilizedType, TypeError> {
+    pub fn get(&self, index: usize) -> Result<&Type, TypeError> {
         self.0
             .get(index)
             .ok_or_else(|| TypeError::UnboundVariable(index as isize))
@@ -160,7 +160,7 @@ impl GCTraceable<FixPointInner> for ClosureInner {
 }
 
 impl Rootable for ClosureInner {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         self.env.upgrade(collected);
         self.pattern.upgrade(collected);
         self.expr.upgrade(collected);
@@ -195,12 +195,12 @@ impl GCTraceable<FixPointInner> for Closure {
 }
 
 impl Rootable for Closure {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         self.inner.upgrade(collected);
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for Closure {
+impl CoinductiveType<Type> for Closure {
     fn dispatch(self) -> Type {
         Type::Closure(self)
     }
@@ -277,7 +277,7 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
         // 先把闭包环境中的类型都化简
         let env = self
             .inner
@@ -298,7 +298,7 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
         ))
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         let mut matched_pattern = Collector::new();
 
         // 创建用于模式匹配的类型检查上下文
@@ -323,16 +323,13 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
                 ctx.continuation,
                 ctx.rec_assumptions,
                 ctx.gc,
+                ctx.roots,
             );
             self.inner.expr.reduce(&mut reduce_ctx)
         } else {
             if self.inner.fail_branch.is_none() {
                 return Err(TypeError::AssertFailed(
-                    (
-                        ctx.arg.clone().stabilize(),
-                        self.inner.pattern.clone().stabilize(),
-                    )
-                        .into(),
+                    (ctx.arg.clone(), self.inner.pattern.clone()).into(),
                 ));
             }
             // 模式匹配失败,返回 fail_branch
@@ -342,6 +339,7 @@ impl CoinductiveType<Type, StabilizedType> for Closure {
                 ctx.continuation,
                 ctx.rec_assumptions,
                 ctx.gc,
+                ctx.roots,
             );
             self.inner
                 .fail_branch
@@ -380,11 +378,11 @@ impl Closure {
         expr: V,
         fail_branch: Option<W>,
         env: ClosureEnv,
-    ) -> StabilizedType
+    ) -> Type
     where
-        U: AsTypeRef,
-        V: AsTypeRef,
-        W: AsTypeRef,
+        U: AsType,
+        V: AsType,
+        W: AsType,
     {
         Self {
             inner: Arc::new(ClosureInner {
@@ -396,7 +394,6 @@ impl Closure {
             }),
         }
         .dispatch()
-        .stabilize()
     }
 
     pub fn env(&self) -> &ClosureEnv {

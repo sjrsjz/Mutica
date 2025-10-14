@@ -12,7 +12,7 @@ use mutica_core::{
     arc_gc::gc::GC,
     scheduler,
     types::{Representable, Type},
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
 #[derive(Parser)]
@@ -154,11 +154,13 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
     let flowed = flowed.ty().clone();
 
     let mut gc = GC::new();
+    let mut roots = RootStack::new();
     let built_type = match flowed.to_type(
         &mut BuildContext::new(),
         &mut PatternCounter::new(),
         false,
         &mut gc,
+        &mut roots,
         flowed.location(),
     ) {
         Ok(result) => result,
@@ -182,12 +184,29 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         "Built type: {}\n",
         built_type.ty().display(&mut FastCycleDetector::new())
     );
-    let mut linear_scheduler = scheduler::LinearScheduler::new(built_type.ty().clone());
+
+    let mut linear_scheduler =
+        roots.context(|_| scheduler::LinearScheduler::new(built_type.ty().clone())); // 确保 roots 直到 linear_scheduler 被创建完成才丢弃
+
+    let mut step_counter = 0;
+    const SWEEP_INTERVAL: usize = 1024;
     let result = loop {
+        // for debugging: 在每一步后进行垃圾收集和根栈清理
+        #[cfg(debug_assertions)]
+        gc.collect();
+        #[cfg(debug_assertions)]
+        linear_scheduler.sweep_roots();
+
         match linear_scheduler.step(&mut gc) {
-            Ok(true) => continue,
+            Ok(true) => (),
             Ok(false) => break Ok(linear_scheduler.current_type().clone()),
             Err(e) => break Err(e),
+        }
+
+        step_counter += 1;
+        if step_counter >= SWEEP_INTERVAL {
+            linear_scheduler.sweep_roots();
+            step_counter = 0;
         }
     };
     match result {

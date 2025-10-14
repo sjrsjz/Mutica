@@ -9,11 +9,10 @@ use arc_gc::{
 use crate::{
     as_type,
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, GCArcStorage, InvokeContext,
-        ReductionContext, Representable, Rootable, Stabilized, StabilizedType, Type,
-        TypeCheckContext, TypeError, type_bound::TypeBound,
+        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, type_bound::TypeBound,
     },
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
 /// # 不动点算子内部实现 (Fixed-Point Operator Inner Implementation)
@@ -92,7 +91,7 @@ impl GCTraceable<FixPointInner> for FixPoint {
 }
 
 impl Rootable for FixPoint {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[GCArc<FixPointInner>; 8]>) {
+    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<FixPointInner>>) {
         if let Some(inner) = self.reference.upgrade() {
             collected.push(inner);
         }
@@ -116,16 +115,20 @@ impl FixPoint {
     ///
     /// ## 返回值
     ///
-    /// 返回一个 [`StabilizedType`]，包含：
+    /// 返回一个 [`Type`]，包含：
     /// - 未初始化的 `FixPoint`
     /// - 对应的强引用以保证 GC 安全
 
-    pub fn new_placeholder(gc: &mut GC<FixPointInner>) -> StabilizedType {
+    pub fn new_placeholder<'roots>(
+        gc: &mut GC<FixPointInner>,
+        roots: &'roots mut RootStack,
+    ) -> Type {
         let pointer = gc.create(FixPointInner::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
         };
-        StabilizedType::new_with_ref(Type::FixPoint(fix_point), GCArcStorage::Single(pointer))
+        roots.push(pointer);
+        Type::FixPoint(fix_point)
     }
 
     /// 设置递归类型的具体定义
@@ -136,7 +139,7 @@ impl FixPoint {
     /// ## 错误
     /// - `RedeclaredType`: 类型已经被设置过
     /// - `UnresolvableType`: 不动点引用已失效
-    pub fn set<V: AsTypeRef>(&self, t: V) -> Result<(), TypeError> {
+    pub fn set<V: AsType>(&self, t: V) -> Result<(), TypeError> {
         if let Some(inner) = self.reference.upgrade() {
             inner
                 .as_ref()
@@ -149,7 +152,7 @@ impl FixPoint {
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for FixPoint {
+impl CoinductiveType<Type> for FixPoint {
     fn dispatch(self) -> Type {
         Type::FixPoint(self)
     }
@@ -213,7 +216,7 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
     /// `(μX.T)[V] = T[μX.T/X][V]`
     ///
     /// 即：将递归类型应用到输入上，等价于将展开的类型应用到输入上。
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
         match self.reference.upgrade() {
             Some(inner) => {
                 let inner_type = inner.as_ref().get().ok_or(TypeError::UnresolvableType)?;
@@ -221,21 +224,18 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
                     if r.0 == inner_type.tagged_ptr() {
                         //已经假设递归的归约结果,直接返回
                         r.2 = true; // mark as used
-                        return Ok(r.1.clone().stabilize());
+                        return Ok(r.1.clone());
                     }
                 }
-                let temp_fixpoint = Self::new_placeholder(ctx.gc);
+                let temp_fixpoint = Self::new_placeholder(ctx.gc, ctx.roots);
                 // 假设递归类型的归约结果为 temp_fixpoint
-                ctx.rec_assumptions.push((
-                    inner_type.tagged_ptr(),
-                    temp_fixpoint.weak().clone(),
-                    false,
-                ));
+                ctx.rec_assumptions
+                    .push((inner_type.tagged_ptr(), temp_fixpoint.clone(), false));
                 let result = inner_type.reduce(ctx);
                 let (_, _, used) = ctx.rec_assumptions.pop().unwrap();
                 if used {
                     // 递归类型在展开中被使用,返回新的递归类型
-                    as_type!(temp_fixpoint.weak(), Type::FixPoint).set(result?)?;
+                    as_type!(&temp_fixpoint, Type::FixPoint).set(result?)?;
                     Ok(temp_fixpoint)
                 } else {
                     // 递归类型未被使用,直接返回展开结果
@@ -246,7 +246,7 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
         }
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         match self.reference.upgrade() {
             Some(inner) => inner
                 .as_ref()
@@ -258,8 +258,8 @@ impl CoinductiveType<Type, StabilizedType> for FixPoint {
     }
 }
 
-impl CoinductiveTypeWithAny<Type, StabilizedType> for FixPoint {
-    fn has<V: CoinductiveType<Type, StabilizedType> + Clone>(
+impl CoinductiveTypeWithAny<Type> for FixPoint {
+    fn has<V: CoinductiveType<Type> + Clone>(
         &self,
         other: &V,
         ctx: &mut TypeCheckContext,

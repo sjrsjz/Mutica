@@ -29,3 +29,6 @@ name = "mutica"
 
 [workspace]
 members = ["mutica-core", "mutica-compiler", "mutica-semantic", "."]
+
+[profile.release]
+debug = true

@@ -3,7 +3,7 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, StabilizedType, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
         integer_value::IntegerValue, type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -22,7 +22,7 @@ impl GCTraceable<FixPointInner> for Integer {
 
 impl Rootable for Integer {}
 
-impl CoinductiveType<Type, StabilizedType> for Integer {
+impl CoinductiveType<Type> for Integer {
     fn dispatch(self) -> Type {
         Type::Integer(self)
     }
@@ -48,17 +48,17 @@ impl CoinductiveType<Type, StabilizedType> for Integer {
         })
     }
 
-    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
-        Ok(self.clone().dispatch().stabilize())
+    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         ctx.arg
             .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::IntegerValue(_) => Ok(arg.clone().stabilize()),
+                Type::IntegerValue(_) => Ok(arg.clone()),
                 Type::CharValue(c) => Ok(IntegerValue::new(c.value() as i64)),
                 _ => Err(super::TypeError::TypeMismatch(
-                    ctx.arg.clone().stabilize().into(),
+                    ctx.arg.clone().into(),
                     "IntegerValue or CharValue".to_string(),
                 )),
             })?
@@ -72,7 +72,7 @@ impl Representable for Integer {
 }
 
 impl Integer {
-    pub fn new() -> StabilizedType {
-        Self {}.dispatch().stabilize()
+    pub fn new() -> Type {
+        Self {}.dispatch()
     }
 }

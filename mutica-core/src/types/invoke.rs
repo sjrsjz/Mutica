@@ -1,16 +1,16 @@
-use arc_gc::{gc::GC, traceable::GCTraceable};
+use arc_gc::{arc::GCArc, gc::GC, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
+        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError,
         closure::{Closure, ClosureEnv, ParamEnv},
         fixpoint::FixPointInner,
         pattern::Pattern,
         type_bound::TypeBound,
         variable::Variable,
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    util::{collector::Collector, cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
 #[derive(Clone)]
@@ -32,14 +32,14 @@ impl GCTraceable<FixPointInner> for Invoke {
 }
 
 impl Rootable for Invoke {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         self.func.upgrade(collected);
         self.arg.upgrade(collected);
         self.continuation.upgrade(collected);
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for Invoke {
+impl CoinductiveType<Type> for Invoke {
     fn dispatch(self) -> Type {
         Type::Invoke(self)
     }
@@ -79,7 +79,7 @@ impl CoinductiveType<Type, StabilizedType> for Invoke {
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, super::TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
         Ok(Self::new(
             self.func.reduce(ctx)?,
             self.arg.reduce(ctx)?,
@@ -87,10 +87,8 @@ impl CoinductiveType<Type, StabilizedType> for Invoke {
         ))
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<StabilizedType, super::TypeError> {
-        Err(TypeError::NonApplicableType(
-            self.clone().dispatch().stabilize().into(),
-        ))
+    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 }
 
@@ -106,18 +104,13 @@ impl Representable for Invoke {
 }
 
 impl Invoke {
-    pub fn new<U: AsTypeRef, V: AsTypeRef, W: AsTypeRef>(
-        func: U,
-        arg: V,
-        continuation: W,
-    ) -> StabilizedType {
+    pub fn new<U: AsType, V: AsType, W: AsType>(func: U, arg: V, continuation: W) -> Type {
         Self {
             func: Box::new(func.into_type()),
             arg: Box::new(arg.into_type()),
             continuation: Box::new(continuation.into_type()),
         }
         .dispatch()
-        .stabilize()
     }
 
     pub fn func(&self) -> &Type {
@@ -182,15 +175,16 @@ impl Invoke {
     ///
     /// # Returns
     ///
-    /// * `Ok(StabilizedType)`: The next instruction for the scheduler. If `v` was a value,
+    /// * `Ok(Type)`: The next instruction for the scheduler. If `v` was a value,
     ///   this is the result of `k(v)`. If `v` was a nested `Invoke`, this is the new,
     ///   flattened `Invoke` instruction.
     /// * `Err(TypeError)`: If applying the continuation fails.
-    pub fn flat_compose(
+    pub fn flat_compose<'roots>(
         &self,
         v: &Type,
         gc: &mut GC<FixPointInner>,
-    ) -> Result<StabilizedType, TypeError> {
+        roots: &'roots mut RootStack,
+    ) -> Result<Type, TypeError> {
         // The `map` here is used to traverse the type structure without deep recursion
         // if `v` is already a value.
         v.map(&mut FastCycleDetector::new(), |_, ty| match ty {
@@ -237,6 +231,7 @@ impl Invoke {
                     None, // The continuation's own continuation is not needed here.
                     &mut rec_assumptions,
                     gc,
+                    roots,
                 );
                 self.continuation().invoke(&mut invoke_ctx)
             }

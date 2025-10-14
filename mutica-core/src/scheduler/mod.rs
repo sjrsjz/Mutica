@@ -4,8 +4,7 @@ use arc_gc::gc::GC;
 
 use crate::{
     types::{
-        CoinductiveType, InvokeContext, ReductionContext, Representable, Stabilized,
-        StabilizedType, Type, TypeError,
+        CoinductiveType, InvokeContext, ReductionContext, Representable, Type, TypeError,
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
         fixpoint::FixPointInner,
@@ -13,42 +12,46 @@ use crate::{
         opcode::Opcode,
         tuple::Tuple,
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    util::{collector::Collector, cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
 pub struct LinearScheduler {
-    current_type: StabilizedType,
+    current_type: Type,
+    roots: RootStack,
 }
 
 impl LinearScheduler {
-    pub fn new(initial_type: StabilizedType) -> Self {
+    pub fn new(initial_type: Type) -> Self {
+        let mut roots = RootStack::new();
+        roots.sweep(&initial_type);
         Self {
             current_type: initial_type,
+            roots,
         }
     }
 
-    fn io(&self, f: &Type, invoke_ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn io(f: &Type, arg: &Type) -> Result<Option<Type>, TypeError> {
         f.map(&mut FastCycleDetector::new(), |_, f| {
             if !matches!(f, Type::Opcode(_)) {
-                return f.invoke(invoke_ctx);
+                return Ok(None);
             }
             let Type::Opcode(op) = f else { unreachable!() };
             if !matches!(op, Opcode::IO(_)) {
-                return f.invoke(invoke_ctx);
+                return Ok(None);
             }
             let Opcode::IO(io_name) = op else {
                 unreachable!()
             };
             match io_name.as_str() {
                 "print" => {
-                    let str = invoke_ctx.arg.display(&mut FastCycleDetector::new());
+                    let str = arg.display(&mut FastCycleDetector::new());
                     print!("{}", str);
-                    Ok(Tuple::new(Vec::<Type>::new()))
+                    Ok(Some(Tuple::new(Vec::<Type>::new())))
                 }
                 "println" => {
-                    let str = invoke_ctx.arg.display(&mut FastCycleDetector::new());
+                    let str = arg.display(&mut FastCycleDetector::new());
                     println!("{}", str);
-                    Ok(Tuple::new(Vec::<Type>::new()))
+                    Ok(Some(Tuple::new(Vec::<Type>::new())))
                 }
                 "input" => {
                     let mut input = String::new();
@@ -57,14 +60,14 @@ impl LinearScheduler {
                         .chars()
                         .map(|c| CharacterValue::new(c))
                         .collect::<Vec<_>>();
-                    Ok(List::new(chars))
+                    Ok(Some(List::new(chars)))
                 }
                 "flush" => {
                     use std::io;
                     io::stdout().flush().unwrap();
-                    Ok(Tuple::new(Vec::<Type>::new()))
+                    Ok(Some(Tuple::new(Vec::<Type>::new())))
                 }
-                _ => f.invoke(invoke_ctx),
+                _ => Ok(None),
             }
         })?
     }
@@ -73,8 +76,14 @@ impl LinearScheduler {
         let empty_v = ClosureEnv::new(Vec::<Type>::new());
         let empty_p = ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
         let mut rec_assumptions = smallvec::SmallVec::new();
-        let mut reduction_ctx =
-            ReductionContext::new(&empty_v, &empty_p, None, &mut rec_assumptions, gc);
+        let mut reduction_ctx = ReductionContext::new(
+            &empty_v,
+            &empty_p,
+            None,
+            &mut rec_assumptions,
+            gc,
+            &mut self.roots,
+        );
 
         let reduced = self.current_type.reduce(&mut reduction_ctx)?;
         let (next_type, updated) =
@@ -88,13 +97,17 @@ impl LinearScheduler {
                         Some(invoke.continuation()),
                         &mut rec_assumptions2,
                         gc,
+                        &mut self.roots,
                     );
 
-                    let result = self.io(invoke.func(), &mut invoke_ctx)?;
-                    let result = invoke.flat_compose(result.weak(), gc)?;
+                    let result = match Self::io(invoke.func(), invoke.arg())? {
+                        Some(io_result) => io_result,
+                        None => invoke.func().invoke(&mut invoke_ctx)?,
+                    };
+                    let result = invoke.flat_compose(&result, gc, &mut self.roots)?;
                     Ok((result, true))
                 }
-                _ => Ok((reduced.clone().stabilize(), false)),
+                _ => Ok((reduced.clone(), false)),
             })??;
         self.current_type = next_type;
         // println!(
@@ -104,7 +117,11 @@ impl LinearScheduler {
         Ok(updated)
     }
 
-    pub fn current_type(&self) -> &StabilizedType {
+    pub fn sweep_roots(&mut self) {
+        self.roots.sweep(&self.current_type);
+    }
+
+    pub fn current_type(&self) -> &Type {
         &self.current_type
     }
 }

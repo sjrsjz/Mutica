@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use arc_gc::traceable::GCTraceable;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
-    AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable, StabilizedType,
-    Type, TypeCheckContext, fixpoint::FixPointInner, type_bound::TypeBound,
+    AsType, CoinductiveType, CoinductiveTypeWithAny, Representable, Rootable, Type,
+    TypeCheckContext, fixpoint::FixPointInner, type_bound::TypeBound,
 };
 
 #[derive(Clone)]
@@ -22,7 +22,7 @@ impl GCTraceable<FixPointInner> for Lazy {
 }
 
 impl Rootable for Lazy {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         self.value.upgrade(collected);
     }
 }
@@ -35,7 +35,7 @@ impl Representable for Lazy {
         format!("Lazy<{}>", self.value.represent(path))
     }
 }
-impl CoinductiveType<Type, StabilizedType> for Lazy {
+impl CoinductiveType<Type> for Lazy {
     fn dispatch(self) -> Type {
         Type::Lazy(self)
     }
@@ -65,26 +65,22 @@ impl CoinductiveType<Type, StabilizedType> for Lazy {
         })
     }
 
-    fn reduce(
-        &self,
-        ctx: &mut super::ReductionContext,
-    ) -> Result<StabilizedType, super::TypeError> {
+    fn reduce(&self, ctx: &mut super::ReductionContext) -> Result<Type, super::TypeError> {
         self.value.reduce(ctx).map(Self::new)
     }
 
-    fn invoke(&self, _ctx: &mut super::InvokeContext) -> Result<StabilizedType, super::TypeError> {
+    fn invoke(&self, _ctx: &mut super::InvokeContext) -> Result<Type, super::TypeError> {
         Err(super::TypeError::NonApplicableType(
-            self.clone().dispatch().stabilize().into(),
+            self.clone().dispatch().into(),
         ))
     }
 }
 
 impl Lazy {
-    pub fn new<T: AsTypeRef>(value: T) -> StabilizedType {
+    pub fn new<T: AsType>(value: T) -> Type {
         Self {
             value: Arc::new(value.into_type()),
         }
         .dispatch()
-        .stabilize()
     }
 }

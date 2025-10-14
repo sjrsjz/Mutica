@@ -1,18 +1,15 @@
 use std::sync::Arc;
 
-use arc_gc::traceable::GCTraceable;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use smallvec::smallvec;
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
-        StabilizedType, Type, TypeError,
-        
-        fixpoint::FixPointInner,
-        type_bound::TypeBound,
-        closure::ClosureEnv,
+        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
+        fixpoint::FixPointInner, type_bound::TypeBound,
     },
-    util::{cycle_detector::FastCycleDetector, collector::Collector},
+    util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
 
 /// # 类型特化运算符 (Type Specialization Operator)
@@ -81,21 +78,26 @@ impl GCTraceable<FixPointInner> for Specialize {
 }
 
 impl Rootable for Specialize {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         for sub in self.types.iter() {
             sub.upgrade(collected);
         }
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for Specialize {
+impl CoinductiveType<Type> for Specialize {
     fn dispatch(self) -> Type {
         Type::Specialize(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             match other {
                 Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
                 Type::Specialize(v) => v.has(self, &mut inner_ctx),
@@ -132,16 +134,16 @@ impl CoinductiveType<Type, StabilizedType> for Specialize {
     /// `Min<T₁, ..., Tₙ>[V] = Min<T₁[V], ..., Tₙ[V]>`
     ///
     /// 类型应用操作分布到不可约集合中的每个类型上。
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
-        let mut result = smallvec::SmallVec::<[StabilizedType; 8]>::new();
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
         for sub in self.types.iter() {
             result.push(sub.reduce(ctx)?);
         }
         Self::new(&result, ctx.closure_env)
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
-        let mut result = smallvec::SmallVec::<[StabilizedType; 8]>::new();
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
+        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
         for sub in self.types.iter() {
             result.push(sub.invoke(ctx)?);
         }
@@ -149,14 +151,15 @@ impl CoinductiveType<Type, StabilizedType> for Specialize {
     }
 }
 
-impl CoinductiveTypeWithAny<Type, StabilizedType> for Specialize {
-    fn has<V: CoinductiveType<Type, StabilizedType> + Clone>(
+impl CoinductiveTypeWithAny<Type> for Specialize {
+    fn has<V: CoinductiveType<Type> + Clone>(
         &self,
         other: &V,
         ctx: &mut TypeCheckContext,
     ) -> Result<Option<()>, super::TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, false);
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, false);
             for sub in self.types.iter() {
                 // 我们传入 false 是因为specialize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
                 if other.is(sub, &mut inner_ctx)?.is_none() {
@@ -206,10 +209,10 @@ impl Specialize {
     /// 所以 B 在集合中是多余的。
     ///
     /// 最终结果保证：集合中任意两个类型都不存在子类型关系。
-    pub fn new<I, T>(types: I, closure_env: &ClosureEnv) -> Result<StabilizedType, TypeError>
+    pub fn new<I, T>(types: I, closure_env: &ClosureEnv) -> Result<Type, TypeError>
     where
         I: IntoIterator<Item = T>,
-        T: AsTypeRef,
+        T: AsType,
     {
         fn collect(
             collected: &mut smallvec::SmallVec<[Type; 8]>,
@@ -281,14 +284,14 @@ impl Specialize {
             }
             .dispatch(),
         };
-        Ok(StabilizedType::new(new_type))
+        Ok(new_type)
     }
 
     /// 直接构造，不进行任何简化
-    pub fn new_raw<I, T>(types: I) -> StabilizedType
+    pub fn new_raw<I, T>(types: I) -> Type
     where
         I: IntoIterator<Item = T>,
-        T: AsTypeRef,
+        T: AsType,
     {
         let collected: smallvec::SmallVec<[Type; 8]> =
             types.into_iter().map(|t| t.into_type()).collect();
@@ -296,7 +299,6 @@ impl Specialize {
             types: Arc::from(collected.into_boxed_slice()),
         }
         .dispatch()
-        .stabilize()
     }
 
     pub fn types(&self) -> &[Type] {

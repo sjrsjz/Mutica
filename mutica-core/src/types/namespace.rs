@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use arc_gc::traceable::GCTraceable;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsTypeRef, CoinductiveType, CoinductiveTypeWithAny, Representable, TypeCheckContext, ReductionContext, InvokeContext, Rootable,
-        StabilizedType, Type, TypeError,
-        fixpoint::FixPointInner,
+        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -27,7 +26,7 @@ impl GCTraceable<FixPointInner> for Namespace {
 }
 
 impl Rootable for Namespace {
-    fn upgrade(&self, collected: &mut smallvec::SmallVec<[arc_gc::arc::GCArc<FixPointInner>; 8]>) {
+    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<FixPointInner>>) {
         self.expr.upgrade(collected);
     }
 }
@@ -38,14 +37,19 @@ impl Representable for Namespace {
     }
 }
 
-impl CoinductiveType<Type, StabilizedType> for Namespace {
+impl CoinductiveType<Type> for Namespace {
     fn dispatch(self) -> Type {
         Type::Namespace(self)
     }
 
     fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.pattern_mode);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                pattern_env,
+                ctx.pattern_mode,
+            );
             match other {
                 Type::Namespace(v) => {
                     if self.tag == v.tag {
@@ -65,23 +69,22 @@ impl CoinductiveType<Type, StabilizedType> for Namespace {
         })
     }
 
-    fn reduce(&self, ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
+    fn reduce(&self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
         Ok(Self::new(&self.tag, self.expr.reduce(ctx)?))
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         self.expr.invoke(ctx)
     }
 }
 
 impl Namespace {
-    pub fn new<T: Into<String>, I: AsTypeRef>(tag: T, expr: I) -> StabilizedType {
+    pub fn new<T: Into<String>, I: AsType>(tag: T, expr: I) -> Type {
         Self {
             tag: tag.into(),
             expr: Arc::new(expr.into_type()),
         }
         .dispatch()
-        .stabilize()
     }
 
     pub fn expr(&self) -> &Type {

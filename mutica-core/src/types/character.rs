@@ -3,7 +3,7 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, StabilizedType, Type, TypeCheckContext, TypeError,
+        Rootable, Type, TypeCheckContext, TypeError,
         character_value::CharacterValue, fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -22,7 +22,7 @@ impl GCTraceable<FixPointInner> for Character {
 
 impl Rootable for Character {}
 
-impl CoinductiveType<Type, StabilizedType> for Character {
+impl CoinductiveType<Type> for Character {
     fn dispatch(self) -> Type {
         Type::Char(self)
     }
@@ -48,26 +48,26 @@ impl CoinductiveType<Type, StabilizedType> for Character {
         })
     }
 
-    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<StabilizedType, TypeError> {
-        Ok(self.clone().dispatch().stabilize())
+    fn reduce(&self, _ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<StabilizedType, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
         ctx.arg
             .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 Type::IntegerValue(iv) => {
                     let v = iv.value();
                     if v > std::char::MAX as i64 || v < 0 {
                         return Err(TypeError::TypeMismatch(
-                            ctx.arg.clone().stabilize().into(),
+                            ctx.arg.clone().into(),
                             "Expected a valid Unicode code point".to_string(),
                         ));
                     }
                     Ok(CharacterValue::new(std::char::from_u32(v as u32).unwrap()))
                 }
-                Type::CharValue(_) => Ok(arg.clone().stabilize()),
+                Type::CharValue(_) => Ok(arg.clone()),
                 _ => Err(TypeError::TypeMismatch(
-                    ctx.arg.clone().stabilize().into(),
+                    ctx.arg.clone().into(),
                     "IntegerValue or CharValue".to_string(),
                 )),
             })?
@@ -81,7 +81,7 @@ impl Representable for Character {
 }
 
 impl Character {
-    pub fn new() -> StabilizedType {
-        Self {}.dispatch().stabilize()
+    pub fn new() -> Type {
+        Self {}.dispatch()
     }
 }
