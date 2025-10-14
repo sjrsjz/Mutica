@@ -4,8 +4,10 @@ use crate::parser::lexer::{LexerToken, LexicalError};
 use crate::parser::SourceFile;
 use crate::parser::SourceLocation;
 use crate::parser::WithLocation;
+use crate::parser::calculate_full_error_span;
+use crate::parser::colorize::TokenColor;
 use std::sync::Arc;
-grammar(source: &Arc<SourceFile>);
+grammar(source: &Arc<SourceFile>, colors: &mut Vec<TokenColor>);
 
 
 
@@ -81,7 +83,8 @@ extern {
     }
 }
 
-Num: i64 = <s:r"[0-9]+"> => {
+Num: i64 = <l:@L> <s:r"[0-9]+"> <r:@R> => {
+    TokenColor::fill_colors(colors, l..r, TokenColor::Number);
     if s.starts_with("0x") || s.starts_with("0X") {
         i64::from_str_radix(&s[2..], 16).unwrap()
     } else if s.starts_with("0o") || s.starts_with("0O") {
@@ -92,10 +95,14 @@ Num: i64 = <s:r"[0-9]+"> => {
         s.parse().unwrap()
     }
 };
-Ident: String = <s:r"[a-zA-Z_][a-zA-Z0-9_]*"> => s.to_string();
+Ident: String = <l:@L> <s:r"[a-zA-Z_][a-zA-Z0-9_]*"> <r:@R> => {
+    TokenColor::fill_colors(colors, l..r, TokenColor::Identifier);
+    s.to_string()
+};
 
 CharLiteral: char = {
-    <c:r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'"> => {
+    <l:@L> <c:r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'"> <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::String);
         let content = &c[1..c.len()-1];
         match content {
             "\\n" => '\n', "\\r" => '\r', "\\t" => '\t',
@@ -107,7 +114,8 @@ CharLiteral: char = {
 };
 
 StringLiteral: String = {
-    <s:r#""([^"\\]|\\.)*""#> => {
+    <l:@L> <s:r#""([^"\\]|\\.)*""#> <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::String);
         let content = &s[1..s.len()-1];
         content.replace("\\n", "\n")
                .replace("\\r", "\r")
@@ -119,21 +127,66 @@ StringLiteral: String = {
 
 
 AtomType: WithLocation<TypeAst> = {
-    <l:@L> "int" <r:@R> => WithLocation::new(TypeAst::Int, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "char" <r:@R> => WithLocation::new(TypeAst::Char, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "true" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "false" <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "any" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "_" <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "none" <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "__add" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "__sub" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "__mul" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "__div" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "__mod" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "__is" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "__opcode" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "__continuation" <r:@R> => WithLocation::new(TypeAst::Variable(None), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "int" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+        WithLocation::new(TypeAst::Int, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "char" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+        WithLocation::new(TypeAst::Char, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "true" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "false" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+        WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "any" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "_" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "none" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+        WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__add" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__sub" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__mul" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__div" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__mod" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__is" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__opcode" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__continuation" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::Variable(None), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
     <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(n), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(Some(id)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -141,45 +194,74 @@ AtomType: WithLocation<TypeAst> = {
         let chars: Vec<WithLocation<TypeAst>> = s.chars().map(|ch| WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref())).collect();
         WithLocation::new(TypeAst::List(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> <io: Ident> "!" <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "import" <s: StringLiteral> <r:@R> => WithLocation::new(TypeAst::Import(s), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <io: Ident> "!" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Function);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "import" <s: StringLiteral> <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+6, TokenColor::Keyword);
+        WithLocation::new(TypeAst::Import(s), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
 }
 
 Term: WithLocation<TypeAst> = {
-    "(" <t: Type> ")" => t,
-    "[" <t: Type> "]" => t,
-    "{" <t: Type> "}" => t,
+    <lparen_l:@L> "(" <lparen_r:@R> <t: Type> <rparen_l:@L> ")" <rparen_r:@R> => {
+        TokenColor::fill_colors(colors, lparen_l..lparen_r, TokenColor::Punctuation);
+        TokenColor::fill_colors(colors, rparen_l..rparen_r, TokenColor::Punctuation);
+        t
+    },
+    <lbracket_l:@L> "[" <lbracket_r:@R> <t: Type> <rbracket_l:@L> "]" <rbracket_r:@R> => {
+        TokenColor::fill_colors(colors, lbracket_l..lbracket_r, TokenColor::Punctuation);
+        TokenColor::fill_colors(colors, rbracket_l..rbracket_r, TokenColor::Punctuation);
+        t
+    },
+    <lbrace_l:@L> "{" <lbrace_r:@R> <t: Type> <rbrace_l:@L> "}" <rbrace_r:@R> => {
+        TokenColor::fill_colors(colors, lbrace_l..lbrace_r, TokenColor::Punctuation);
+        TokenColor::fill_colors(colors, rbrace_l..rbrace_r, TokenColor::Punctuation);
+        t
+    },
     <np: Namespace> => np,
     <a: AtomType> => a,
 }
 
 Namespace: WithLocation<TypeAst> = {
-    <l:@L> <tag: Ident> "::" <t: Term> <r:@R> => WithLocation::new(TypeAst::Namespace {
-        tag: tag,
-        expr: Box::new(t),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <n_l:@L> <tag: Ident> <n_r:@R> <colon_l:@L> "::" <colon_r:@R> <t: Term> <r:@R> => {
+        TokenColor::fill_colors(colors, n_l..n_r, TokenColor::Namespace);
+        TokenColor::fill_colors(colors, colon_l..colon_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Namespace {
+            tag: tag,
+            expr: Box::new(t),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
 }
 
 Apply: WithLocation<TypeAst> = {
-    <l:@L> <obj: Apply> "." <k: Ident> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::Closure {
-            pattern: Box::new(WithLocation::new(TypeAst::Namespace {
-                tag: k,
-                expr: Box::new(WithLocation::new(TypeAst::Pattern {
-                    name: "projection#obj".to_string(),
-                    expr: Box::new(WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+    <l:@L> <obj: Apply> <dot_l:@L> "." <dot_r:@R> <a_l:@L> <k: Ident> <a_r:@R> <r:@R> => {
+        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, a_l..a_r, TokenColor::Attribute);
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::Closure {
+                pattern: Box::new(WithLocation::new(TypeAst::Namespace {
+                    tag: k,
+                    expr: Box::new(WithLocation::new(TypeAst::Pattern {
+                        name: "projection#obj".to_string(),
+                        expr: Box::new(WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                 }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                body: Box::new(WithLocation::new(TypeAst::Variable(Some("projection#obj".to_string())), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                fail_branch: None,
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            body: Box::new(WithLocation::new(TypeAst::Variable(Some("projection#obj".to_string())), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            fail_branch: None,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(obj),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <f: Apply> <x: Term> "|>" <k: Term> <r:@R> => WithLocation::new(TypeAst::Invoke {
-        func: Box::new(f),
-        arg: Box::new(x),
-        continuation: Box::new(k),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            arg: Box::new(obj),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <f: Apply> <x: Term> <pipe_l:@L> "|>" <pipe_r:@R> <k: Term> <r:@R> => {
+        TokenColor::fill_colors(colors, pipe_l..pipe_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Invoke {
+            func: Box::new(f),
+            arg: Box::new(x),
+            continuation: Box::new(k),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
     <l:@L> <f: Apply> <x: Term> <r:@R> => WithLocation::new(TypeAst::Apply {
         func: Box::new(f),
         arg: Box::new(x),
@@ -188,14 +270,20 @@ Apply: WithLocation<TypeAst> = {
 }
 
 List: WithLocation<TypeAst> = {
-    <l:@L> "@" <element: Primary> <r:@R> => match element.value() {
-        TypeAst::Tuple(elements) => WithLocation::new(TypeAst::List(elements.clone()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-        single => WithLocation::new(TypeAst::List(vec![WithLocation::new(single.clone(), element.location())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <at_l:@L> "@" <at_r:@R> <element: Primary> <r:@R> => {
+        TokenColor::fill_colors(colors, at_l..at_r, TokenColor::Operator);
+        match element.value() {
+            TypeAst::Tuple(elements) => WithLocation::new(TypeAst::List(elements.clone()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            single => WithLocation::new(TypeAst::List(vec![WithLocation::new(single.clone(), element.location())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        }
     },
 }
 
 Match: WithLocation<TypeAst> = {
-    <l:@L> "match" <value: Primary?> <branches: MatchBranch+> "|" "panic" <r:@R> => {
+    <l:@L> "match" <value: Primary?> <branches: MatchBranch+> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+5, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, v_l..v_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, r-5..r, TokenColor::Keyword);
         WithLocation::new(TypeAst::Match {
             value: value.map(Box::new),
             match_branch: branches,
@@ -204,18 +292,22 @@ Match: WithLocation<TypeAst> = {
 }
 
 MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    "|" <pattern: Primary> "=>" <t: Primary> => (pattern, t),
+    <pipe_l:@L> "|" <pipe_r:@R> <pattern: Primary> <arrow_l:@L> "=>" <arrow_r:@R> <t: Primary> => {
+        TokenColor::fill_colors(colors, pipe_l..pipe_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, arrow_l..arrow_r, TokenColor::Operator);
+        (pattern, t)
+    },
 }
 
-// ElseBranch: WithLocation<TypeAst> = {
-//     "|" "!" "=>" <t: Primary> => t,
-// }
-
 RecursiveGen: WithLocation<TypeAst> = {
-    <l:@L> "rec" <id: Ident> ":" <t: Primary> <r:@R> => WithLocation::new(TypeAst::FixPoint {
-        param_name: id,
-        expr: Box::new(t),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> "rec" <id: Ident> <c_l: @L> ":" <c_r:@R> <t: Primary> <r:@R> => {
+        TokenColor::fill_colors(colors, c_l..c_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, l..l+3, TokenColor::Keyword);
+        WithLocation::new(TypeAst::FixPoint {
+            param_name: id,
+            expr: Box::new(t),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
 }
 
 FailBranch: Box<WithLocation<TypeAst>> = {
@@ -223,14 +315,16 @@ FailBranch: Box<WithLocation<TypeAst>> = {
 }
 
 Closure: WithLocation<TypeAst> = {
-    <l:@L> <pattern: Factor> "->" <body: Primary> <fail_branch: FailBranch> <r:@R> => {
+    <l:@L> <pattern: Factor> <arrow_l:@L> "->" <arrow_r:@R> <body: Primary> <fail_branch: FailBranch> <r:@R> => {
+        TokenColor::fill_colors(colors, arrow_l..arrow_r, TokenColor::Operator);
         WithLocation::new(TypeAst::Closure {
             pattern: Box::new(pattern),
             body: Box::new(body),
             fail_branch: Some(fail_branch),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> <pattern: Factor> "|->" <body: Primary> <r:@R> => {
+    <l:@L> <pattern: Factor> <arrow_l:@L> "|->" <arrow_r:@R> <body: Primary> <r:@R> => {
+        TokenColor::fill_colors(colors, arrow_l..arrow_r, TokenColor::Operator);
         WithLocation::new(TypeAst::Closure {
             pattern: Box::new(pattern),
             body: Box::new(body),
@@ -258,11 +352,17 @@ Comma<T>: Vec<T> = {
     <e:T> CommaSep => vec![e],
 };
 
-CommaSep = ","+;
+CommaSep: () = <l:@L> ","+ <r:@R> => {
+    TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
+    ()
+};
 
 
 Literal: WithLocation<TypeAst> = {
-    <l:@L> "#" <t: Primary> <r:@R> => WithLocation::new(TypeAst::Literal(Box::new(t)), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <hash_l:@L> "#" <hash_r:@R> <t: Primary> <r:@R> => {
+        TokenColor::fill_colors(colors, hash_l..hash_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Literal(Box::new(t)), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
 }
 
 Primary: WithLocation<TypeAst> = {
@@ -274,19 +374,31 @@ Primary: WithLocation<TypeAst> = {
     <c: Calculate> => c,
     ! => {
         let err: ErrorRecovery<usize, LexerToken, LexicalError> = <>;
+        let (l, r) = calculate_full_error_span(&err);
+        TokenColor::fill_colors(colors, l..r, TokenColor::Error);
         WithLocation::new(TypeAst::ParseError(err), None::<&SourceLocation>)
     }
 };
 
 Factor: WithLocation<TypeAst> = {
-    <l:@L> "!" <a: Factor> <r:@R> => WithLocation::new(TypeAst::Not {
-        value: Box::new(a),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> "-" <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(-n), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <id: Ident> ":" <a: Factor> <r:@R> => WithLocation::new(TypeAst::Pattern {
-        name: id,
-        expr: Box::new(a),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <op_l:@L> "!" <op_r:@R> <a: Factor> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Not {
+            value: Box::new(a),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <op_l:@L> "-" <op_r:@R> <n: Num> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::IntLiteral(-n), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <def_l:@L> <id: Ident> <def_r:@R> <colon_l:@L> ":" <colon_r:@R> <a: Factor> <r:@R> => {
+        TokenColor::fill_colors(colors, def_l..def_r, TokenColor::Declaration);
+        TokenColor::fill_colors(colors, colon_l..colon_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Pattern {
+            name: id,
+            expr: Box::new(a),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
     <a: Apply> => a,
 }
 
@@ -309,7 +421,10 @@ Bars<T>: Vec<T> = {
     },
 };
 
-BarsSep = "|" +;
+BarsSep: () = <l:@L> "|"+ <r:@R> => {
+    TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+    ()
+};
 
 Specialize: WithLocation<TypeAst> = {
     <l:@L> <items: Ands<Primary>> <r:@R> => WithLocation::new(TypeAst::Specialize(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -328,101 +443,160 @@ Ands<T>: Vec<T> = {
     <e:T> AndsSep => vec![e],
 };
 
-AndsSep = "&"+;
+AndsSep: () = <l:@L> "&"+ <r:@R> => {
+    TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+    ()
+};
 
 
 Calculate: WithLocation<TypeAst> = { Compare };
 
 Compare: WithLocation<TypeAst> = {
-    <l:@L> <left: Compare> "==" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Eq {
-        left: Box::new(left),
-        right: Box::new(right),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <left: Compare> "!=" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Neq {
-        left: Box::new(left),
-        right: Box::new(right),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <left: Compare> "<" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <left: Compare> "<=" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Generalize(vec![
+    <l:@L> <left: Compare> <op_l:@L> "==" <op_r:@R> <right: AddSub> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Eq {
+            left: Box::new(left),
+            right: Box::new(right),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <left: Compare> <op_l:@L> "!=" <op_r:@R> <right: AddSub> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Neq {
+            left: Box::new(left),
+            right: Box::new(right),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <left: Compare> <op_l:@L> "<" <op_r:@R> <right: AddSub> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left.clone(), right.clone()]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-        WithLocation::new(TypeAst::Eq {
-            left: Box::new(left),
-            right: Box::new(right),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <left: Compare> ">" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <left: Compare> ">=" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Generalize(vec![
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <left: Compare> <op_l:@L> "<=" <op_r:@R> <right: AddSub> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Generalize(vec![
+            WithLocation::new(TypeAst::Apply {
+                func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left.clone(), right.clone()]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            WithLocation::new(TypeAst::Eq {
+                left: Box::new(left),
+                right: Box::new(right),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <left: Compare> <op_l:@L> ">" <op_r:@R> <right: AddSub> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left.clone(), right.clone()]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-        WithLocation::new(TypeAst::Eq {
-            left: Box::new(left),
-            right: Box::new(right),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <left: Compare> "<:" <right: AddSub> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <left: Compare> <op_l:@L> ">=" <op_r:@R> <right: AddSub> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Generalize(vec![
+            WithLocation::new(TypeAst::Apply {
+                func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left.clone(), right.clone()]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            WithLocation::new(TypeAst::Eq {
+                left: Box::new(left),
+                right: Box::new(right),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <left: Compare> <op_l:@L> "<:" <op_r:@R> <right: AddSub> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
     <t: AddSub> => t,
 }
 
 AddSub: WithLocation<TypeAst> = {
-    <l:@L> <left: AddSub> "+" <right: Mod> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <left: AddSub> "-" <right: Mod> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: AddSub> <op_l:@L> "+" <op_r:@R> <right: Mod> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <left: AddSub> <op_l:@L> "-" <op_r:@R> <right: Mod> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
     <t: Mod> => t,
 }
 
 Mod: WithLocation<TypeAst> = {
-    <l:@L> <left: Mod> "%" <right: MulDiv> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: Mod> <op_l:@L> "%" <op_r:@R> <right: MulDiv> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
     <t: MulDiv> => t,
 }
 
 MulDiv: WithLocation<TypeAst> = {
-    <l:@L> <left: MulDiv> "*" <right: Factor> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <left: MulDiv> "/" <right: Factor> <r:@R> => WithLocation::new(TypeAst::Apply {
-        func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <left: MulDiv> <op_l:@L> "*" <op_r:@R> <right: Factor> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <left: MulDiv> <op_l:@L> "/" <op_r:@R> <right: Factor> <r:@R> => {
+        TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
     <t: Factor> => t,
 }
 
 Let: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    "let" <id: Primary> "=" <value: Type> ";" => (id, value),
+    <l:@L> "let" <id: Primary> <a_l:@L> "=" <a_r:@R> <value: Type> ";" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+3, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, a_l..a_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        (id, value)
+    },
 }
 
 Perform: (WithLocation<TypeAst>, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    "perform" <id: Primary> "=" <f: Type> "with" <value: Type> ";" => (id, f, value),
+    <l:@L> "perform" <id: Primary> <a_l:@L> "=" <a_r:@R>  <f: Type> <w_l:@L> "with" <w_r:@R> <value: Type> ";" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, a_l..a_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, w_l..w_r, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        (id, f, value)
+    },
 }
 
 DiscardPerform: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    "perform" <f: Type> "with"  <e: Type> ";" => (f, e),
+    <l:@L> "perform" <f: Type> <w_l:@L> "with" <w_r:@R> <e: Type> ";" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, w_l..w_r, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        (f, e)
+    },
 }
 
 Discard: WithLocation<TypeAst> = {
-    "discard" <e: Type> ";" => e,
+    <l:@L> "discard" <e: Type> ";" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        e
+    },
 }
 
 Expression: WithLocation<TypeAst> = {

@@ -875,6 +875,7 @@ impl TypeAst {
                     Ok(content) => multifile_builder
                         .build(path, content)
                         .0
+                        .map(|r| r.0)
                         .unwrap_or(WithLocation::new(BasicTypeAst::Bottom, loc)),
                     Err(e) => {
                         multifile_builder

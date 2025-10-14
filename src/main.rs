@@ -113,7 +113,8 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
 
     // println!("Basic AST: {:#?}", basic);
     let linearized = basic
-        .linearize(&mut LinearizeContext::new(), basic.location())
+        .0
+        .linearize(&mut LinearizeContext::new(), basic.0.location())
         .finalize();
     // println!("Linearized AST: {:#?}", linearized);
     let mut flow_errors = Vec::new();
