@@ -3,4 +3,4 @@ let fib: any = rec f: match
     | 1 => 1
     | n: any => f(n - 1) + f(n - 2)
     | panic;
-fib(22)
+fib(28)

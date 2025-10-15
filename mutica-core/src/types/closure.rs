@@ -75,6 +75,15 @@ impl ClosureEnv {
             .map(|v| v)
             .ok_or_else(|| TypeError::UnboundVariable(-1 - index as isize))
     }
+
+    pub fn all_nf(&self) -> bool {
+        for ty in self.0.iter() {
+            if !ty.is_normal_form() {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 pub struct ParamEnv(Vec<Type>);
@@ -406,8 +415,10 @@ impl Closure {
         let pattern = pattern.into_type();
         let expr = expr.into_type();
         let fail_branch = fail_branch.map(|fb| fb.into_type());
-        let all_nf = pattern.is_normal_form()
-            && expr.is_normal_form()
+
+        // 由于闭包的reduce不会去尝试reduce expr,因此is_nf的计算无需考虑expr（它是惰性求值的）
+        let all_nf = env.all_nf()
+            && pattern.is_normal_form()
             && fail_branch.as_ref().map_or(true, |fb| fb.is_normal_form());
 
         Self {

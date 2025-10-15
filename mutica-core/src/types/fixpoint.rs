@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
@@ -82,6 +82,8 @@ impl FixPointInner {
 #[derive(Clone)]
 pub struct FixPoint {
     reference: GCArcWeak<FixPointInner>,
+    is_nf: Arc<RwLock<bool>>, // 是否为范式
+                              // 由于递归类型需要set方法初始化,因此is_nf是共享的，它不能被简单的复制
 }
 
 impl GCTraceable<FixPointInner> for FixPoint {
@@ -126,6 +128,7 @@ impl FixPoint {
         let pointer = gc.create(FixPointInner::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
+            is_nf: Arc::new(RwLock::new(true)), // 协归纳假设初始为范式
         };
         roots.push(pointer);
         Type::FixPoint(fix_point)
@@ -141,6 +144,10 @@ impl FixPoint {
     /// - `UnresolvableType`: 不动点引用已失效
     pub fn set<V: AsType>(&self, t: V) -> Result<(), TypeError> {
         if let Some(inner) = self.reference.upgrade() {
+            *self
+                .is_nf
+                .write()
+                .map_err(|_| TypeError::UnresolvableType)? = t.as_type_ref().is_normal_form(); // lock poisoned
             inner
                 .as_ref()
                 .inner
@@ -258,7 +265,10 @@ impl CoinductiveType<Type> for FixPoint {
     }
 
     fn is_normal_form(&self) -> bool {
-        false
+        match self.is_nf.read() {
+            Ok(locked) => *locked,
+            Err(_) => false, // lock poisoned
+        }
     }
 }
 

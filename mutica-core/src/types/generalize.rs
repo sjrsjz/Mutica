@@ -279,7 +279,7 @@ impl Generalize {
             1 => result.into_iter().next().unwrap(),
             _ => Generalize {
                 types: Arc::from(result),
-                is_nf: true,
+                is_nf: all_nf,
             }
             .dispatch(),
         };
