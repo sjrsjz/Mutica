@@ -84,7 +84,9 @@ impl<'ast> SourceMapping<'ast> {
                 arg,
                 continuation,
             } => {
-                Self::build_mapping(continuation, mapping, source_file);
+                if let Some(continuation) = continuation {
+                    Self::build_mapping(continuation, mapping, source_file);
+                }
                 Self::build_mapping(func, mapping, source_file);
                 Self::build_mapping(arg, mapping, source_file);
             }

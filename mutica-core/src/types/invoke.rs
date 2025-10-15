@@ -20,7 +20,7 @@ pub struct Invoke {
     // 0: function
     // 1: argument
     // 2: continuation
-    inner: Arc<(Type, Type, Type)>,
+    inner: Arc<(Type, Type, Option<Type>)>,
     is_nf: bool,
 }
 
@@ -31,7 +31,9 @@ impl GCTraceable<FixPointInner> for Invoke {
     ) {
         self.inner.0.collect(queue);
         self.inner.1.collect(queue);
-        self.inner.2.collect(queue);
+        if let Some(cont) = &self.inner.2 {
+            cont.collect(queue);
+        }
     }
 }
 
@@ -39,7 +41,9 @@ impl Rootable for Invoke {
     fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         self.inner.0.upgrade(collected);
         self.inner.1.upgrade(collected);
-        self.inner.2.upgrade(collected);
+        if let Some(cont) = &self.inner.2 {
+            cont.upgrade(collected);
+        }
     }
 }
 
@@ -66,7 +70,11 @@ impl CoinductiveType<Type> for Invoke {
                     if arg_eq.is_none() {
                         return Ok(None);
                     }
-                    let cont_eq = self.inner.2.is(&v.inner.2, &mut inner_ctx)?;
+                    let cont_eq = match (&self.inner.2, &v.inner.2) {
+                        (Some(cont1), Some(cont2)) => cont1.is(cont2, &mut inner_ctx)?,
+                        (None, None) => Some(()),
+                        _ => None,
+                    };
                     if cont_eq.is_none() {
                         return Ok(None);
                     }
@@ -87,7 +95,7 @@ impl CoinductiveType<Type> for Invoke {
         Ok(Self::new(
             self.inner.0.clone().reduce(ctx)?,
             self.inner.1.clone().reduce(ctx)?,
-            self.inner.2.clone().reduce(ctx)?,
+            self.inner.2.clone().map(|t| t.reduce(ctx)).transpose()?,
         ))
     }
 
@@ -102,21 +110,35 @@ impl CoinductiveType<Type> for Invoke {
 
 impl Representable for Invoke {
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
-        format!(
-            "CPS({}, {}, {})",
-            self.inner.0.represent(path),
-            self.inner.1.represent(path),
-            self.inner.2.represent(path)
-        )
+        if let Some(cont) = &self.inner.2 {
+            format!(
+                "CPS({}, {}, {})",
+                self.inner.0.represent(path),
+                self.inner.1.represent(path),
+                cont.represent(path)
+            )
+        } else {
+            format!(
+                "TailCall({}, {})",
+                self.inner.0.represent(path),
+                self.inner.1.represent(path)
+            )
+        }
     }
 }
 
 impl Invoke {
-    pub fn new<U: AsType, V: AsType, W: AsType>(func: U, arg: V, continuation: W) -> Type {
+    pub fn new<U: AsType, V: AsType, W: AsType>(func: U, arg: V, continuation: Option<W>) -> Type {
         let all_nf = func.as_type_ref().is_normal_form()
             && arg.as_type_ref().is_normal_form()
-            && continuation.as_type_ref().is_normal_form();
-        let inner = Arc::new((func.into_type(), arg.into_type(), continuation.into_type()));
+            && continuation
+                .as_ref()
+                .map_or(true, |c| c.as_type_ref().is_normal_form());
+        let inner = Arc::new((
+            func.into_type(),
+            arg.into_type(),
+            continuation.map(|c| c.into_type()),
+        ));
         Self {
             inner,
             is_nf: all_nf,
@@ -132,8 +154,8 @@ impl Invoke {
         &self.inner.1
     }
 
-    pub fn continuation(&self) -> &Type {
-        &self.inner.2
+    pub fn continuation(&self) -> Option<&Type> {
+        self.inner.2.as_ref()
     }
 }
 impl Invoke {
@@ -201,6 +223,19 @@ impl Invoke {
         v.map(&mut FastCycleDetector::new(), |_, ty| match ty {
             // Case 1: The result `v` is another `Invoke` instruction (the nested case).
             Type::Invoke(invoke) => {
+                if self.inner.2.is_none() {
+                    // Tail call optimization: If there is no outer continuation,
+                    return Ok(invoke.clone().dispatch());
+                }
+                if invoke.inner.2.is_none() {
+                    // Tail call optimization: If there is no inner continuation,
+                    // we can directly use the outer continuation.
+                    return Ok(Invoke::new(
+                        &invoke.inner.0,
+                        &invoke.inner.1,
+                        self.inner.2.as_ref(),
+                    ));
+                }
                 // We are in the k(Invoke<A, B, C>) case.
                 // We construct the new continuation: λx. k(C(x))
                 // which translates to: λx. self.continuation(invoke.continuation(x))
@@ -211,25 +246,30 @@ impl Invoke {
                     &invoke.inner.1,
                     // The new composed continuation: λx. C(x, k)
                     // Note: In our model, this becomes λx. Invoke(C, x, k)
-                    Closure::new(
+                    Some(Closure::new(
                         1,                                 // Arity of the new closure (takes one argument `x`)
                         Pattern::new(0, TypeBound::top()), // The parameter `x`
                         // The body of the new closure: Invoke(C, x, k)
                         Invoke::new(
                             // C: The continuation of the inner instruction.
-                            &invoke.inner.2,
+                            invoke.inner.2.as_ref().unwrap(),
                             // x: The value that will be passed to C.
                             Variable::new_deburijn(0),
                             // k: The continuation of the outer instruction (`self`).
-                            &self.inner.2,
+                            self.inner.2.as_ref(),
                         ),
                         None::<Type>,
                         ClosureEnv::new(Vec::<Type>::new()), // The new closure captures no variables.
-                    ),
+                    )),
                 ))
             }
             // Case 2: The result `v` is a final value.
             _ => {
+                if self.inner.2.is_none() {
+                    // Tail call optimization: If there is no outer continuation,
+                    // simply return the value.
+                    return Ok(ty.clone());
+                }
                 // We are in the k(val) case.
                 // Simply invoke the outer continuation `k` with the value `v`.
                 let closure_env = ClosureEnv::new(Vec::<Type>::new());
@@ -244,7 +284,7 @@ impl Invoke {
                     gc,
                     roots,
                 );
-                self.continuation().invoke(&mut invoke_ctx)
+                self.inner.2.as_ref().unwrap().invoke(&mut invoke_ctx)
             }
         })?
     }

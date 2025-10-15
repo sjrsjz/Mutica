@@ -241,17 +241,27 @@ impl<'ast> LinearizeResult<'ast> {
             ty = WithLocation::from(LinearTypeAst::Invoke {
                 func: Box::new(f),
                 arg: Box::new(a),
-                continuation: WithLocation::from(LinearTypeAst::Closure {
-                    pattern: WithLocation::from(LinearTypeAst::Pattern {
-                        name: tmpvar,
-                        expr: Box::new(WithLocation::from(LinearTypeAst::Top)),
-                    })
-                    .into(),
-                    auto_captures: HashMap::new(),
-                    body: Box::new(ty),
-                    fail_branch: None,
-                })
-                .into(),
+                continuation: {
+                    if let LinearTypeAst::Variable(v) = ty.value()
+                        && v.eq(&tmpvar)
+                    {
+                        None // TCO（尾调用优化）
+                    } else {
+                        Some(
+                            WithLocation::from(LinearTypeAst::Closure {
+                                pattern: WithLocation::from(LinearTypeAst::Pattern {
+                                    name: tmpvar,
+                                    expr: Box::new(WithLocation::from(LinearTypeAst::Top)),
+                                })
+                                .into(),
+                                auto_captures: HashMap::new(),
+                                body: Box::new(ty),
+                                fail_branch: None,
+                            })
+                            .into(),
+                        )
+                    }
+                },
             })
         }
         ty
@@ -362,7 +372,7 @@ impl BasicTypeAst {
                 let ty = LinearTypeAst::Invoke {
                     func: func.tail_type().clone().into(),
                     arg: arg.tail_type().clone().into(),
-                    continuation: continuation.tail_type().clone().into(),
+                    continuation: Some(continuation.tail_type().clone().into()),
                 };
                 let mut bindings = func.bindings;
                 bindings.extend(arg.bindings);
@@ -497,7 +507,7 @@ pub enum LinearTypeAst<'ast> {
     Invoke {
         func: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         arg: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
-        continuation: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        continuation: Option<Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
@@ -1337,11 +1347,14 @@ impl<'ast> LinearTypeAst<'ast> {
             } => {
                 let func_res = func.flow(ctx, pattern_mode, func.location(), errors);
                 let arg_res = arg.flow(ctx, pattern_mode, arg.location(), errors);
-                let cont_res =
-                    continuation.flow(ctx, pattern_mode, continuation.location(), errors);
+                let cont_res = continuation.as_ref().map(|continuation| {
+                    continuation.flow(ctx, pattern_mode, continuation.location(), errors)
+                });
                 let mut all_captures = func_res.captures;
                 all_captures.extend(arg_res.captures);
-                all_captures.extend(cont_res.captures.clone());
+                if let Some(cont_res) = &cont_res {
+                    all_captures.extend(cont_res.captures.clone());
+                }
 
                 let mut all_patterns = func_res.patterns;
                 all_patterns.extend(
@@ -1350,18 +1363,21 @@ impl<'ast> LinearTypeAst<'ast> {
                         .into_iter()
                         .map(|(name, loc)| WithLocation::new(name, loc.location())),
                 );
-                all_patterns.extend(
-                    cont_res
-                        .patterns
-                        .into_iter()
-                        .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                );
+                if let Some(cont_res) = &cont_res {
+                    all_patterns.extend(
+                        cont_res
+                            .patterns
+                            .clone()
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    );
+                }
                 FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Invoke {
                             func: Box::new(func_res.ty),
                             arg: Box::new(arg_res.ty),
-                            continuation: Box::new(cont_res.ty),
+                            continuation: cont_res.map(|r| Box::new(r.ty)),
                         },
                         loc,
                     ),
@@ -1738,18 +1754,24 @@ impl<'ast> LinearTypeAst<'ast> {
                     roots,
                     arg.location(),
                 )?;
-                let continuation_type = continuation.to_type(
-                    ctx,
-                    pattern_counter,
-                    false,
-                    gc,
-                    roots,
-                    continuation.location(),
-                )?;
-                let (types, patterns) =
-                    BuildResult::fold(vec![func_type, arg_type, continuation_type]);
+                let continuation_type = match continuation {
+                    Some(continuation) => Some(continuation.to_type(
+                        ctx,
+                        pattern_counter,
+                        false,
+                        gc,
+                        roots,
+                        continuation.location(),
+                    )?),
+                    None => None,
+                };
+                let mut fold_vec = vec![func_type, arg_type];
+                if let Some(ct) = continuation_type {
+                    fold_vec.push(ct);
+                }
+                let (types, patterns) = BuildResult::fold(fold_vec);
                 Ok(BuildResult::complex(
-                    Invoke::new(&types[0], &types[1], &types[2]),
+                    Invoke::new(&types[0], &types[1], types.get(2)),
                     patterns,
                 ))
             }

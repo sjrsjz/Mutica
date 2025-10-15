@@ -102,7 +102,7 @@ impl LinearScheduler {
                         invoke.arg(),
                         &empty_v,
                         &empty_p,
-                        Some(invoke.continuation()),
+                        invoke.continuation(),
                         &mut rec_assumptions2,
                         gc,
                         &mut self.roots,
