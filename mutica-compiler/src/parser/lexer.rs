@@ -72,6 +72,10 @@ pub enum LexerToken {
     DunderDiv,
     #[token("__mod")]
     DunderMod,
+    #[token("__greater")]
+    DunderGreater,
+    #[token("__less")]
+    DunderLess,
     #[token("__is")]
     DunderIs,
     #[token("__opcode")]

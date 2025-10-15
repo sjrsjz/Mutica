@@ -41,6 +41,8 @@ extern {
         "__mul" => LexerToken::DunderMul,
         "__div" => LexerToken::DunderDiv,
         "__mod" => LexerToken::DunderMod,
+        "__greater" => LexerToken::DunderGreater,
+        "__less" => LexerToken::DunderLess,
         "__is" => LexerToken::DunderIs,
         "__opcode" => LexerToken::DunderOpcode,
 
@@ -177,6 +179,14 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> "__is" <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
         WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__greater" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "__less" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> "__opcode" <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
