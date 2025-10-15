@@ -3,15 +3,14 @@ let List: any = list_pkg.List;
 
 // 归并两个已排序的列表
 let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) |-> {
-    let loop: any = rec go: match
+    loop go: t: any = (lst1, lst2);
+    match t
         | ((), l2: any) => l2
         | (l1: any, ()) => l1
-        | ((h1: any, t1: any), (h2: any, t2: any)) => match cmp(h1, h2)
-            | false => (h2, go((h1, t1), t2))
-            | true => (h1, go(t1, (h2, t2)))
-            | panic
-        | panic;
-    loop(lst1, lst2)
+        | ((h1: any, t1: any), (h2: any, t2: any)) => if cmp(h1, h2)
+            then (h1, go(t1, (h2, t2)))
+            else (h2, go((h1, t1), t2))
+        | panic
 };
 
 // 将列表分为两半
@@ -25,7 +24,8 @@ let split: any = lst: List(any) |-> {
 
 // 归并排序主函数
 let merge_sort: any = cmp: any |-> lst: List(any) |-> {
-    let loop: any = rec go: match
+    loop go: t: any = lst;
+    match t
         | () => ()
         | v: (any, ()) => v
         | l: any => {
@@ -34,8 +34,7 @@ let merge_sort: any = cmp: any |-> lst: List(any) |-> {
             let sorted_right: any = go(right);
             merge(cmp, sorted_left, sorted_right)
         }
-        | panic;
-    loop lst
+        | panic
 };
 
 merge_sort::merge_sort

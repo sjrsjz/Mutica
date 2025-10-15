@@ -18,10 +18,9 @@ let print: any = s: String |-> {
 
 let slice: any = (s: String, start: int, end: int) |-> {
     let len: int = list_pkg.len(s);
-    match (start >= 0 & start <= len & end >= start & end <= len)
-        | false => maybe_pkg.Nothing
-        | true => maybe_pkg.Just(list_pkg.take(list_pkg.drop(s)(start))(end - start))
-        | panic
+    if (start >= 0 & start <= len & end >= start & end <= len)
+        then maybe_pkg.Just(list_pkg.take(list_pkg.drop(s)(start))(end - start))
+        else maybe_pkg.Nothing
 };
 
 String::String &

@@ -1,6 +1,7 @@
 let list_pkg: any = import "lib/list.mu";
 let string_pkg: any = import "lib/string.mu";
 let maybe_pkg: any = import "lib/maybe.mu";
+let sort_pkg: any = import "lib/sort.mu";
 
 // 创建测试列表: [1, 2, 3, 4, 5]
 let test_list: any = list_pkg.cons(1, list_pkg.cons(2, list_pkg.cons(3, list_pkg.cons(4, list_pkg.cons(5, list_pkg.Nil)))));
@@ -79,3 +80,5 @@ discard maybe_pkg.unwrap {
 };
 
 discard println![string_pkg.String == list_pkg.List(char)];
+
+discard println![sort_pkg.merge_sort(__less)(test_list)]; // 期望结果: [1, 2, 3, 4, 5]

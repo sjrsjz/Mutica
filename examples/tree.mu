@@ -21,7 +21,7 @@ let tree_height: any =
         | Node::(left: any, right: any, any) => {
             let lh: int = height(left);
             let rh: int = height(right);
-            1 + (match lh > rh | false => rh | true => lh | panic)
+            1 + (if lh > rh then lh else rh)
         }
         | panic;
 

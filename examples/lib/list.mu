@@ -13,119 +13,115 @@ let is_nil: any = match
     | _ => false
     | panic;
 let iter: any = lst: List(any) |-> f: any |-> {
-    let loop: any = rec go: match
+    loop go: t: any = lst;
+    match t
         | () => ()
         | (h: any, t: any) => {
             discard f(h);
             go(t)
         }
-        | panic;
-    loop(lst)
+        | panic
 };
 let map: any = lst: List(any) |-> f: any |-> {
-    let loop: any = rec go: match
+    loop go: t: any = lst;
+    match t
         | () => ()
         | (h: any, t: any) => cons(f(h), go(t))
-        | panic;
-    loop(lst)
+        | panic
 };
 let len: any = lst: List(any) |-> {
-    let loop: any = rec go: match
+    loop go: t: any = lst;
+    match t
         | () => 0
         | (_, t: any) => 1 + go(t)
-        | panic;
-    loop(lst)
+        | panic
 };
 let filter: any = lst: List(any) |-> pred: any |-> {
-    let loop: any = rec go: match
+    loop go: t: any = lst;
+    match t
         | () => ()
-        | (h: any, t: any) => match pred(h)
-            | false => go(t)
-            | true => cons(h, go(t))
-            | panic
-        | panic;
-    loop(lst)
+        | (h: any, t: any) => if pred(h)
+            then cons(h, go(t))
+            else go(t)
+        | panic
 };
 let fold: any = lst: List(any) |-> acc: any |-> f: any |-> {
-    let loop: any = rec go: match
+    loop go: t: any = (lst, acc);
+    match t
         | ((), a: any) => a
         | ((h: any, t: any), a: any) => go(t, f(a, h))
-        | panic;
-    loop(lst, acc)
+        | panic
 };
 let foldr: any = lst: List(any) |-> acc: any |-> f: any |-> {
-    let loop: any = rec go: match
+    loop go: t: any = lst;
+    match t
         | () => acc
         | (h: any, t: any) => f(h, go(t))
-        | panic;
-    loop(lst)
+        | panic
 };
 let append: any = lst1: List(any) |-> lst2: List(any) |-> {
-    let loop: any = rec go: match
+    loop go: t: any = lst1;
+    match t
         | () => lst2
         | (h: any, t: any) => cons(h, go(t))
-        | panic;
-    loop(lst1)
+        | panic
 };
 let reverse: any = lst: List(any) |-> {
-    let loop: any = rec go: match
+    loop go: t: any = (lst, ());
+    match t
         | ((), acc: any) => acc
         | ((h: any, t: any), acc: any) => go(t, cons(h, acc))
-        | panic;
-    loop(lst, ())
+        | panic
 };
 let nth: any = lst: List(any) |-> n: int |-> {
-    let loop: any = rec go: match
+    loop go: (t: any, i: int) = (lst, n);
+    match (t, i)
         | ((h: any, _), 0) => h
-        | ((_, t: any), i: any) => go(t, i - 1)
-        | panic;
-    loop(lst, n)
+        | ((_, t: any), i: int) => go(t, i - 1)
+        | panic
 };
 let take: any = lst: List(any) |-> n: int |-> {
-    let loop: any = rec go: match
+    loop go: (t: any, i: int) = (lst, n);
+    match (t, i)
         | ((), _) => ()
         | (_, 0) => ()
-        | ((h: any, t: any), i: any) => cons(h, go(t, i - 1))
-        | panic;
-    loop(lst, n)
+        | ((h: any, t: any), i: int) => cons(h, go(t, i - 1))
+        | panic
 };
 let drop: any = lst: List(any) |-> n: int |-> {
-    let loop: any = rec go: match
+    loop go: (t: any, i: int) = (lst, n);
+    match (t, i)
         | ((), _) => ()
         | (l: any, 0) => l
-        | ((_, t: any), i: any) => go(t, i - 1)
-        | panic;
-    loop(lst, n)
+        | ((_, t: any), i: int) => go(t, i - 1)
+        | panic
 };
 let find: any = lst: List(any) |-> pred: any |-> {
-    let loop: any = rec go: match
+    let go: any = rec go: match
         | () => maybe_pkg.Nothing
-        | (h: any, t: any) => match pred(h)
-            | false => go(t)
-            | true => maybe_pkg.Just(h)
-            | panic
+        | (h: any, t: any) => if pred(h)
+            then maybe_pkg.Just(h)
+            else go(t)
         | panic;
-    loop(lst)
+    go(lst)
 };
 let list_all: any = lst: List(any) |-> pred: any |-> {
-    let loop: any = rec go: match
+    let go: any = rec go: match
         | () => true
-        | (h: any, t: any) => match pred(h)
-            | false => false
-            | true => go(t)
-            | panic
+        | (h: any, t: any) => if pred(h)
+            then go(t)
+            else false
         | panic;
-    loop(lst)
+    go(lst)
 };
 let list_any: any = lst: List(any) |-> pred: any |-> {
-    let loop: any = rec go: match
+    let go: any = rec go: match
         | () => false
-        | (h: any, t: any) => match pred(h)
-            | false => go(t)
-            | true => true
-            | panic
+        | (h: any, t: any) => if pred(h)
+            then true
+            else go(t)
         | panic;
-    loop(lst)
+    go(lst)
 };
 
 List::List &
