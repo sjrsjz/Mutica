@@ -200,7 +200,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
 
         match linear_scheduler.step(&mut gc) {
             Ok(true) => (),
-            Ok(false) => break Ok(linear_scheduler.current_type().clone()),
+            Ok(false) => break Ok(linear_scheduler.current().clone()),
             Err(e) => break Err(e),
         }
 
@@ -210,8 +210,21 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
             step_counter = 0;
         }
     };
+
+    fn dump_stack(stack: &[Type]) -> String {
+        let mut result = String::new();
+        for (i, ty) in stack.iter().enumerate() {
+            result.push_str(&format!(
+                "## [{}]: {}\n",
+                i,
+                ty.display(&mut FastCycleDetector::new())
+            ));
+        }
+        result
+    }
+
     match result {
-        Ok(Some(v)) => v
+        Ok(v) => v
             .map(&mut FastCycleDetector::new(), |_, ty| match ty {
                 Type::Tuple(tuple) if tuple.is_empty() => (),
                 _ => {
@@ -220,8 +233,14 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                 }
             })
             .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e)),
-        Ok(None) => println!("Computation finished with no result."),
-        Err(e) => eprintln!("Runtime Error: {:?}", e),
+        Err(e) => {
+            eprintln!("--- Type Reduction Error ---");
+            eprintln!(
+                "Continuation stack:\n{}",
+                dump_stack(linear_scheduler.stack())
+            );
+            eprintln!("Runtime Error: {:?}", e);
+        }
     }
 }
 

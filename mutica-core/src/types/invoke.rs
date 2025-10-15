@@ -288,4 +288,54 @@ impl Invoke {
             }
         })?
     }
+
+    pub fn flat_compose_stack<'roots>(
+        &self,
+        v: Type,
+        gc: &mut GC<FixPointInner>,
+        roots: &'roots mut RootStack,
+        cont_stack: &mut Vec<Type>,
+    ) -> Result<Type, TypeError> {
+        if self.inner.2.is_none() {
+            // Tail call optimization: If there is no outer continuation,
+            return Ok(v);
+        }
+
+        v.map(&mut FastCycleDetector::new(), |_, ty| match ty {
+            // Case 1: The result `v` is another `Invoke` instruction (the nested case).
+            Type::Invoke(invoke) => {
+                if invoke.inner.2.is_none() {
+                    // Tail call optimization: If there is no inner continuation,
+                    // we can directly use the outer continuation.
+                    return Ok(Invoke::new(
+                        &invoke.inner.0,
+                        &invoke.inner.1,
+                        self.inner.2.as_ref(),
+                    ));
+                }
+
+                // We are in the k(Invoke<A, B, C>) case.
+                cont_stack.push(self.inner.2.clone().unwrap());
+                Ok(ty.clone())
+            }
+            // Case 2: The result `v` is a final value.
+            _ => {
+                // We are in the k(val) case.
+                // Simply invoke the outer continuation `k` with the value `v`.
+                let closure_env = ClosureEnv::new(Vec::<Type>::new());
+                let param_env = ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
+                let mut rec_assumptions = smallvec::SmallVec::new();
+                let mut invoke_ctx = InvokeContext::new(
+                    &ty,
+                    &closure_env,
+                    &param_env,
+                    None, // The continuation's own continuation is not needed here.
+                    &mut rec_assumptions,
+                    gc,
+                    roots,
+                );
+                self.inner.2.as_ref().unwrap().invoke(&mut invoke_ctx)
+            }
+        })?
+    }
 }

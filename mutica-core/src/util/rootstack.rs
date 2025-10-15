@@ -26,9 +26,18 @@ impl RootStack {
         }
     }
 
+    /// 将一个类型连接到当前根栈
+    pub fn attach(&mut self, ty: &Type) {
+        ty.upgrade(if self.flag {
+            &mut self.roots_b
+        } else {
+            &mut self.roots_a
+        });
+    }
+
     /// 切换当前根栈并清理
     /// 将当前根栈清空，并重新收集
-    pub fn sweep(&mut self, ty: &Type) {
+    pub fn sweep(&mut self) {
         // 1. 获取非活跃堆栈作为目标
         let target_stack = if self.flag {
             &mut self.roots_a
@@ -36,7 +45,6 @@ impl RootStack {
             &mut self.roots_b
         };
         target_stack.clear();
-        ty.upgrade(target_stack);
         self.flag = !self.flag;
     }
 

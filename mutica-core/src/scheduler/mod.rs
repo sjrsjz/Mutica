@@ -16,6 +16,7 @@ use crate::{
 };
 
 pub struct LinearScheduler {
+    cont_stack: Vec<Type>, // Continuation stack
     current_type: Option<Type>,
     roots: RootStack,
 }
@@ -23,8 +24,9 @@ pub struct LinearScheduler {
 impl LinearScheduler {
     pub fn new(initial_type: Type) -> Self {
         let mut roots = RootStack::new();
-        roots.sweep(&initial_type);
+        roots.attach(&initial_type);
         Self {
+            cont_stack: vec![],
             current_type: Some(initial_type),
             roots,
         }
@@ -84,16 +86,13 @@ impl LinearScheduler {
             gc,
             &mut self.roots,
         );
-
-        let reduced = match self.current_type.take() {
-            Some(t) => t.reduce(&mut reduction_ctx)?,
-            None => {
-                return Err(TypeError::RuntimeError(Arc::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "No current type",
-                ))));
-            }
-        };
+        let current_type = self.current_type.take().ok_or_else(|| {
+            TypeError::RuntimeError(Arc::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "No current type to step",
+            )))
+        })?;
+        let reduced = current_type.reduce(&mut reduction_ctx)?;
         let (next_type, updated) =
             reduced.map(&mut FastCycleDetector::new(), |_, reduced| match reduced {
                 Type::Invoke(invoke) => {
@@ -112,10 +111,37 @@ impl LinearScheduler {
                         Some(io_result) => io_result,
                         None => invoke.func().invoke(&mut invoke_ctx)?,
                     };
-                    let result = invoke.flat_compose(result, gc, &mut self.roots)?;
+                    let result = invoke.flat_compose_stack(
+                        result,
+                        gc,
+                        &mut self.roots,
+                        &mut self.cont_stack,
+                    )?;
                     Ok((result, true))
                 }
-                _ => Ok((reduced.clone(), false)),
+                _ => {
+                    if self.cont_stack.is_empty() {
+                        // No more continuation, we are done
+                        return Ok((reduced.clone(), false));
+                    }
+                    // Now take a continuation from the stack and invoke it
+                    let k = self.cont_stack.pop().unwrap();
+                    let mut rec_assumptions2 = smallvec::SmallVec::new();
+                    let mut invoke_ctx = InvokeContext::new(
+                        reduced,
+                        &empty_v,
+                        &empty_p,
+                        None,
+                        &mut rec_assumptions2,
+                        gc,
+                        &mut self.roots,
+                    );
+                    let result = match Self::io(&k, &reduced)? {
+                        Some(io_result) => io_result,
+                        None => k.invoke(&mut invoke_ctx)?,
+                    };
+                    Ok((result, true))
+                }
             })??;
         self.current_type = Some(next_type);
         // println!(
@@ -126,12 +152,20 @@ impl LinearScheduler {
     }
 
     pub fn sweep_roots(&mut self) {
-        if let Some(current_type) = &self.current_type {
-            self.roots.sweep(current_type);
+        self.roots.sweep();
+        for ty in &self.cont_stack {
+            self.roots.attach(ty);
+        }
+        if let Some(current) = &self.current_type {
+            self.roots.attach(current);
         }
     }
 
-    pub fn current_type(&self) -> Option<&Type> {
-        self.current_type.as_ref()
+    pub fn stack(&self) -> &[Type] {
+        &self.cont_stack
+    }
+
+    pub fn current(&self) -> &Type {
+        self.current_type.as_ref().expect("Current type is None")
     }
 }
