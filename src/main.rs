@@ -190,7 +190,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         roots.context(|_| scheduler::LinearScheduler::new(built_type.ty().clone())); // 确保 roots 直到 linear_scheduler 被创建完成才丢弃
 
     let mut step_counter = 0;
-    const SWEEP_INTERVAL: usize = 1024;
+    const SWEEP_INTERVAL: usize = 8192;
     let result = loop {
         // for debugging: 在每一步后进行垃圾收集和根栈清理
         #[cfg(debug_assertions)]
