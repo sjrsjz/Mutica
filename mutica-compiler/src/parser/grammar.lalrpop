@@ -27,6 +27,7 @@ extern {
         "with" => LexerToken::With,
         "match" => LexerToken::Match,
         "rec" => LexerToken::Rec,
+        "loop" => LexerToken::Loop,
         "panic" => LexerToken::Panic,
         "discard" => LexerToken::Discard,
         "int" => LexerToken::Int,
@@ -36,6 +37,9 @@ extern {
         "any" => LexerToken::Any,
         "none" => LexerToken::None,
         "import" => LexerToken::Import,
+        "if" => LexerToken::If,
+        "then" => LexerToken::Then,
+        "else" => LexerToken::Else,
         "__add" => LexerToken::DunderAdd,
         "__sub" => LexerToken::DunderSub,
         "__mul" => LexerToken::DunderMul,
@@ -284,6 +288,21 @@ List: WithLocation<TypeAst> = {
     },
 }
 
+IfElse: WithLocation<TypeAst> = {
+    <l:@L> "if" <cond: Primary?> <then_l:@L> "then" <then_r:@R> <then_branch: Primary> <else_l:@L> "else" <else_r:@R> <else_branch: Primary> <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+2, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, then_l..then_r, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, else_l..else_r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::Match {
+            value: cond.map(Box::new),
+            match_branch: vec![
+                (WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), else_branch), // since false <: true, check false first
+                (WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), then_branch),
+            ],
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
 Match: WithLocation<TypeAst> = {
     <l:@L> "match" <value: Primary?> <branches: MatchBranch+> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
         TokenColor::fill_colors(colors, l..l+5, TokenColor::Keyword);
@@ -376,6 +395,7 @@ Primary: WithLocation<TypeAst> = {
     <r: RecursiveGen> => r,
     <c: Closure> => c,
     <m: Match> => m,
+    <i: IfElse> => i,
     <c: Calculate> => c,
     ! => {
         let err: ErrorRecovery<usize, LexerToken, LexicalError> = <>;
@@ -604,6 +624,17 @@ Discard: WithLocation<TypeAst> = {
     },
 }
 
+Recursive: (String, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
+    // loop label: pattern = initialize_value;
+    <l:@L> "loop" <id: Ident> <c_l:@L> ":" <c_r:@R> <t: Type> <e_l:@L> "=" <e_r:@R> <expr: Type> ";" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+4, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, c_l..c_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, e_l..e_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        (id, t, expr)
+    },
+}
+
 Expression: WithLocation<TypeAst> = {
     <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
         match e.value() {
@@ -680,8 +711,25 @@ Effect: WithLocation<TypeAst> = {
     },
 }
 
+Loop: WithLocation<TypeAst> = {
+    <l:@L> <rec_expr: Recursive> <e: Type> <r:@R> => {
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::FixPoint {
+                param_name: rec_expr.0,
+                expr: Box::new(WithLocation::new(TypeAst::Closure {
+                    pattern: Box::new(rec_expr.1),
+                    body: Box::new(e),
+                    fail_branch: None,
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(rec_expr.2),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
 
 pub Type: WithLocation<TypeAst> = {
+    <l: Loop> => l,
     <e: Effect> => e,
     <e: Expression> => e,
     <t: Tuple> => t,

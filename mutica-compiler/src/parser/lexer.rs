@@ -44,6 +44,8 @@ pub enum LexerToken {
     Match,
     #[token("rec")]
     Rec,
+    #[token("loop")]
+    Loop,
     #[token("panic")]
     Panic,
     #[token("discard")]
@@ -62,6 +64,12 @@ pub enum LexerToken {
     Import,
     #[token("none")]
     None,
+    #[token("if")]
+    If,
+    #[token("then")]
+    Then,
+    #[token("else")]
+    Else,
     #[token("__add")]
     DunderAdd,
     #[token("__sub")]
