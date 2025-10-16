@@ -8,22 +8,30 @@ use crate::{
 };
 use arc_gc::traceable::GCTraceable;
 
-#[derive(Clone)]
-pub struct Variable {
+pub struct Variable<T: GcAllocObject<T, Inner = Type<T>>> {
     index: isize,
+    _phantom: std::marker::PhantomData<T>,
+}
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Variable<T> {
+    fn clone(&self) -> Self {
+        Self {
+            index: self.index,
+            _phantom: std::marker::PhantomData,
+        }
+    }
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for Variable {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Variable<T> {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Variable {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Variable<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for Variable {}
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Variable<T> {}
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Variable {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Variable<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -38,7 +46,7 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Variable {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Variable {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Variable<T> {
     fn is(
         &self,
         other: TypeRef<T>,
@@ -49,9 +57,9 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Variable {
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => {
                     let self_idx = self.index;
                     let v_idx = v.index;
@@ -65,9 +73,9 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Variable {
 
                     let value_l = ctx.closure_env.0.get(l)?;
                     let value_r = ctx.closure_env.1.get(r)?;
-                    value_l.is(value_r, &mut inner_ctx)
+                    value_l.is(value_r.as_ref_dispatcher(), &mut inner_ctx)
                 }
-                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     if self.index >= 0 {
                         // 如果是正数,说明是全局变量,无法确定类型
@@ -109,10 +117,10 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Variable {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Variable {
-    fn has<V: CoinductiveType<Type<T>, T>>(
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Variable<T> {
+    fn has(
         &self,
-        other: &V,
+        other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
@@ -123,22 +131,23 @@ impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Variable {
                 let value = ctx.closure_env.1.get(r)?;
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
-                other.is(value, &mut inner_ctx)
+                other.is(value.as_ref_dispatcher(), &mut inner_ctx)
             }
         })
     }
 }
 
-impl Representable for Variable {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
     fn represent(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
         format!("λ.{}", self.index)
     }
 }
 
-impl Variable {
-    pub fn new_debruijn<T: GcAllocObject<T>>(debruijn_index: isize) -> Type<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
+    pub fn new_debruijn(debruijn_index: isize) -> Type<T> {
         Variable {
             index: debruijn_index,
+            _phantom: std::marker::PhantomData,
         }
         .dispatch()
     }

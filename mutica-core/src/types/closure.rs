@@ -210,12 +210,12 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureInner<U, V> {
     }
 }
 
-pub struct Closure<V: GcAllocObject<V>> {
-    inner: Arc<ClosureInner<Type<V>, V>>,
+pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
+    inner: Arc<ClosureInner<Type<T>, T>>,
     is_nf: bool,
 }
 
-impl<V: GcAllocObject<V>> Clone for Closure<V> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Closure<T> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -224,29 +224,29 @@ impl<V: GcAllocObject<V>> Clone for Closure<V> {
     }
 }
 
-impl<V: GcAllocObject<V>> GcAllocObject<V> for Closure<V> {
-    type Inner = Type<V>;
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Closure<T> {
+    type Inner = Type<T>;
 }
 
-impl<V: GcAllocObject<V>> GCTraceable<V> for Closure<V> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         self.inner.collect(queue);
     }
 }
 
-impl<V: GcAllocObject<V>> Rootable<V> for Closure<V> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Closure<T> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.inner.upgrade(collected);
     }
 }
 
-impl<V: GcAllocObject<V>> AsDispatcher<Type<V>, V> for Closure<V> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Closure<T> {
     type RefDispatcher<'a>
-        = TypeRef<'a, V>
+        = TypeRef<'a, T>
     where
         Self: 'a;
 
-    fn into_dispatcher(self) -> Type<V> {
+    fn into_dispatcher(self) -> Type<T> {
         Type::Closure(self)
     }
 
@@ -255,12 +255,12 @@ impl<V: GcAllocObject<V>> AsDispatcher<Type<V>, V> for Closure<V> {
     }
 }
 
-impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closure<T> {
     fn is(
         &self,
-        other: TypeRef<V>,
-        ctx: &mut TypeCheckContext<Type<V>, V>,
-    ) -> Result<Option<()>, TypeError<Type<V>, V>> {
+        other: TypeRef<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
@@ -281,7 +281,7 @@ impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
                     let pattern_match = v
                         .inner
                         .pattern
-                        .is(&self.inner.pattern, &mut pattern_ctx)?
+                        .is(self.inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
                         .is_some();
 
                     if !pattern_match {
@@ -295,7 +295,11 @@ impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
                         &mut pattern_env_disabled,
                     );
 
-                    let expr_match = self.inner.expr.is(&v.inner.expr, &mut expr_ctx)?.is_some();
+                    let expr_match = self
+                        .inner
+                        .expr
+                        .is(v.inner.expr.as_ref_dispatcher(), &mut expr_ctx)?
+                        .is_some();
 
                     if !expr_match {
                         return Ok(None);
@@ -308,7 +312,7 @@ impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
                                 ctx.closure_env,
                                 &mut pattern_env_disabled,
                             );
-                            a.is(b, &mut fb_ctx)?.is_some()
+                            a.is(b.as_ref_dispatcher(), &mut fb_ctx)?.is_some()
                         }
                         (None, None) => true,
                         _ => false,
@@ -321,11 +325,11 @@ impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
                     Ok(Some(()))
                 }
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -333,8 +337,8 @@ impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
 
     fn reduce(
         self,
-        ctx: &mut ReductionContext<Type<V>, V>,
-    ) -> Result<Type<V>, TypeError<Type<V>, V>> {
+        ctx: &mut ReductionContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // 先把闭包环境中的类型都化简
         let env = self
             .inner
@@ -351,14 +355,14 @@ impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
                 Some(fb) => Some(fb.clone().reduce(ctx)?),
                 None => None,
             },
-            ClosureEnv::<Type<V>, V>::new(env), // 不能拆开成中间变量否则会导致临时变量被drop后fixpoint失效（极其罕见）
+            ClosureEnv::<Type<T>, T>::new(env), // 不能拆开成中间变量否则会导致临时变量被drop后fixpoint失效（极其罕见）
         ))
     }
 
     fn invoke(
         &self,
-        ctx: &mut InvokeContext<Type<V>, V>,
-    ) -> Result<Type<V>, TypeError<Type<V>, V>> {
+        ctx: &mut InvokeContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let mut matched_pattern = Collector::new();
 
         // 创建用于模式匹配的类型检查上下文
@@ -371,7 +375,10 @@ impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
 
         if ctx
             .arg
-            .is(&self.inner.pattern, &mut pattern_check_ctx)?
+            .is(
+                self.inner.pattern.as_ref_dispatcher(),
+                &mut pattern_check_ctx,
+            )?
             .is_some()
             && let Some(param_env) = ParamEnv::from_collector(matched_pattern)?
         {
@@ -414,7 +421,7 @@ impl<V: GcAllocObject<V>> CoinductiveType<Type<V>, V> for Closure<V> {
     }
 }
 
-impl<T: GcAllocObject<T>> Representable for Closure<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
         let mut repr = if self.inner.env.0.is_empty() {
             format!("<{}>", self.inner.pattern.represent(path))
@@ -435,7 +442,7 @@ impl<T: GcAllocObject<T>> Representable for Closure<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Closure<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
     pub fn new<U, V, W>(
         pattern_param_size: usize,
         pattern: U,

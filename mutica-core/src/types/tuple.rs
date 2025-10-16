@@ -11,12 +11,12 @@ use crate::{
     util::cycle_detector::FastCycleDetector,
 };
 
-pub struct Tuple<T: GcAllocObject<T>> {
+pub struct Tuple<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
     is_nf: bool,
 }
 
-impl<T: GcAllocObject<T>> Clone for Tuple<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Tuple<T> {
     fn clone(&self) -> Self {
         Self {
             types: self.types.clone(),
@@ -25,7 +25,7 @@ impl<T: GcAllocObject<T>> Clone for Tuple<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for Tuple<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Tuple<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         for v in self.types.iter() {
             v.collect(queue);
@@ -33,11 +33,11 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Tuple<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Tuple<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Tuple<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Tuple<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Tuple<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -52,7 +52,7 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Tuple<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Tuple<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple<T> {
     fn is(
         &self,
         other: TypeRef<T>,
@@ -68,7 +68,10 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Tuple<T> {
                         return Ok(None);
                     }
                     for (self_type, other_type) in self.types.iter().zip(other_types.types.iter()) {
-                        if self_type.is(other_type, &mut inner_ctx)?.is_none() {
+                        if self_type
+                            .is(other_type.as_ref_dispatcher(), &mut inner_ctx)?
+                            .is_none()
+                        {
                             return Ok(None);
                         }
                     }
@@ -83,16 +86,19 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Tuple<T> {
                     }
                     let first = &self.types[0];
                     let head = v.head().unwrap();
-                    if first.is(head, &mut inner_ctx)?.is_none() {
+                    if first
+                        .is(head.as_ref_dispatcher(), &mut inner_ctx)?
+                        .is_none()
+                    {
                         return Ok(None);
                     }
-                    self.types[1].is(&v.view(1), &mut inner_ctx)
+                    self.types[1].is(v.view(1).as_ref_dispatcher(), &mut inner_ctx)
                 }
-                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -143,7 +149,7 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Tuple<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for Tuple<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Tuple<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for ty in self.types.iter() {
             ty.upgrade(collected);
@@ -151,7 +157,7 @@ impl<T: GcAllocObject<T>> Rootable<T> for Tuple<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Representable for Tuple<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Tuple<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
@@ -169,7 +175,7 @@ impl<T: GcAllocObject<T>> Representable for Tuple<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Tuple<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
     pub fn new<I, U>(types: I) -> Type<T>
     where
         I: IntoIterator<Item = U>,

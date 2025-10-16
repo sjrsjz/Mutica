@@ -14,7 +14,7 @@ use crate::{
     util::{collector::Collector, cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
-pub struct Invoke<T: GcAllocObject<T>> {
+pub struct Invoke<T: GcAllocObject<T, Inner = Type<T>>> {
     // 0: function
     // 1: argument
     // 2: continuation
@@ -22,7 +22,7 @@ pub struct Invoke<T: GcAllocObject<T>> {
     is_nf: bool,
 }
 
-impl<T: GcAllocObject<T>> Clone for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Invoke<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -31,7 +31,7 @@ impl<T: GcAllocObject<T>> Clone for Invoke<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Invoke<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         self.inner.0.collect(queue);
         self.inner.1.collect(queue);
@@ -41,11 +41,11 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Invoke<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Invoke<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Invoke<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.inner.0.upgrade(collected);
         self.inner.1.upgrade(collected);
@@ -55,7 +55,7 @@ impl<T: GcAllocObject<T>> Rootable<T> for Invoke<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Invoke<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -70,7 +70,7 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Invoke<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invoke<T> {
     fn is(
         &self,
         other: TypeRef<T>,
@@ -81,16 +81,24 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Invoke<T> {
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
                 TypeRef::Invoke(v) => {
-                    let func_eq = self.inner.0.is(&v.inner.0, &mut inner_ctx)?;
+                    let func_eq = self
+                        .inner
+                        .0
+                        .is(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
                     if func_eq.is_none() {
                         return Ok(None);
                     }
-                    let arg_eq = self.inner.1.is(&v.inner.1, &mut inner_ctx)?;
+                    let arg_eq = self
+                        .inner
+                        .1
+                        .is(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
                     if arg_eq.is_none() {
                         return Ok(None);
                     }
                     let cont_eq = match (&self.inner.2, &v.inner.2) {
-                        (Some(cont1), Some(cont2)) => cont1.is(cont2, &mut inner_ctx)?,
+                        (Some(cont1), Some(cont2)) => {
+                            cont1.is(cont2.as_ref_dispatcher(), &mut inner_ctx)?
+                        }
                         (None, None) => Some(()),
                         _ => None,
                     };
@@ -100,11 +108,11 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Invoke<T> {
                     Ok(Some(()))
                 }
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -133,7 +141,7 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Invoke<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Representable for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
         if let Some(cont) = &self.inner.2 {
             format!(
@@ -152,7 +160,7 @@ impl<T: GcAllocObject<T>> Representable for Invoke<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
     pub fn new<
         U: AsDispatcher<Type<T>, T>,
         V: AsDispatcher<Type<T>, T>,
@@ -188,7 +196,8 @@ impl<T: GcAllocObject<T>> Invoke<T> {
         self.inner.2.as_ref()
     }
 }
-impl<T: GcAllocObject<T>> Invoke<T> {
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
     /// Flattens a nested computation by composing continuations.
     ///
     /// This method is the core of the scheduler's ability to handle algebraic effects and
@@ -298,7 +307,7 @@ impl<T: GcAllocObject<T>> Invoke<T> {
                 if self.inner.2.is_none() {
                     // Tail call optimization: If there is no outer continuation,
                     // simply return the value.
-                    return Ok(ty.clone());
+                    return Ok(ty.clone_data());
                 }
                 // We are in the k(val) case.
                 // Simply invoke the outer continuation `k` with the value `v`.
@@ -347,7 +356,7 @@ impl<T: GcAllocObject<T>> Invoke<T> {
 
                 // We are in the k(Invoke<A, B, C>) case.
                 cont_stack.push(self.inner.2.clone().unwrap());
-                Ok(ty.clone())
+                Ok(ty.clone_data())
             }
             // Case 2: The result `v` is a final value.
             _ => {

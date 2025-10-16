@@ -7,12 +7,12 @@ use crate::types::{
     Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
 };
 
-pub struct Lazy<T: GcAllocObject<T>> {
+pub struct Lazy<T: GcAllocObject<T, Inner = Type<T>>> {
     value: Arc<Type<T>>,
     is_nf: bool,
 }
 
-impl<T: GcAllocObject<T>> Clone for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
@@ -21,23 +21,23 @@ impl<T: GcAllocObject<T>> Clone for Lazy<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Lazy<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         self.value.collect(queue);
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Lazy<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Lazy<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.value.upgrade(collected);
     }
 }
 
-impl<T: GcAllocObject<T>> Representable for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lazy<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
@@ -46,7 +46,7 @@ impl<T: GcAllocObject<T>> Representable for Lazy<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Lazy<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -61,23 +61,23 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Lazy<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<T> {
     fn is(
         &self,
-        other: &Type<T>,
+        other: TypeRef<T>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                Type::Lazy(v) => self.value.is(&v.value, &mut inner_ctx),
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Lazy(v) => self.value.is(v.value.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -104,7 +104,7 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Lazy<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<T> {
     pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Type<T> {
         let value = value.into_dispatcher();
         let is_nf = value.is_normal_form();

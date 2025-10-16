@@ -34,11 +34,11 @@ use crate::{
 /// 由于递归类型的定义需要引用自身，我们必须：
 /// 1. **先创建占位符**：分配类型引用但不指定内容
 /// 2. **后填充定义**：通过 `set` 方法设置具体的递归结构
-pub struct FixPointInner<T: GcAllocObject<T>> {
+pub struct FixPointInner<T: GcAllocObject<T, Inner = Type<T>>> {
     inner: OnceLock<Type<T>>,
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for FixPointInner<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for FixPointInner<T> {
     /// 创建未初始化的不动点占位符
     ///
     /// 这是递归类型定义的第一步：创建一个"洞"，稍后填充.
@@ -87,7 +87,7 @@ impl<T: GcAllocObject<T>> GcAllocObject<T> for FixPointInner<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for FixPointInner<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for FixPointInner<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
         if let Some(t) = self.inner.get() {
             t.collect(queue);
@@ -95,7 +95,7 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for FixPointInner<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> FixPointInner<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> FixPointInner<T> {
     /// 安全的类型遍历，带循环检测
     ///
     /// 使用 [`CycleDetector`] 防止在遍历递归类型时陷入无限循环。
@@ -124,13 +124,13 @@ impl<T: GcAllocObject<T>> FixPointInner<T> {
     }
 }
 
-pub struct FixPoint<T: GcAllocObject<T>> {
+pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
     reference: GCArcWeak<T>,
     is_nf: Arc<RwLock<bool>>, // 是否为范式
                               // 由于递归类型需要set方法初始化,因此is_nf是共享的，它不能被简单的复制
 }
 
-impl<T: GcAllocObject<T>> Clone for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
     fn clone(&self) -> Self {
         Self {
             reference: self.reference.clone(),
@@ -139,17 +139,17 @@ impl<T: GcAllocObject<T>> Clone for FixPoint<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for FixPoint<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for FixPoint<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
         queue.push_back(self.reference.clone());
     }
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for FixPoint<T> {
     fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<T>>) {
         if let Some(inner) = self.reference.upgrade() {
             collected.push(inner);
@@ -157,7 +157,7 @@ impl<T: GcAllocObject<T>> Rootable<T> for FixPoint<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     pub fn map<F, R>(
         &self,
         path: &mut FastCycleDetector<*const ()>,
@@ -218,7 +218,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for FixPoint<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -260,8 +260,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = inner
@@ -353,10 +353,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for FixPoint<T> {
-    fn has<V: CoinductiveType<Type<T>, T>>(
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for FixPoint<T> {
+    fn has(
         &self,
-        other: &V,
+        other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
@@ -367,7 +367,8 @@ impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for FixPoint<T> {
                     inner
                         .as_ref()
                         .get_inner()
-                        .ok_or(TypeError::UnresolvableType)?,
+                        .ok_or(TypeError::UnresolvableType)?
+                        .as_ref_dispatcher(),
                     &mut inner_ctx,
                 ),
                 None => Err(TypeError::UnresolvableType), // reference is dead
@@ -376,7 +377,7 @@ impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for FixPoint<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Representable for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<T> {
     /// 递归类型的字符串表示
     ///
     /// 使用数学记号 `μ.地址 内容` 表示不动点类型，其中：

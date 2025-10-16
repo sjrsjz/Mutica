@@ -9,8 +9,7 @@ use crate::{
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
 
-#[derive(Debug, Clone)]
-pub enum Opcode {
+pub enum Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
     // Super type
     Opcode,
     // Arithmetic
@@ -24,19 +23,38 @@ pub enum Opcode {
     Is,
     // I/O
     IO(Box<String>),
+    Pandom(std::marker::PhantomData<T>),
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for Opcode {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Opcode<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Opcode::Opcode => Opcode::Opcode,
+            Opcode::Add => Opcode::Add,
+            Opcode::Sub => Opcode::Sub,
+            Opcode::Mul => Opcode::Mul,
+            Opcode::Div => Opcode::Div,
+            Opcode::Mod => Opcode::Mod,
+            Opcode::Less => Opcode::Less,
+            Opcode::Greater => Opcode::Greater,
+            Opcode::Is => Opcode::Is,
+            Opcode::IO(v) => Opcode::IO(v.clone()),
+            Opcode::Pandom(_) => Opcode::Pandom(std::marker::PhantomData),
+        }
+    }
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Opcode<T> {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Opcode {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Opcode<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for Opcode {}
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Opcode<T> {}
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Opcode {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Opcode<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -51,18 +69,18 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Opcode {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Opcode {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcode<T> {
     fn is(
         &self,
-        other: &Type<T>,
+        other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                Type::Opcode(Opcode::Opcode) => Ok(Some(())),
-                Type::Opcode(v) => match (self, v) {
+                TypeRef::Opcode(Opcode::Opcode) => Ok(Some(())),
+                TypeRef::Opcode(v) => match (self, v) {
                     (Opcode::Opcode, _) => Ok(Some(())),
                     (_, Opcode::Opcode) => Ok(Some(())),
                     (Opcode::Add, Opcode::Add)
@@ -76,12 +94,12 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Opcode {
                     (Opcode::IO(a), Opcode::IO(b)) => Ok(if a == b { Some(()) } else { None }),
                     _ => Ok(None),
                 },
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -136,7 +154,7 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Opcode {
                             (&empty_closure, &empty_closure),
                             &mut pattern_env,
                         );
-                        match left.is(right, &mut type_check_ctx) {
+                        match left.is(right.as_ref_dispatcher(), &mut type_check_ctx) {
                             Ok(res) => Ok(if res.is_some() {
                                 TypeBound::top()
                             } else {
@@ -219,6 +237,9 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Opcode {
                     ))
                 }
             }
+            Opcode::Pandom(_) => {
+                unreachable!()
+            }
         }
     }
 
@@ -227,14 +248,26 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Opcode {
     }
 }
 
-impl Representable for Opcode {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
     fn represent(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
-        format!("{:?}", self)
+        match self {
+            Opcode::Opcode => "Opcode".to_string(),
+            Opcode::Add => "Add".to_string(),
+            Opcode::Sub => "Sub".to_string(),
+            Opcode::Mul => "Mul".to_string(),
+            Opcode::Div => "Div".to_string(),
+            Opcode::Mod => "Mod".to_string(),
+            Opcode::Less => "Less".to_string(),
+            Opcode::Greater => "Greater".to_string(),
+            Opcode::Is => "Is".to_string(),
+            Opcode::IO(v) => format!("IO({})", v),
+            Opcode::Pandom(_) => "Pandom".to_string(),
+        }
     }
 }
 
-impl Opcode {
-    pub fn new<T: GcAllocObject<T>>(op: Opcode) -> Type<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<T> {
+    pub fn new(op: Opcode<T>) -> Type<T> {
         op.dispatch()
     }
 }

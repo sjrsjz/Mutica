@@ -12,13 +12,13 @@ use crate::{
 
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
 // 但是为了实现的简洁性，这里就先分开了
-pub struct Pattern<T: GcAllocObject<T>> {
+pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
     is_nf: bool,
     debruijn_index: usize,
     expr: Arc<Type<T>>,
 }
 
-impl<T: GcAllocObject<T>> Clone for Pattern<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Pattern<T> {
     fn clone(&self) -> Self {
         Self {
             is_nf: self.is_nf,
@@ -28,19 +28,19 @@ impl<T: GcAllocObject<T>> Clone for Pattern<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for Pattern<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Pattern<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         self.expr.collect(queue);
     }
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for Pattern<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Pattern<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.expr.upgrade(collected);
     }
 }
 
-impl<T: GcAllocObject<T>> Representable for Pattern<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
@@ -49,11 +49,11 @@ impl<T: GcAllocObject<T>> Representable for Pattern<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Pattern<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Pattern<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Pattern<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Pattern<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -68,10 +68,10 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Pattern<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Pattern<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Pattern<T> {
     fn is(
         &self,
-        other: &Type<T>,
+        other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
@@ -89,9 +89,9 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Pattern<T> {
             }
             // 由于Pattern的特殊性，非模式匹配下的Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
             match other {
-                Type::Pattern(v) => {
+                TypeRef::Pattern(v) => {
                     if self.debruijn_index == v.debruijn_index {
-                        self.expr.is(&v.expr, &mut inner_ctx)
+                        self.expr.is(v.expr.as_ref_dispatcher(), &mut inner_ctx)
                     } else {
                         Ok(None)
                     }
@@ -127,10 +127,10 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Pattern<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Pattern<T> {
-    fn has<V: CoinductiveType<Type<T>, T>>(
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Pattern<T> {
+    fn has(
         &self,
-        other: &V,
+        other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
@@ -147,7 +147,7 @@ impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Pattern<T> {
                 .is(self.expr.as_ref_dispatcher(), &mut inner_ctx)?
                 .is_some()
             {
-                pattern_env.push((self.debruijn_index, other.clone().dispatch()));
+                pattern_env.push((self.debruijn_index, other.clone_data()));
                 Ok(Some(()))
             } else {
                 Ok(None)
@@ -156,7 +156,7 @@ impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Pattern<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Pattern<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<T> {
     pub fn new<X: AsDispatcher<Type<T>, T>>(debruijn_index: usize, expr: X) -> Type<T> {
         let expr = expr.into_dispatcher();
         let is_nf = expr.is_normal_form();

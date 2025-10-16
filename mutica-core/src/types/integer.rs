@@ -9,19 +9,24 @@ use crate::{
     util::cycle_detector::FastCycleDetector,
 };
 
-#[derive(Clone)]
-pub struct Integer {}
+pub struct Integer<T: GcAllocObject<T, Inner = Type<T>>>(std::marker::PhantomData<T>);
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for Integer {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Integer<T> {
+    fn clone(&self) -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Integer<T> {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for Integer {}
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Integer {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Integer<T> {}
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Integer<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Integer {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Integer<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -35,7 +40,7 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Integer {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Integer {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Integer<T> {
     fn is(
         &self,
         other: TypeRef<T>,
@@ -47,11 +52,11 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Integer {
             match other {
                 TypeRef::Integer(_) => Ok(Some(())),
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -70,7 +75,7 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Integer {
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg
             .map_inner(&mut FastCycleDetector::new(), |_, arg| match arg {
-                TypeRef::IntegerValue(_) => Ok(arg.clone()),
+                TypeRef::IntegerValue(_) => Ok(arg.clone_data()),
                 TypeRef::CharValue(c) => Ok(IntegerValue::new(c.value() as i64)),
                 _ => Err(super::TypeError::TypeMismatch(
                     (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
@@ -83,14 +88,14 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Integer {
     }
 }
 
-impl Representable for Integer {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Integer<T> {
     fn represent(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
         "Integer".to_string()
     }
 }
 
-impl Integer {
-    pub fn new<T: GcAllocObject<T>>() -> Type<T> {
-        Self {}.dispatch()
+impl<T: GcAllocObject<T, Inner = Type<T>>> Integer<T> {
+    pub fn new() -> Type<T> {
+        Self(std::marker::PhantomData).dispatch()
     }
 }

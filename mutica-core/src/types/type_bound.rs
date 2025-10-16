@@ -8,23 +8,33 @@ use crate::{
     util::cycle_detector::FastCycleDetector,
 };
 
-#[derive(Debug, Clone)]
-pub enum TypeBound {
+pub enum TypeBound<T: GcAllocObject<T, Inner = Type<T>>> {
     Top,
     Bottom,
+    PandomData(std::marker::PhantomData<T>),
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for TypeBound {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeBound<T> {
+    fn clone(&self) -> Self {
+        match self {
+            TypeBound::Top => TypeBound::Top,
+            TypeBound::Bottom => TypeBound::Bottom,
+            TypeBound::PandomData(_) => TypeBound::PandomData(std::marker::PhantomData),
+        }
+    }
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for TypeBound<T> {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for TypeBound {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for TypeBound<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for TypeBound {}
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for TypeBound<T> {}
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for TypeBound {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for TypeBound<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -39,21 +49,21 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for TypeBound {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for TypeBound {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeBound<T> {
     fn is(
         &self,
-        other: &Type<T>,
+        other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
-            if let Type::Pattern(p) = other {
-                return p.has(self, &mut inner_ctx);
+            if let TypeRef::Pattern(p) = other {
+                return p.has(self.as_ref_dispatcher(), &mut inner_ctx);
             }
             match (self, other) {
                 (TypeBound::Bottom, _) => Ok(Some(())),
-                (TypeBound::Top, Type::Bound(TypeBound::Top)) => Ok(Some(())),
+                (TypeBound::Top, TypeRef::Bound(TypeBound::Top)) => Ok(Some(())),
                 _ => Ok(None),
             }
         })
@@ -78,27 +88,29 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for TypeBound {
     }
 }
 
-impl Representable for TypeBound {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for TypeBound<T> {
     fn represent(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
         match self {
             TypeBound::Top => "⊤".to_string(),
             TypeBound::Bottom => "⊥".to_string(),
+            TypeBound::PandomData(_) => "<?>".to_string(),
         }
     }
     fn display(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
         match self {
             TypeBound::Top => "true".to_string(),
             TypeBound::Bottom => "false".to_string(),
+            TypeBound::PandomData(_) => "<?>".to_string(),
         }
     }
 }
 
-impl TypeBound {
-    pub fn top<T: GcAllocObject<T>>() -> Type<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> TypeBound<T> {
+    pub fn top() -> Type<T> {
         Self::Top.dispatch()
     }
 
-    pub fn bottom<T: GcAllocObject<T>>() -> Type<T> {
+    pub fn bottom() -> Type<T> {
         Self::Bottom.dispatch()
     }
 }

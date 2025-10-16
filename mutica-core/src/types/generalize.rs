@@ -61,12 +61,12 @@ use crate::{
 /// 1. **扁平化**：自动展开嵌套的 `Generalize` 类型
 /// 2. **吸收律**：移除被其他类型包含的冗余类型（与 Min 相反）
 /// 3. **简化**：单个类型时直接返回该类型，空集时返回 `⊥`
-pub struct Generalize<T: GcAllocObject<T>> {
+pub struct Generalize<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
     is_nf: bool,
 }
 
-impl<T: GcAllocObject<T>> Clone for Generalize<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Generalize<T> {
     fn clone(&self) -> Self {
         Self {
             types: self.types.clone(),
@@ -75,7 +75,7 @@ impl<T: GcAllocObject<T>> Clone for Generalize<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for Generalize<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Generalize<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         for sub in self.types.iter() {
             sub.collect(queue);
@@ -83,11 +83,11 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Generalize<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Generalize<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Generalize<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for Generalize<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Generalize<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for sub in self.types.iter() {
             sub.upgrade(collected);
@@ -95,7 +95,7 @@ impl<T: GcAllocObject<T>> Rootable<T> for Generalize<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Generalize<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Generalize<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -110,7 +110,7 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Generalize<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Generalize<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Generalize<T> {
     fn is(
         &self,
         other: TypeRef<T>,
@@ -121,10 +121,10 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Generalize<T> {
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
                         if !sub.is(other, &mut inner_ctx)?.is_some() {
@@ -169,10 +169,10 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Generalize<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Generalize<T> {
-    fn has<V: CoinductiveType<Type<T>, T> + Clone>(
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Generalize<T> {
+    fn has(
         &self,
-        other: &V,
+        other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|_| {
@@ -181,7 +181,7 @@ impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Generalize<T> {
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
             for sub in self.types.iter() {
                 // 我们传入 false 是因为generalize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
-                if other.is(sub, &mut inner_ctx)?.is_some() {
+                if other.is(sub.as_ref_dispatcher(), &mut inner_ctx)?.is_some() {
                     return Ok(Some(())); // 由于不需要匹配子模式,短路返回不会影响正确性
                 }
             }
@@ -190,7 +190,7 @@ impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Generalize<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Representable for Generalize<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Generalize<T> {
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
         let mut result = String::new();
         result.push_str("Max<");
@@ -205,7 +205,7 @@ impl<T: GcAllocObject<T>> Representable for Generalize<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Generalize<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
     /// 构造不可约类型集合，应用吸收律和简化规则（与Specialize对偶）
     ///
     /// ## 构造算法
@@ -237,7 +237,7 @@ impl<T: GcAllocObject<T>> Generalize<T> {
         I: IntoIterator<Item = X>,
         X: AsDispatcher<Type<T>, T>,
     {
-        fn collect<T: GcAllocObject<T>>(
+        fn collect<T: GcAllocObject<T, Inner = Type<T>>>(
             collected: &mut Vec<Type<T>>,
             path: &mut FastCycleDetector<*const ()>,
             x: Type<T>,
@@ -288,7 +288,10 @@ impl<T: GcAllocObject<T>> Generalize<T> {
                         (closure_env, closure_env),
                         &mut pattern_env_temp,
                     );
-                    if collected[i].is(&collected[j], &mut check_ctx)?.is_some() {
+                    if collected[i]
+                        .is(collected[j].as_ref_dispatcher(), &mut check_ctx)?
+                        .is_some()
+                    {
                         absorbed[i] = true;
                         break;
                     }

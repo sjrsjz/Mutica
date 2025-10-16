@@ -10,13 +10,13 @@ use crate::types::{
 
 // 抽象链表类型，实际实现为 Vec<T>
 // 逻辑等价为 (T_1, (T_2, (T_3, ...)))
-pub struct List<T: GcAllocObject<T>> {
+pub struct List<T: GcAllocObject<T, Inner = Type<T>>> {
     elements: Arc<Vec<Type<T>>>,
     head: usize,
     is_nf: bool,
 }
 
-impl<T: GcAllocObject<T>> Clone for List<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for List<T> {
     fn clone(&self) -> Self {
         Self {
             elements: self.elements.clone(),
@@ -26,7 +26,7 @@ impl<T: GcAllocObject<T>> Clone for List<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Representable for List<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for List<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
@@ -43,7 +43,7 @@ impl<T: GcAllocObject<T>> Representable for List<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GCTraceable<T> for List<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for List<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         for element in self.iter() {
             // 我们不关心 head 之前的元素，他们对于本类型是不可达的
@@ -52,7 +52,7 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for List<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> Rootable<T> for List<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for List<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for element in self.iter() {
             // 我们不关心 head 之前的元素，他们对于本类型是不可达的
@@ -61,11 +61,11 @@ impl<T: GcAllocObject<T>> Rootable<T> for List<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for List<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for List<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for List<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for List<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -80,10 +80,10 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for List<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for List<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for List<T> {
     fn is(
         &self,
-        other: &TypeRef<T>,
+        other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
@@ -95,7 +95,7 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for List<T> {
                         return Ok(None);
                     }
                     for (a, b) in self.iter().zip(v.iter()) {
-                        if !a.is(b, &mut inner_ctx)?.is_some() {
+                        if !a.is(b.as_ref_dispatcher(), &mut inner_ctx)?.is_some() {
                             return Ok(None);
                         }
                     }
@@ -110,19 +110,22 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for List<T> {
                     }
                     let head = self.head().unwrap();
                     let first = &v.types()[0];
-                    if !head.is(first, &mut inner_ctx)?.is_some() {
+                    if !head
+                        .is(first.as_ref_dispatcher(), &mut inner_ctx)?
+                        .is_some()
+                    {
                         return Ok(None);
                     }
                     let view = self.view(1);
                     let second = &v.types()[1];
-                    view.is(second, &mut inner_ctx)
+                    view.is(second.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -175,7 +178,7 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for List<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> List<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
     pub fn len(&self) -> usize {
         self.elements.len() - self.head
     }
