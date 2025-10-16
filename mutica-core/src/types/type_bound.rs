@@ -58,13 +58,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
-            if let TypeRef::Pattern(p) = other {
-                return p.has(self.as_ref_dispatcher(), &mut inner_ctx);
-            }
-            match (self, other) {
-                (TypeBound::Bottom, _) => Ok(Some(())),
-                (TypeBound::Top, TypeRef::Bound(TypeBound::Top)) => Ok(Some(())),
-                _ => Ok(None),
+            match other {
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                _ => match self {
+                    TypeBound::Top => Ok(None),        // Top is only subtype of Top
+                    TypeBound::Bottom => Ok(Some(())), // Bottom is subtype of all types
+                    TypeBound::PandomData(_) => Ok(None),
+                },
             }
         })
     }
