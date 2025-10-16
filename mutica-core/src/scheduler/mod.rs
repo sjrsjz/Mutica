@@ -4,10 +4,10 @@ use arc_gc::gc::GC;
 
 use crate::{
     types::{
-        CoinductiveType, InvokeContext, ReductionContext, Representable, Type, TypeError,
+        CoinductiveType, GcAllocObject, InvokeContext, ReductionContext, Representable, Type,
+        TypeError, TypeRef,
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
-        fixpoint::FixPointInner,
         list::List,
         opcode::Opcode,
         tuple::Tuple,
@@ -15,14 +15,14 @@ use crate::{
     util::{collector::Collector, cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
-pub struct LinearScheduler {
-    cont_stack: Vec<Type>, // Continuation stack
-    current_type: Option<Type>,
-    roots: RootStack,
+pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
+    cont_stack: Vec<Type<T>>, // Continuation stack
+    current_type: Option<Type<T>>,
+    roots: RootStack<Type<T>, T>,
 }
 
-impl LinearScheduler {
-    pub fn new(initial_type: Type) -> Self {
+impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
+    pub fn new(initial_type: Type<T>) -> Self {
         let mut roots = RootStack::new();
         roots.attach(&initial_type);
         Self {
@@ -32,12 +32,14 @@ impl LinearScheduler {
         }
     }
 
-    fn io(f: &Type, arg: &Type) -> Result<Option<Type>, TypeError<Type>> {
+    fn io(f: &Type<T>, arg: &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>> {
         f.map(&mut FastCycleDetector::new(), |_, f| {
-            if !matches!(f, Type::Opcode(_)) {
+            if !matches!(f, TypeRef::Opcode(_)) {
                 return Ok(None);
             }
-            let Type::Opcode(op) = f else { unreachable!() };
+            let TypeRef::Opcode(op) = f else {
+                unreachable!()
+            };
             if !matches!(op, Opcode::IO(_)) {
                 return Ok(None);
             }
@@ -48,12 +50,12 @@ impl LinearScheduler {
                 "print" => {
                     let str = arg.display(&mut FastCycleDetector::new());
                     print!("{}", str);
-                    Ok(Some(Tuple::new(Vec::<Type>::new())))
+                    Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
                 }
                 "println" => {
                     let str = arg.display(&mut FastCycleDetector::new());
                     println!("{}", str);
-                    Ok(Some(Tuple::new(Vec::<Type>::new())))
+                    Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
                 }
                 "input" => {
                     let mut input = String::new();
@@ -67,15 +69,15 @@ impl LinearScheduler {
                 "flush" => {
                     use std::io;
                     io::stdout().flush().unwrap();
-                    Ok(Some(Tuple::new(Vec::<Type>::new())))
+                    Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
                 }
                 _ => Ok(None),
             }
         })?
     }
 
-    pub fn step(&mut self, gc: &mut GC<FixPointInner>) -> Result<bool, TypeError<Type>> {
-        let empty_v = ClosureEnv::new(Vec::<Type>::new());
+    pub fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
+        let empty_v = ClosureEnv::new(Vec::<Type<T>>::new());
         let empty_p = ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
         let mut rec_assumptions = smallvec::SmallVec::new();
         let mut reduction_ctx = ReductionContext::new(
@@ -94,8 +96,8 @@ impl LinearScheduler {
         })?;
         let reduced = current_type.reduce(&mut reduction_ctx)?;
         let (next_type, updated) =
-            reduced.map(&mut FastCycleDetector::new(), |_, reduced| match reduced {
-                Type::Invoke(invoke) => {
+            reduced.map(&mut FastCycleDetector::new(), |_, inner| match inner {
+                TypeRef::Invoke(invoke) => {
                     let mut rec_assumptions2 = smallvec::SmallVec::new();
                     let mut invoke_ctx = InvokeContext::new(
                         invoke.arg(),
@@ -122,13 +124,13 @@ impl LinearScheduler {
                 _ => {
                     if self.cont_stack.is_empty() {
                         // No more continuation, we are done
-                        return Ok((reduced.clone(), false));
+                        return Ok((inner.clone_data(), false));
                     }
                     // Now take a continuation from the stack and invoke it
                     let k = self.cont_stack.pop().unwrap();
                     let mut rec_assumptions2 = smallvec::SmallVec::new();
                     let mut invoke_ctx = InvokeContext::new(
-                        reduced,
+                        &reduced,
                         &empty_v,
                         &empty_p,
                         None,
@@ -161,11 +163,11 @@ impl LinearScheduler {
         }
     }
 
-    pub fn stack(&self) -> &[Type] {
+    pub fn stack(&self) -> &[Type<T>] {
         &self.cont_stack
     }
 
-    pub fn current(&self) -> &Type {
+    pub fn current(&self) -> &Type<T> {
         self.current_type.as_ref().expect("Current type is None")
     }
 }

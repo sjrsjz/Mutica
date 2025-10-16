@@ -3,7 +3,10 @@ pub mod colorize;
 pub mod lexer;
 pub use ast::TypeAst;
 use logos::Logos;
-use mutica_core::{types::Type, util::cycle_detector::FastCycleDetector};
+use mutica_core::{
+    types::{GcAllocObject, Type},
+    util::cycle_detector::FastCycleDetector,
+};
 
 use std::{
     collections::HashMap,
@@ -529,13 +532,13 @@ impl ParseContext {
     }
 }
 
-pub struct BuildContextLayer {
-    fixpoint_mapping: Vec<(String, Type)>,
+pub struct BuildContextLayer<T: GcAllocObject<T, Inner = Type<T>>> {
+    fixpoint_mapping: Vec<(String, Type<T>)>,
     pattern_index_mapping: HashMap<String, isize>,
     captured_index_mapping: HashMap<String, isize>,
 }
 
-impl BuildContextLayer {
+impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContextLayer<T> {
     pub fn new() -> Self {
         Self {
             fixpoint_mapping: Vec::new(),
@@ -544,7 +547,7 @@ impl BuildContextLayer {
         }
     }
 
-    pub fn enter_fixpoint(&mut self, name: String, t: Type) {
+    pub fn enter_fixpoint(&mut self, name: String, t: Type<T>) {
         self.fixpoint_mapping.push((name, t));
     }
 
@@ -552,7 +555,7 @@ impl BuildContextLayer {
         self.fixpoint_mapping.pop();
     }
 
-    pub fn get(&self, name: &str) -> Option<Result<&Type, isize>> {
+    pub fn get(&self, name: &str) -> Option<Result<&Type<T>, isize>> {
         for (n, t) in self.fixpoint_mapping.iter().rev() {
             if n == name {
                 return Some(Ok(t));
@@ -591,7 +594,7 @@ impl BuildContextLayer {
     }
 }
 
-impl Default for BuildContextLayer {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Default for BuildContextLayer<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -618,11 +621,11 @@ impl PatternCounter {
     }
 }
 
-pub struct BuildContext {
-    layers: Vec<BuildContextLayer>,
+pub struct BuildContext<T: GcAllocObject<T, Inner = Type<T>>> {
+    layers: Vec<BuildContextLayer<T>>,
 }
 
-impl BuildContext {
+impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
     pub fn new() -> Self {
         Self {
             layers: vec![BuildContextLayer::new()],
@@ -633,19 +636,19 @@ impl BuildContext {
         self.layers.push(BuildContextLayer::new());
     }
 
-    pub fn exit_layer(&mut self) -> BuildContextLayer {
+    pub fn exit_layer(&mut self) -> BuildContextLayer<T> {
         self.layers
             .pop()
             .expect("There should always be at least one layer")
     }
 
-    pub fn current_layer_mut(&mut self) -> &mut BuildContextLayer {
+    pub fn current_layer_mut(&mut self) -> &mut BuildContextLayer<T> {
         self.layers
             .last_mut()
             .expect("There should always be at least one layer")
     }
 
-    pub fn current_layer(&self) -> &BuildContextLayer {
+    pub fn current_layer(&self) -> &BuildContextLayer<T> {
         self.layers
             .last()
             .expect("There should always be at least one layer")

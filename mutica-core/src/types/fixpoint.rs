@@ -34,15 +34,15 @@ use crate::{
 /// 由于递归类型的定义需要引用自身，我们必须：
 /// 1. **先创建占位符**：分配类型引用但不指定内容
 /// 2. **后填充定义**：通过 `set` 方法设置具体的递归结构
-pub struct FixPointInner<T: GcAllocObject<T, Inner = Type<T>>> {
-    inner: OnceLock<Type<T>>,
+pub struct FixPointInner {
+    inner: OnceLock<Type<FixPointInner>>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for FixPointInner<T> {
+impl GcAllocObject<FixPointInner> for FixPointInner {
     /// 创建未初始化的不动点占位符
     ///
     /// 这是递归类型定义的第一步：创建一个"洞"，稍后填充.
-    type Inner = Type<T>;
+    type Inner = Type<FixPointInner>;
 
     fn new_placeholder() -> Self {
         FixPointInner {
@@ -50,10 +50,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for FixPointInner<T>
         }
     }
 
-    fn get_inner(&self) -> Option<&Self::Inner>
-    where
-        T: GcAllocObject<T>,
-    {
+    fn get_inner(&self) -> Option<&Self::Inner> {
         self.inner.get()
     }
 
@@ -61,13 +58,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for FixPointInner<T>
         &self,
         path: &mut FastCycleDetector<*const ()>,
         f: F,
-    ) -> Result<R, TypeError<Self::Inner, T>>
+    ) -> Result<R, TypeError<Self::Inner, FixPointInner>>
     where
         F: FnOnce(
             &mut FastCycleDetector<*const ()>,
-            <Self::Inner as AsDispatcher<Self::Inner, T>>::RefDispatcher<'_>,
+            <Self::Inner as AsDispatcher<Self::Inner, FixPointInner>>::RefDispatcher<'_>,
         ) -> R,
-        T: GcAllocObject<T>,
     {
         match self.inner.get() {
             Some(t) => path
@@ -77,50 +73,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for FixPointInner<T>
         }
     }
 
-    fn set_inner(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
-    where
-        T: GcAllocObject<T>,
-    {
+    fn set_inner(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, FixPointInner>> {
         self.inner
             .set(_value)
             .map_err(|_| TypeError::RedeclaredType)
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for FixPointInner<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
+impl GCTraceable<FixPointInner> for FixPointInner {
+    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<FixPointInner>>) {
         if let Some(t) = self.inner.get() {
             t.collect(queue);
         }
-    }
-}
-
-impl<T: GcAllocObject<T, Inner = Type<T>>> FixPointInner<T> {
-    /// 安全的类型遍历，带循环检测
-    ///
-    /// 使用 [`CycleDetector`] 防止在遍历递归类型时陷入无限循环。
-    #[inline(always)]
-    fn map<F, R>(
-        &self,
-        path: &mut FastCycleDetector<*const ()>,
-        f: F,
-    ) -> Result<R, TypeError<Type<T>, T>>
-    where
-        F: FnOnce(&mut FastCycleDetector<*const ()>, TypeRef<T>) -> R,
-    {
-        match self.inner.get() {
-            Some(t) => path
-                .with_guard(t as *const _ as *const (), |path| t.map_inner(path, f))
-                .ok_or(TypeError::InfiniteRecursion)?,
-            None => Err(TypeError::UnresolvableType),
-        }
-    }
-
-    /// 获取已初始化的类型内容
-    ///
-    /// 如果类型尚未通过 `set` 方法初始化，返回 `None`。
-    fn get(&self) -> Option<&Type<T>> {
-        self.inner.get()
     }
 }
 
@@ -185,7 +149,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     /// - 未初始化的 `FixPoint`
     /// - 对应的强引用以保证 GC 安全
 
-    pub fn new_placeholder<'roots>(gc: &mut GC<T>, roots: &'roots mut RootStack<T>) -> Type<T> {
+    pub fn new_placeholder<'roots>(
+        gc: &mut GC<T>,
+        roots: &'roots mut RootStack<Type<T>, T>,
+    ) -> Type<T> {
         let pointer = gc.create(T::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
@@ -210,7 +177,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
                 .is_nf
                 .write()
                 .map_err(|_| TypeError::UnresolvableType)? = t.is_normal_form(); // lock poisoned
-            inner.as_ref().set_inner(t);
+            inner.as_ref().set_inner(t)?;
             Ok(())
         } else {
             Err(TypeError::UnresolvableType) // reference is dead

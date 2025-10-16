@@ -1,24 +1,26 @@
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
-use crate::types::{GcAllocObject, Type};
+use crate::types::{CoinductiveType, GcAllocObject};
 
-pub struct RootStack<T: GcAllocObject<T>> {
-    roots_a: Vec<GCArc<T>>,
-    roots_b: Vec<GCArc<T>>,
+pub struct RootStack<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    roots_a: Vec<GCArc<V>>,
+    roots_b: Vec<GCArc<V>>,
     flag: bool,
+    _phantom: std::marker::PhantomData<U>,
 }
 
-impl<T: GcAllocObject<T>> RootStack<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> RootStack<U, V> {
     pub fn new() -> Self {
         Self {
             roots_a: Vec::new(),
             roots_b: Vec::new(),
             flag: false,
+            _phantom: std::marker::PhantomData,
         }
     }
 
     /// 向当前根栈添加根
-    pub fn push(&mut self, root: GCArc<T>) {
+    pub fn push(&mut self, root: GCArc<V>) {
         if self.flag {
             self.roots_b.push(root);
         } else {
@@ -27,7 +29,7 @@ impl<T: GcAllocObject<T>> RootStack<T> {
     }
 
     /// 将一个类型连接到当前根栈
-    pub fn attach(&mut self, ty: &Type<T>) {
+    pub fn attach(&mut self, ty: &U) {
         ty.upgrade(if self.flag {
             &mut self.roots_b
         } else {
@@ -56,7 +58,7 @@ impl<T: GcAllocObject<T>> RootStack<T> {
     }
 }
 
-pub trait Rootable<GcType: GCTraceable<GcType> + 'static> {
+pub trait Rootable<T: GCTraceable<T> + 'static> {
     #[allow(unused_variables)]
-    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<GcType>>) {}
+    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<T>>) {}
 }

@@ -9,7 +9,7 @@ use mutica_core::as_type;
 use mutica_core::types::character::Character;
 use mutica_core::types::character_value::CharacterValue;
 use mutica_core::types::closure::{Closure, ClosureEnv};
-use mutica_core::types::fixpoint::{FixPoint, FixPointInner};
+use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::generalize::Generalize;
 use mutica_core::types::integer::Integer;
 use mutica_core::types::integer_value::IntegerValue;
@@ -23,7 +23,7 @@ use mutica_core::types::specialize::Specialize;
 use mutica_core::types::tuple::Tuple;
 use mutica_core::types::type_bound::TypeBound;
 use mutica_core::types::variable::Variable;
-use mutica_core::types::{Type, TypeError};
+use mutica_core::types::{GcAllocObject, Type, TypeError};
 use mutica_core::util::rootstack::RootStack;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -1604,24 +1604,24 @@ impl<'ast> LinearTypeAst<'ast> {
     }
 }
 
-pub struct BuildResult {
-    ty: Type,
+pub struct BuildResult<T: GcAllocObject<T, Inner = Type<T>>> {
+    ty: Type<T>,
     patterns: Vec<WithLocation<String>>, // 按照de Bruijn索引顺序排列的模式变量
 }
 
-impl BuildResult {
-    pub fn simple(ty: Type) -> Self {
+impl<T: GcAllocObject<T, Inner = Type<T>>> BuildResult<T> {
+    pub fn simple(ty: Type<T>) -> Self {
         BuildResult {
             ty,
             patterns: Vec::new(),
         }
     }
 
-    pub fn complex(ty: Type, patterns: Vec<WithLocation<String>>) -> Self {
+    pub fn complex(ty: Type<T>, patterns: Vec<WithLocation<String>>) -> Self {
         BuildResult { ty, patterns }
     }
 
-    pub fn fold(results: Vec<Self>) -> (Vec<Type>, Vec<WithLocation<String>>) {
+    pub fn fold(results: Vec<Self>) -> (Vec<Type<T>>, Vec<WithLocation<String>>) {
         let mut types = Vec::new();
         let mut patterns = Vec::new();
         for res in results {
@@ -1631,7 +1631,7 @@ impl BuildResult {
         (types, patterns)
     }
 
-    pub fn ty(&self) -> &Type {
+    pub fn ty(&self) -> &Type<T> {
         &self.ty
     }
 
@@ -1642,15 +1642,15 @@ impl BuildResult {
 
 impl<'ast> LinearTypeAst<'ast> {
     #[stacksafe::stacksafe]
-    pub fn to_type<'roots>(
+    pub fn to_type<'roots, T: GcAllocObject<T, Inner = Type<T>>>(
         &self,
-        ctx: &mut BuildContext,
+        ctx: &mut BuildContext<T>,
         pattern_counter: &mut PatternCounter,
         pattern_mode: bool,
-        gc: &mut GC<FixPointInner>,
-        roots: &'roots mut RootStack,
+        gc: &mut GC<T>,
+        roots: &'roots mut RootStack<Type<T>, T>,
         loc: Option<&SourceLocation>,
-    ) -> Result<BuildResult, Result<TypeError<Type>, ParseError<'ast>>> {
+    ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError<'ast>>> {
         match self {
             LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
             LinearTypeAst::Char => Ok(BuildResult::simple(Character::new())),
@@ -1662,7 +1662,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 if let Some(ty) = ctx.current_layer().get(var) {
                     match ty {
                         Ok(t) => Ok(BuildResult::simple(t.clone())), // fixpoint类型
-                        Err(index) => Ok(BuildResult::simple(Variable::new_deburijn(index))),
+                        Err(index) => Ok(BuildResult::simple(Variable::new_debruijn(index))),
                     }
                 } else {
                     Err(Err(ParseError::UseBeforeDeclaration(
@@ -1790,7 +1790,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     if let Some(ty) = ctx.current_layer().get(var) {
                         match ty {
                             Ok(t) => closure_env.push(t.clone()), // fixpoint类型
-                            Err(index) => closure_env.push(Variable::new_deburijn(index)),
+                            Err(index) => closure_env.push(Variable::new_debruijn(index)),
                         }
                     } else {
                         return Err(Err(ParseError::UseBeforeDeclaration(
@@ -1801,7 +1801,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 }
                 let closure_env = ClosureEnv::new(closure_env);
 
-                let pattern_type: BuildResult = pattern.to_type(
+                let pattern_type: BuildResult<T> = pattern.to_type(
                     ctx,
                     &mut PatternCounter::new(), // 进入模式定义，重新计数
                     true,

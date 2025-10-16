@@ -169,7 +169,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Copy for TypeRef<'_, T> {}
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
-    fn clone_data(self) -> Type<T> {
+    pub fn clone_data(self) -> Type<T> {
         match self {
             TypeRef::Bound(v) => Type::<T>::Bound(v.clone()),
             TypeRef::Integer(v) => Type::<T>::Integer(v.clone()),
@@ -217,7 +217,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         }
     }
 
-    fn map_inner<F, R>(
+    pub fn map_inner<F, R>(
         self,
         path: &mut FastCycleDetector<*const ()>,
         f: F,
@@ -232,7 +232,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         }
     }
 
-    fn is(
+    pub fn is(
         self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -634,7 +634,7 @@ pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObje
     pub continuation: Option<&'a U>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
-    pub roots: &'roots mut RootStack<V>,
+    pub roots: &'roots mut RootStack<U, V>,
 }
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext<'a, 'roots, U, V> {
@@ -644,7 +644,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
         continuation: Option<&'a U>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
-        roots: &'roots mut RootStack<V>,
+        roots: &'roots mut RootStack<U, V>,
     ) -> Self {
         Self {
             closure_env,
@@ -665,7 +665,7 @@ pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<
     pub continuation: Option<&'a U>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
-    pub roots: &'roots mut RootStack<V>,
+    pub roots: &'roots mut RootStack<U, V>,
 }
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a, 'roots, U, V> {
@@ -676,7 +676,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
         continuation: Option<&'a U>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
-        roots: &'roots mut RootStack<V>,
+        roots: &'roots mut RootStack<U, V>,
     ) -> Self {
         Self {
             arg,

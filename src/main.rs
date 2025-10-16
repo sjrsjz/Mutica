@@ -11,7 +11,7 @@ use mutica_compiler::{
 use mutica_core::{
     arc_gc::gc::GC,
     scheduler,
-    types::{Representable, Type},
+    types::{Representable, Type, TypeRef, fixpoint::FixPointInner},
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
@@ -211,7 +211,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         }
     };
 
-    fn dump_stack(stack: &[Type]) -> String {
+    fn dump_stack(stack: &[Type<FixPointInner>]) -> String {
         let mut result = String::new();
         for (i, ty) in stack.iter().enumerate() {
             result.push_str(&format!(
@@ -226,7 +226,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
     match result {
         Ok(v) => v
             .map(&mut FastCycleDetector::new(), |_, ty| match ty {
-                Type::Tuple(tuple) if tuple.is_empty() => (),
+                TypeRef::Tuple(tuple) if tuple.is_empty() => (),
                 _ => {
                     println!("{}", v.display(&mut FastCycleDetector::new()));
                     ()

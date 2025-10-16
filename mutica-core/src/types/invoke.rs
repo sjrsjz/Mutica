@@ -255,7 +255,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
         &self,
         v: Type<T>,
         gc: &mut GC<T>,
-        roots: &'roots mut RootStack<T>,
+        roots: &'roots mut RootStack<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // The `map` here is used to traverse the type structure without deep recursion
         // if `v` is already a value.
@@ -333,7 +333,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
         &self,
         v: Type<T>,
         gc: &mut GC<T>,
-        roots: &'roots mut RootStack<T>,
+        roots: &'roots mut RootStack<Type<T>, T>,
         cont_stack: &mut Vec<Type<T>>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         if self.inner.2.is_none() {
