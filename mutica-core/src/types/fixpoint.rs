@@ -9,8 +9,8 @@ use arc_gc::{
 use crate::{
     as_type,
     types::{
-        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, type_bound::TypeBound,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
@@ -50,7 +50,7 @@ impl FixPointInner {
     ///
     /// 使用 [`CycleDetector`] 防止在遍历递归类型时陷入无限循环。
     #[inline(always)]
-    fn map<F, R>(&self, path: &mut FastCycleDetector<*const ()>, f: F) -> Result<R, TypeError>
+    fn map<F, R>(&self, path: &mut FastCycleDetector<*const ()>, f: F) -> Result<R, TypeError<Type>>
     where
         F: FnOnce(&mut FastCycleDetector<*const ()>, &Type) -> R,
     {
@@ -92,7 +92,7 @@ impl GCTraceable<FixPointInner> for FixPoint {
     }
 }
 
-impl Rootable for FixPoint {
+impl Rootable<FixPointInner>for FixPoint {
     fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<FixPointInner>>) {
         if let Some(inner) = self.reference.upgrade() {
             collected.push(inner);
@@ -101,7 +101,7 @@ impl Rootable for FixPoint {
 }
 
 impl FixPoint {
-    pub fn map<F, R>(&self, path: &mut FastCycleDetector<*const ()>, f: F) -> Result<R, TypeError>
+    pub fn map<F, R>(&self, path: &mut FastCycleDetector<*const ()>, f: F) -> Result<R, TypeError<Type>>
     where
         F: FnOnce(&mut FastCycleDetector<*const ()>, &Type) -> R,
     {
@@ -142,16 +142,16 @@ impl FixPoint {
     /// ## 错误
     /// - `RedeclaredType`: 类型已经被设置过
     /// - `UnresolvableType`: 不动点引用已失效
-    pub fn set<V: AsType>(&self, t: V) -> Result<(), TypeError> {
+    pub fn set<V: AsDispatcher>(&self, t: V) -> Result<(), TypeError<Type>> {
         if let Some(inner) = self.reference.upgrade() {
             *self
                 .is_nf
                 .write()
-                .map_err(|_| TypeError::UnresolvableType)? = t.as_type_ref().is_normal_form(); // lock poisoned
+                .map_err(|_| TypeError::UnresolvableType)? = t.as_ref_dispatcher().is_normal_form(); // lock poisoned
             inner
                 .as_ref()
                 .inner
-                .set(t.into_type())
+                .set(t.into_dispatcher())
                 .map_err(|_| TypeError::RedeclaredType) // already initialized
         } else {
             Err(TypeError::UnresolvableType) // reference is dead
@@ -160,8 +160,16 @@ impl FixPoint {
 }
 
 impl CoinductiveType<Type> for FixPoint {
+    type RefDispatcher<'a>
+        = TypeRef<'a>
+    where
+        Self: 'a;
     fn dispatch(self) -> Type {
         Type::FixPoint(self)
+    }
+
+    fn dispatch_ref<'a>(&'a self) -> Self::RefDispatcher<'a> {
+        TypeRef::FixPoint(self)
     }
 
     /// 递归类型的子类型检查
@@ -181,14 +189,10 @@ impl CoinductiveType<Type> for FixPoint {
     /// ```
     ///
     /// 即：在假设 μX.S <: μY.T 的前提下，检查展开后的类型关系。
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError<Type>> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                pattern_env,
-                ctx.pattern_mode,
-            );
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
                 Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
                 Type::Pattern(v) => v.has(self, &mut inner_ctx),
@@ -223,7 +227,7 @@ impl CoinductiveType<Type> for FixPoint {
     /// `(μX.T)[V] = T[μX.T/X][V]`
     ///
     /// 即：将递归类型应用到输入上，等价于将展开的类型应用到输入上。
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError<Type>> {
         match self.reference.upgrade() {
             Some(inner) => {
                 let inner_type = inner.as_ref().get().ok_or(TypeError::UnresolvableType)?;
@@ -253,7 +257,7 @@ impl CoinductiveType<Type> for FixPoint {
         }
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError<Type>> {
         match self.reference.upgrade() {
             Some(inner) => inner
                 .as_ref()
@@ -277,14 +281,10 @@ impl CoinductiveTypeWithAny<Type> for FixPoint {
         &self,
         other: &V,
         ctx: &mut TypeCheckContext,
-    ) -> Result<Option<()>, TypeError> {
+    ) -> Result<Option<()>, TypeError<Type>> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                pattern_env,
-                ctx.pattern_mode,
-            );
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match self.reference.upgrade() {
                 Some(inner) => other.is(
                     inner.as_ref().get().ok_or(TypeError::UnresolvableType)?,

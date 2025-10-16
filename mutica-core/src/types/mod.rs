@@ -16,6 +16,7 @@ pub mod pattern;
 pub mod specialize;
 pub mod tuple;
 pub mod type_bound;
+pub mod type_range;
 pub mod variable;
 
 use std::{error::Error, fmt::Debug, sync::Arc};
@@ -45,6 +46,7 @@ use crate::{
         specialize::Specialize,
         tuple::Tuple,
         type_bound::TypeBound,
+        type_range::TypeRange,
         variable::Variable,
     },
     util::{
@@ -54,8 +56,32 @@ use crate::{
     },
 };
 
-#[derive(Clone)]
-pub enum Type {
+impl<T: GcAllocObject<T>> Clone for Type<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Type::Bound(v) => Type::<T>::Bound(v.clone()),
+            Type::Integer(v) => Type::<T>::Integer(v.clone()),
+            Type::IntegerValue(v) => Type::<T>::IntegerValue(v.clone()),
+            Type::Char(v) => Type::<T>::Char(v.clone()),
+            Type::CharValue(v) => Type::<T>::CharValue(v.clone()),
+            Type::Tuple(v) => Type::<T>::Tuple(v.clone()),
+            Type::List(v) => Type::<T>::List(v.clone()),
+            Type::Generalize(v) => Type::<T>::Generalize(v.clone()),
+            Type::Specialize(v) => Type::<T>::Specialize(v.clone()),
+            Type::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
+            Type::Invoke(v) => Type::<T>::Invoke(v.clone()),
+            Type::Variable(v) => Type::<T>::Variable(v.clone()),
+            Type::Closure(v) => Type::<T>::Closure(v.clone()),
+            Type::Opcode(v) => Type::<T>::Opcode(v.clone()),
+            Type::Namespace(v) => Type::<T>::Namespace(v.clone()),
+            Type::Pattern(v) => Type::<T>::Pattern(v.clone()),
+            Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
+            Type::Range(v) => Type::<T>::Range(v.clone()),
+        }
+    }
+}
+
+pub enum Type<T: GcAllocObject<T>> {
     // 类型边界
     Bound(TypeBound),
     // 整数类型
@@ -69,7 +95,7 @@ pub enum Type {
     // 元组类型
     Tuple(Tuple),
     // 列表类型（嵌套元组的优化表示）
-    List(List),
+    List(List<T>),
     // 泛化类型
     Generalize(Generalize),
     // 专化类型
@@ -81,18 +107,41 @@ pub enum Type {
     // 类型变量
     Variable(Variable),
     // 闭包类型
-    Closure(Closure),
+    Closure(Closure<T>),
     // 操作码类型
     Opcode(Opcode),
     // 命名空间类型
-    Namespace(Namespace),
+    Namespace(Namespace<T>),
     // 模式类型
-    Pattern(Pattern),
+    Pattern(Pattern<T>),
     // 惰性包装器
-    Lazy(Lazy),
+    Lazy(Lazy<T>),
+    // 类型范围
+    Range(TypeRange),
 }
 
-impl Debug for Type {
+pub enum TypeRef<'a, T: GcAllocObject<T>> {
+    Bound(&'a TypeBound),
+    Integer(&'a Integer),
+    IntegerValue(&'a IntegerValue),
+    Char(&'a Character),
+    CharValue(&'a CharacterValue),
+    Tuple(&'a Tuple),
+    List(&'a List<T>),
+    Generalize(&'a Generalize),
+    Specialize(&'a Specialize),
+    FixPoint(&'a FixPoint),
+    Invoke(&'a Invoke),
+    Variable(&'a Variable),
+    Closure(&'a Closure<T>),
+    Opcode(&'a Opcode),
+    Namespace(&'a Namespace<T>),
+    Pattern(&'a Pattern<T>),
+    Lazy(&'a Lazy<T>),
+    Range(&'a TypeRange),
+}
+
+impl<T: GcAllocObject<T>> Debug for Type<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.represent(&mut FastCycleDetector::new()))
     }
@@ -101,7 +150,7 @@ impl Debug for Type {
 use thiserror::Error;
 
 #[derive(Clone, Error)]
-pub enum TypeError {
+pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     #[error("Unresolvable type (e.g. fixpoint reference lost)")]
     UnresolvableType,
     #[error("Infinite recursion")]
@@ -109,22 +158,27 @@ pub enum TypeError {
     #[error("Type redeclared")]
     RedeclaredType,
     #[error("Non-applicable type: {0:?}")]
-    NonApplicableType(Box<Type>),
+    NonApplicableType(Box<U>),
     #[error("Tuple index out of bounds: index {0:?}")]
-    TupleIndexOutOfBounds(Box<(Type, Type)>),
+    TupleIndexOutOfBounds(Box<(U, U)>),
     #[error("Type mismatch: {0:?}")]
-    TypeMismatch(Box<(Type, String)>),
+    TypeMismatch(Box<(U, String)>),
     #[error("Unbound variable: id={0}")]
     UnboundVariable(isize),
     #[error("Assert failed: L </: R {0:?}")]
-    AssertFailed(Box<(Type, Type)>),
+    AssertFailed(Box<(U, U)>),
     #[error("Missing continuation")]
     MissingContinuation,
     #[error("Runtime error: {0}")]
     RuntimeError(Arc<dyn Error + Send + Sync>),
+    #[error("Other error: {0}")]
+    OtherError(String),
+    #[error("Pandom")]
+    #[doc(hidden)]
+    Pandom(std::marker::PhantomData<V>),
 }
 
-impl Debug for TypeError {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Debug for TypeError<U, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self)
     }
@@ -150,36 +204,44 @@ macro_rules! type_dispatch {
             Type::Namespace(v) => v.$method($($args),*),
             Type::Pattern(v) => v.$method($($args),*),
             Type::Lazy(v) => v.$method($($args),*),
+            Type::Range(v) => v.$method($($args),*),
         }
     };
 }
 
-impl GCTraceable<FixPointInner> for Type {
+pub trait GcAllocObject<T: GCTraceable<T> + 'static>: GCTraceable<T> + 'static {}
+
+impl<T: GcAllocObject<T>> GCTraceable<T> for Type<T> {
     #[stacksafe::stacksafe]
-    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<FixPointInner>>) {
+    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
         type_dispatch!(self, collect, queue)
     }
 }
 
-impl Rootable for Type {
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Type<T> {}
+
+impl<T: GcAllocObject<T>> Rootable<T> for Type<T> {
     #[stacksafe::stacksafe]
-    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<FixPointInner>>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         type_dispatch!(self, upgrade, collected)
     }
 }
 
-impl CoinductiveType<Type> for Type {
+impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Type<T> {
     #[stacksafe::stacksafe]
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+    fn is(
+        &self,
+        other: &Type<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         type_dispatch!(self, is, other, ctx)
     }
 
-    fn dispatch(self) -> Type {
-        self
-    }
-
     #[stacksafe::stacksafe]
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+    fn reduce(
+        self,
+        ctx: &mut ReductionContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // 如果已经是范式类型则直接返回
         if self.is_normal_form() {
             return Ok(self);
@@ -188,7 +250,10 @@ impl CoinductiveType<Type> for Type {
     }
 
     #[stacksafe::stacksafe]
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
+    fn invoke(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         type_dispatch!(self, invoke, ctx)
     }
 
@@ -211,11 +276,12 @@ impl CoinductiveType<Type> for Type {
             Type::Namespace(v) => v.is_normal_form(),
             Type::Pattern(v) => v.is_normal_form(),
             Type::Lazy(v) => v.is_normal_form(),
+            Type::Range(v) => v.is_normal_form(),
         }
     }
 }
 
-impl Representable for Type {
+impl<T: GcAllocObject<T>> Representable for Type<T> {
     #[stacksafe::stacksafe]
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
         type_dispatch!(self, represent, path)
@@ -238,45 +304,63 @@ macro_rules! as_type {
     };
 }
 
-impl Type {
-    pub fn map<F, R>(&self, path: &mut FastCycleDetector<*const ()>, f: F) -> Result<R, TypeError>
+impl<T: GcAllocObject<T>> Type<T> {
+    pub fn map<F, R>(
+        &self,
+        path: &mut FastCycleDetector<*const ()>,
+        f: F,
+    ) -> Result<R, TypeError<Type<T>, T>>
     where
-        F: FnOnce(&mut FastCycleDetector<*const ()>, &Type) -> R,
+        F: FnOnce(&mut FastCycleDetector<*const ()>, &Type<T>) -> R,
     {
         match self {
             Type::FixPoint(v) => v.map(path, f),
             _ => Ok(f(path, self)),
         }
     }
-    pub fn equivalent<T: AsType>(&self, other: T) -> Result<bool, TypeError> {
-        let mut assumptions = SmallVec::new();
-        let empty_env = ClosureEnv::new(Vec::<Type>::new());
-        let mut pattern_env = Collector::new();
-        let type_check_ctx = &mut TypeCheckContext::new(
-            &mut assumptions,
-            (&empty_env, &empty_env),
-            &mut pattern_env,
-            false,
-        );
-        Ok(self.is(other.as_type_ref(), type_check_ctx)?.is_some()
-            && other.as_type_ref().is(self, type_check_ctx)?.is_some())
-    }
 }
 
 /// Trait to extract Type reference from different input types
-pub trait AsType {
-    fn as_type_ref(&self) -> &Type;
-    fn into_type(self) -> Type
+pub trait AsDispatcher<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    type RefDispatcher<'a>
+    where
+        Self: 'a;
+
+    fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a>;
+    fn into_dispatcher(self) -> U
     where
         Self: Sized;
 }
 
 // Implement AsTypeRef for different types
-impl AsType for Type {
-    fn as_type_ref(&self) -> &Type {
-        self
+impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Type<T> {
+    type RefDispatcher<'a>
+        = TypeRef<'a, T>
+    where
+        Self: 'a;
+    fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
+        match self {
+            Type::Bound(v) => TypeRef::Bound(v),
+            Type::Integer(v) => TypeRef::Integer(v),
+            Type::IntegerValue(v) => TypeRef::IntegerValue(v),
+            Type::Char(v) => TypeRef::Char(v),
+            Type::CharValue(v) => TypeRef::CharValue(v),
+            Type::Tuple(v) => TypeRef::Tuple(v),
+            Type::List(v) => TypeRef::List(v),
+            Type::Generalize(v) => TypeRef::Generalize(v),
+            Type::Specialize(v) => TypeRef::Specialize(v),
+            Type::FixPoint(v) => TypeRef::FixPoint(v),
+            Type::Invoke(v) => TypeRef::Invoke(v),
+            Type::Variable(v) => TypeRef::Variable(v),
+            Type::Closure(v) => TypeRef::Closure(v),
+            Type::Opcode(v) => TypeRef::Opcode(v),
+            Type::Namespace(v) => TypeRef::Namespace(v),
+            Type::Pattern(v) => TypeRef::Pattern(v),
+            Type::Lazy(v) => TypeRef::Lazy(v),
+            Type::Range(v) => TypeRef::Range(v),
+        }
     }
-    fn into_type(self) -> Type
+    fn into_dispatcher(self) -> Type<T>
     where
         Self: Sized,
     {
@@ -284,11 +368,34 @@ impl AsType for Type {
     }
 }
 
-impl AsType for &Type {
-    fn as_type_ref(&self) -> &Type {
-        self
+impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for &Type<T> {
+    type RefDispatcher<'a>
+        = TypeRef<'a, T>
+    where
+        Self: 'a;
+    fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
+        match self {
+            Type::Bound(v) => TypeRef::Bound(v),
+            Type::Integer(v) => TypeRef::Integer(v),
+            Type::IntegerValue(v) => TypeRef::IntegerValue(v),
+            Type::Char(v) => TypeRef::Char(v),
+            Type::CharValue(v) => TypeRef::CharValue(v),
+            Type::Tuple(v) => TypeRef::Tuple(v),
+            Type::List(v) => TypeRef::List(v),
+            Type::Generalize(v) => TypeRef::Generalize(v),
+            Type::Specialize(v) => TypeRef::Specialize(v),
+            Type::FixPoint(v) => TypeRef::FixPoint(v),
+            Type::Invoke(v) => TypeRef::Invoke(v),
+            Type::Variable(v) => TypeRef::Variable(v),
+            Type::Closure(v) => TypeRef::Closure(v),
+            Type::Opcode(v) => TypeRef::Opcode(v),
+            Type::Namespace(v) => TypeRef::Namespace(v),
+            Type::Pattern(v) => TypeRef::Pattern(v),
+            Type::Lazy(v) => TypeRef::Lazy(v),
+            Type::Range(v) => TypeRef::Range(v),
+        }
     }
-    fn into_type(self) -> Type
+    fn into_dispatcher(self) -> Type<T>
     where
         Self: Sized,
     {
@@ -321,47 +428,46 @@ impl<T> TaggedPtr<T> {
 }
 
 /// 类型检查上下文，用于 `is` 和 `has` 方法
-pub struct TypeCheckContext<'a> {
+pub struct TypeCheckContext<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-    pub closure_env: (&'a ClosureEnv, &'a ClosureEnv),
-    pub pattern_env: &'a mut Collector<(usize, Type)>,
-    pub pattern_mode: bool,
+    pub closure_env: (&'a ClosureEnv<U, V>, &'a ClosureEnv<U, V>),
+    pub pattern_env: &'a mut Collector<(usize, U)>,
+    pandom: std::marker::PhantomData<V>,
 }
 
-impl<'a> TypeCheckContext<'a> {
+impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, V> {
     pub fn new(
         assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&'a ClosureEnv, &'a ClosureEnv),
-        pattern_env: &'a mut Collector<(usize, Type)>,
-        pattern_mode: bool,
+        closure_env: (&'a ClosureEnv<U, V>, &'a ClosureEnv<U, V>),
+        pattern_env: &'a mut Collector<(usize, U)>,
     ) -> Self {
         Self {
             assumptions,
             closure_env,
             pattern_env,
-            pattern_mode,
+            pandom: std::marker::PhantomData,
         }
     }
 }
 
 /// 归约上下文，用于 `reduce` 方法
-pub struct ReductionContext<'a, 'roots> {
-    pub closure_env: &'a ClosureEnv,
-    pub param_env: &'a ParamEnv,
-    pub continuation: Option<&'a Type>,
-    pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-    pub gc: &'a mut GC<FixPointInner>,
-    pub roots: &'roots mut RootStack,
+pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    pub closure_env: &'a ClosureEnv<U, V>,
+    pub param_env: &'a ParamEnv<U, V>,
+    pub continuation: Option<&'a U>,
+    pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
+    pub gc: &'a mut GC<V>,
+    pub roots: &'roots mut RootStack<V>,
 }
 
-impl<'a, 'roots> ReductionContext<'a, 'roots> {
+impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext<'a, 'roots, U, V> {
     pub fn new(
-        closure_env: &'a ClosureEnv,
-        param_env: &'a ParamEnv,
-        continuation: Option<&'a Type>,
-        rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &'a mut GC<FixPointInner>,
-        roots: &'roots mut RootStack,
+        closure_env: &'a ClosureEnv<U, V>,
+        param_env: &'a ParamEnv<U, V>,
+        continuation: Option<&'a U>,
+        rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
+        gc: &'a mut GC<V>,
+        roots: &'roots mut RootStack<V>,
     ) -> Self {
         Self {
             closure_env,
@@ -375,25 +481,25 @@ impl<'a, 'roots> ReductionContext<'a, 'roots> {
 }
 
 /// 类型应用上下文，用于 `invoke` 方法
-pub struct InvokeContext<'a, 'roots> {
-    pub arg: &'a Type,
-    pub closure_env: &'a ClosureEnv,
-    pub param_env: &'a ParamEnv,
-    pub continuation: Option<&'a Type>,
-    pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-    pub gc: &'a mut GC<FixPointInner>,
-    pub roots: &'roots mut RootStack,
+pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    pub arg: &'a U,
+    pub closure_env: &'a ClosureEnv<U, V>,
+    pub param_env: &'a ParamEnv<U, V>,
+    pub continuation: Option<&'a U>,
+    pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
+    pub gc: &'a mut GC<V>,
+    pub roots: &'roots mut RootStack<V>,
 }
 
-impl<'a, 'roots> InvokeContext<'a, 'roots> {
+impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a, 'roots, U, V> {
     pub fn new(
-        arg: &'a Type,
-        closure_env: &'a ClosureEnv,
-        param_env: &'a ParamEnv,
-        continuation: Option<&'a Type>,
-        rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, Type, bool); 8]>,
-        gc: &'a mut GC<FixPointInner>,
-        roots: &'roots mut RootStack,
+        arg: &'a U,
+        closure_env: &'a ClosureEnv<U, V>,
+        param_env: &'a ParamEnv<U, V>,
+        continuation: Option<&'a U>,
+        rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
+        gc: &'a mut GC<V>,
+        roots: &'roots mut RootStack<V>,
     ) -> Self {
         Self {
             arg,
@@ -406,31 +512,62 @@ impl<'a, 'roots> InvokeContext<'a, 'roots> {
         }
     }
 }
-
-pub trait CoinductiveType<T: CoinductiveType<T>>: Clone {
-    fn is(&self, other: &T, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError>;
-
-    fn dispatch(self) -> T;
+pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
+    GcAllocObject<V> + Clone + Rootable<V> + Representable + AsDispatcher<U, V>
+{
+    fn is<'a, K: 'a>(
+        &self,
+        other: K,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<Option<()>, TypeError<U, V>>;
 
     // 归约变换
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<T, TypeError>;
+    fn reduce(self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     // 类型应用
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<T, TypeError>;
+    fn invoke(&self, ctx: &mut InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         TaggedPtr::new_unique(self as *const _ as *const ())
     }
 
     fn is_normal_form(&self) -> bool;
+
+    fn equivalent(&self, other: &Self) -> Result<bool, TypeError<U, V>> {
+        let mut assumptions = SmallVec::new();
+        let empty_env = ClosureEnv::<U, V>::new(Vec::new());
+        let mut pattern_env = Collector::new_disabled();
+        let type_check_ctx = &mut TypeCheckContext::new(
+            &mut assumptions,
+            (&empty_env, &empty_env),
+            &mut pattern_env,
+        );
+        Ok(self
+            .is(other.as_ref_dispatcher(), type_check_ctx)?
+            .is_some()
+            && other
+                .is(self.as_ref_dispatcher(), type_check_ctx)?
+                .is_some())
+    }
+
+    fn dispatch(self) -> U {
+        <Self as AsDispatcher<U, V>>::into_dispatcher(self)
+    }
+
+    fn dispatch_ref<'a>(&'a self) -> Self::RefDispatcher<'a>
+    where
+        Self: 'a,
+    {
+        <Self as AsDispatcher<U, V>>::as_ref_dispatcher(self)
+    }
 }
 
-pub trait CoinductiveTypeWithAny<T: CoinductiveType<T>> {
-    fn has<V: CoinductiveType<T>>(
+pub trait CoinductiveTypeWithAny<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    fn has<X: CoinductiveType<U, V>>(
         &self,
-        other: &V,
-        ctx: &mut TypeCheckContext,
-    ) -> Result<Option<()>, TypeError>;
+        other: &X,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<Option<()>, TypeError<U, V>>;
 }
 
 pub trait Representable {

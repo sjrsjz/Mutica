@@ -4,46 +4,64 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
 };
 
-#[derive(Clone)]
-pub struct Tuple {
-    types: Arc<[Type]>,
+pub struct Tuple<T: GcAllocObject<T>> {
+    types: Arc<[Type<T>]>,
     is_nf: bool,
 }
 
-impl GCTraceable<FixPointInner> for Tuple {
-    fn collect(
-        &self,
-        queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<FixPointInner>>,
-    ) {
+impl<T: GcAllocObject<T>> Clone for Tuple<T> {
+    fn clone(&self) -> Self {
+        Self {
+            types: self.types.clone(),
+            is_nf: self.is_nf,
+        }
+    }
+}
+
+impl<T: GcAllocObject<T>> GCTraceable<T> for Tuple<T> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         for v in self.types.iter() {
             v.collect(queue);
         }
     }
 }
 
-impl CoinductiveType<Type> for Tuple {
-    fn dispatch(self) -> Type {
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Tuple<T> {}
+
+impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Tuple<T> {
+    type RefDispatcher<'a>
+        = TypeRef<'a, T>
+    where
+        Self: 'a;
+
+    fn into_dispatcher(self) -> Type<T> {
         Type::Tuple(self)
     }
 
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+    fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
+        TypeRef::Tuple(self)
+    }
+}
+
+impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Tuple<T> {
+    fn is(
+        &self,
+        other: TypeRef<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                pattern_env,
-                ctx.pattern_mode,
-            );
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Tuple(other_types) => {
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Tuple(other_types) => {
                     if self.types.len() != other_types.len() {
                         return Ok(None);
                     }
@@ -54,7 +72,7 @@ impl CoinductiveType<Type> for Tuple {
                     }
                     Ok(Some(()))
                 }
-                Type::List(v) => {
+                TypeRef::List(v) => {
                     if self.is_empty() && v.len() == 0 {
                         return Ok(Some(()));
                     }
@@ -68,18 +86,21 @@ impl CoinductiveType<Type> for Tuple {
                     }
                     self.types[1].is(&v.view(1), &mut inner_ctx)
                 }
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
     }
 
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
-        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
+    fn reduce(
+        self,
+        ctx: &mut ReductionContext<Type<T>, T>,
+    ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
+        let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
         for sub in self.types.into_iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
@@ -87,7 +108,10 @@ impl CoinductiveType<Type> for Tuple {
         Ok(Self::new(&result))
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
+    fn invoke(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+    ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         ctx.arg
             .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 Type::IntegerValue(iv) => {
@@ -117,15 +141,15 @@ impl CoinductiveType<Type> for Tuple {
     }
 }
 
-impl Rootable for Tuple {
-    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
+impl<T: GcAllocObject<T>> Rootable<T> for Tuple<T> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for ty in self.types.iter() {
             ty.upgrade(collected);
         }
     }
 }
 
-impl Representable for Tuple {
+impl<T: GcAllocObject<T>> Representable for Tuple<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
@@ -143,21 +167,21 @@ impl Representable for Tuple {
     }
 }
 
-impl Tuple {
-    pub fn new<I, T>(types: I) -> Type
+impl<T: GcAllocObject<T>> Tuple<T> {
+    pub fn new<I, U>(types: I) -> Type<T>
     where
-        I: IntoIterator<Item = T>,
-        T: AsType,
+        I: IntoIterator<Item = U>,
+        U: AsDispatcher<Type<T>, T>,
     {
         let types = types
             .into_iter()
-            .map(|t| t.into_type())
-            .collect::<Arc<[Type]>>();
+            .map(|t| t.into_dispatcher())
+            .collect::<Arc<[Type<T>]>>();
         let is_nf = types.iter().all(|t| t.is_normal_form());
         Self { types, is_nf }.dispatch()
     }
 
-    pub fn types(&self) -> &[Type] {
+    pub fn types(&self) -> &[Type<T>] {
         &self.types
     }
 

@@ -32,7 +32,7 @@ impl LinearScheduler {
         }
     }
 
-    fn io(f: &Type, arg: &Type) -> Result<Option<Type>, TypeError> {
+    fn io(f: &Type, arg: &Type) -> Result<Option<Type>, TypeError<Type>> {
         f.map(&mut FastCycleDetector::new(), |_, f| {
             if !matches!(f, Type::Opcode(_)) {
                 return Ok(None);
@@ -74,7 +74,7 @@ impl LinearScheduler {
         })?
     }
 
-    pub fn step(&mut self, gc: &mut GC<FixPointInner>) -> Result<bool, TypeError> {
+    pub fn step(&mut self, gc: &mut GC<FixPointInner>) -> Result<bool, TypeError<Type>> {
         let empty_v = ClosureEnv::new(Vec::<Type>::new());
         let empty_p = ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
         let mut rec_assumptions = smallvec::SmallVec::new();

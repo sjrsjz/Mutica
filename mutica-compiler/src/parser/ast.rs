@@ -1650,7 +1650,7 @@ impl<'ast> LinearTypeAst<'ast> {
         gc: &mut GC<FixPointInner>,
         roots: &'roots mut RootStack,
         loc: Option<&SourceLocation>,
-    ) -> Result<BuildResult, Result<TypeError, ParseError<'ast>>> {
+    ) -> Result<BuildResult, Result<TypeError<Type>, ParseError<'ast>>> {
         match self {
             LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
             LinearTypeAst::Char => Ok(BuildResult::simple(Character::new())),

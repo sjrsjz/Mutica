@@ -3,21 +3,30 @@ use std::sync::Arc;
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
-    AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-    Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
-    type_bound::TypeBound,
+    AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+    ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+    TypeRef, type_bound::TypeBound,
 };
 
 // 抽象链表类型，实际实现为 Vec<T>
 // 逻辑等价为 (T_1, (T_2, (T_3, ...)))
-#[derive(Clone)]
-pub struct List {
-    elements: Arc<Vec<Type>>,
+pub struct List<T: GcAllocObject<T>> {
+    elements: Arc<Vec<Type<T>>>,
     head: usize,
     is_nf: bool,
 }
 
-impl Representable for List {
+impl<T: GcAllocObject<T>> Clone for List<T> {
+    fn clone(&self) -> Self {
+        Self {
+            elements: self.elements.clone(),
+            head: self.head,
+            is_nf: self.is_nf,
+        }
+    }
+}
+
+impl<T: GcAllocObject<T>> Representable for List<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
@@ -34,11 +43,8 @@ impl Representable for List {
     }
 }
 
-impl GCTraceable<FixPointInner> for List {
-    fn collect(
-        &self,
-        queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<FixPointInner>>,
-    ) {
+impl<T: GcAllocObject<T>> GCTraceable<T> for List<T> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         for element in self.iter() {
             // 我们不关心 head 之前的元素，他们对于本类型是不可达的
             element.collect(queue);
@@ -46,8 +52,8 @@ impl GCTraceable<FixPointInner> for List {
     }
 }
 
-impl Rootable for List {
-    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
+impl<T: GcAllocObject<T>> Rootable<T> for List<T> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for element in self.iter() {
             // 我们不关心 head 之前的元素，他们对于本类型是不可达的
             element.upgrade(collected);
@@ -55,21 +61,34 @@ impl Rootable for List {
     }
 }
 
-impl CoinductiveType<Type> for List {
-    fn dispatch(self) -> Type {
+impl<T: GcAllocObject<T>> GcAllocObject<T> for List<T> {}
+
+impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for List<T> {
+    type RefDispatcher<'a>
+        = TypeRef<'a, T>
+    where
+        Self: 'a;
+
+    fn into_dispatcher(self) -> Type<T> {
         Type::List(self)
     }
 
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+    fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
+        TypeRef::List(self)
+    }
+}
+
+impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for List<T> {
+    fn is(
+        &self,
+        other: &TypeRef<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                pattern_env,
-                ctx.pattern_mode,
-            );
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                Type::List(v) => {
+                TypeRef::List(v) => {
                     if self.len() != v.len() {
                         return Ok(None);
                     }
@@ -80,7 +99,7 @@ impl CoinductiveType<Type> for List {
                     }
                     Ok(Some(()))
                 }
-                Type::Tuple(v) => {
+                TypeRef::Tuple(v) => {
                     if self.len() == 0 && v.is_empty() {
                         return Ok(Some(()));
                     }
@@ -96,18 +115,21 @@ impl CoinductiveType<Type> for List {
                     let second = &v.types()[1];
                     view.is(second, &mut inner_ctx)
                 }
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
     }
 
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
+    fn reduce(
+        self,
+        ctx: &mut ReductionContext<Type<T>, T>,
+    ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         let mut reduced_elements = Vec::with_capacity(self.len());
         for element in self.iter() {
             reduced_elements.push(element.clone().reduce(ctx)?);
@@ -115,7 +137,10 @@ impl CoinductiveType<Type> for List {
         Ok(Self::new(reduced_elements))
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
+    fn invoke(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+    ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         match ctx.arg {
             Type::IntegerValue(iv) => match iv.value() {
                 0 => self.head().map(|t| t.clone()).ok_or_else(|| {
@@ -148,28 +173,28 @@ impl CoinductiveType<Type> for List {
     }
 }
 
-impl List {
+impl<T: GcAllocObject<T>> List<T> {
     pub fn len(&self) -> usize {
         self.elements.len() - self.head
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Type> {
+    pub fn iter(&self) -> impl Iterator<Item = &Type<T>> {
         self.elements.iter().skip(self.head)
     }
 
-    pub fn get(&self, index: usize) -> Option<&Type> {
+    pub fn get(&self, index: usize) -> Option<&Type<T>> {
         if index >= self.len() {
             return None;
         }
         self.elements.get(self.head + index)
     }
 
-    pub fn new<I, T>(types: I) -> Type
+    pub fn new<I, X>(types: I) -> Type<T>
     where
-        I: IntoIterator<Item = T>,
-        T: AsType,
+        I: IntoIterator<Item = X>,
+        X: AsDispatcher<Type<T>, T>,
     {
-        let elements: Vec<Type> = types.into_iter().map(|t| t.into_type()).collect();
+        let elements: Vec<Type<T>> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         let is_nf = elements.iter().all(|t| t.is_normal_form());
         Self {
             elements: Arc::from(elements),
@@ -179,7 +204,7 @@ impl List {
         .dispatch()
     }
 
-    pub fn view(&self, start: usize) -> Type {
+    pub fn view(&self, start: usize) -> Type<T> {
         if start > self.len() {
             panic!("List view start index out of bounds");
         }
@@ -192,11 +217,11 @@ impl List {
         .dispatch()
     }
 
-    pub fn head(&self) -> Option<&Type> {
+    pub fn head(&self) -> Option<&Type<T>> {
         self.iter().next()
     }
 
-    pub fn tail(&self) -> Option<Type> {
+    pub fn tail(&self) -> Option<Type<T>> {
         if self.len() == 0 {
             return None;
         }

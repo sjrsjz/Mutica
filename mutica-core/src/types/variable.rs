@@ -1,7 +1,7 @@
 use crate::{
     types::{
-        CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext, Representable,
-        Rootable, Type, TypeCheckContext, TypeError, fixpoint::FixPointInner,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         type_bound::TypeBound,
     },
     util::cycle_detector::FastCycleDetector,
@@ -13,36 +13,44 @@ pub struct Variable {
     index: isize,
 }
 
-impl GCTraceable<FixPointInner> for Variable {
-    fn collect(
-        &self,
-        _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<FixPointInner>>,
-    ) {
-    }
+impl<T: GcAllocObject<T>> GCTraceable<T> for Variable {
+    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl Rootable for Variable {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Variable {}
 
-impl CoinductiveType<Type> for Variable {
-    // Variable 永远不能是 NF 类型，因为 reduce 随时能把它替换掉
-    fn dispatch(self) -> Type {
+impl<T: GcAllocObject<T>> Rootable<T> for Variable {}
+
+impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Variable {
+    type RefDispatcher<'a>
+        = TypeRef<'a, T>
+    where
+        Self: 'a;
+
+    fn into_dispatcher(self) -> Type<T> {
         Type::Variable(self)
     }
 
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError> {
+    fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
+        TypeRef::Variable(self)
+    }
+}
+
+impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Variable {
+    fn is(
+        &self,
+        other: TypeRef<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                pattern_env,
-                ctx.pattern_mode,
-            );
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => {
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Variable(v) => {
                     let self_idx = self.index;
                     let v_idx = v.index;
                     if self_idx >= 0 || v_idx >= 0 {
@@ -57,7 +65,7 @@ impl CoinductiveType<Type> for Variable {
                     let value_r = ctx.closure_env.1.get(r)?;
                     value_l.is(value_r, &mut inner_ctx)
                 }
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
                 _ => {
                     if self.index >= 0 {
                         // 如果是正数,说明是全局变量,无法确定类型
@@ -71,7 +79,10 @@ impl CoinductiveType<Type> for Variable {
         })
     }
 
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+    fn reduce(
+        self,
+        ctx: &mut ReductionContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let idx = self.index;
         if idx >= 0 {
             Ok(ctx
@@ -84,7 +95,10 @@ impl CoinductiveType<Type> for Variable {
         }
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, TypeError> {
+    fn invoke(
+        &self,
+        _ctx: &mut InvokeContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
@@ -93,24 +107,20 @@ impl CoinductiveType<Type> for Variable {
     }
 }
 
-impl CoinductiveTypeWithAny<Type> for Variable {
-    fn has<V: CoinductiveType<Type>>(
+impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Variable {
+    fn has<V: CoinductiveType<Type<T>, T>>(
         &self,
         other: &V,
-        ctx: &mut TypeCheckContext,
-    ) -> Result<Option<()>, TypeError> {
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             if self.index >= 0 {
                 Ok(None)
             } else {
                 let r = (-1 - self.index) as usize;
                 let value = ctx.closure_env.1.get(r)?;
-                let mut inner_ctx = TypeCheckContext::new(
-                    ctx.assumptions,
-                    ctx.closure_env,
-                    pattern_env,
-                    ctx.pattern_mode,
-                );
+                let mut inner_ctx =
+                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
                 other.is(value, &mut inner_ctx)
             }
         })
@@ -124,7 +134,7 @@ impl Representable for Variable {
 }
 
 impl Variable {
-    pub fn new_deburijn(debruijn_index: isize) -> Type {
+    pub fn new_debruijn<T: GcAllocObject<T>>(debruijn_index: isize) -> Type<T> {
         Variable {
             index: debruijn_index,
         }

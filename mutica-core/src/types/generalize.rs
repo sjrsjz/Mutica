@@ -5,8 +5,8 @@ use smallvec::smallvec;
 
 use crate::{
     types::{
-        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, closure::ClosureEnv,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef, closure::ClosureEnv,
         fixpoint::FixPointInner, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
@@ -78,7 +78,7 @@ impl GCTraceable<FixPointInner> for Generalize {
     }
 }
 
-impl Rootable for Generalize {
+impl Rootable<FixPointInner>for Generalize {
     fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         for sub in self.types.iter() {
             sub.upgrade(collected);
@@ -87,18 +87,22 @@ impl Rootable for Generalize {
 }
 
 impl CoinductiveType<Type> for Generalize {
+    type RefDispatcher<'a>
+        = TypeRef<'a>
+    where
+        Self: 'a;
     fn dispatch(self) -> Type {
         Type::Generalize(self)
     }
 
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
+    fn dispatch_ref<'a>(&'a self) -> Self::RefDispatcher<'a> {
+        TypeRef::Generalize(self)
+    }
+
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError<Type>> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                pattern_env,
-                ctx.pattern_mode,
-            );
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
                 Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
                 Type::Specialize(v) => v.has(self, &mut inner_ctx),
@@ -122,7 +126,7 @@ impl CoinductiveType<Type> for Generalize {
     /// `Max<T₁, ..., Tₙ>[V] = Max<T₁[V], ..., Tₙ[V]>`
     ///
     /// 类型应用操作分布到不可约集合中的每个类型上。
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError> {
+    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError<Type>> {
         let mut result = smallvec::SmallVec::<[Type; 8]>::new();
         for sub in self.types.into_iter() {
             result.push(sub.clone().reduce(ctx)?);
@@ -130,7 +134,7 @@ impl CoinductiveType<Type> for Generalize {
         Self::new(&result, ctx.closure_env)
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError> {
+    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError<Type>> {
         let mut result = smallvec::SmallVec::<[Type; 8]>::new();
         for sub in self.types.iter() {
             result.push(sub.invoke(ctx)?);
@@ -148,10 +152,11 @@ impl CoinductiveTypeWithAny<Type> for Generalize {
         &self,
         other: &V,
         ctx: &mut TypeCheckContext,
-    ) -> Result<Option<()>, super::TypeError> {
-        ctx.pattern_env.collect(|pattern_env| {
+    ) -> Result<Option<()>, super::TypeError<Type>> {
+        ctx.pattern_env.collect(|_| {
+            let mut new_pattern_env = Collector::new_disabled();
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, false);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
             for sub in self.types.iter() {
                 // 我们传入 false 是因为generalize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
                 if other.is(sub, &mut inner_ctx)?.is_some() {
@@ -202,17 +207,17 @@ impl Generalize {
     ///
     /// 最终结果保证：集合中任意两个类型都不存在子类型关系，
     /// 且保留的都是最泛化的类型。
-    pub fn new<I, T>(types: I, closure_env: &ClosureEnv) -> Result<Type, TypeError>
+    pub fn new<I, T>(types: I, closure_env: &ClosureEnv) -> Result<Type, TypeError<Type>>
     where
         I: IntoIterator<Item = T>,
-        T: AsType,
+        T: AsDispatcher,
     {
         fn collect(
             collected: &mut Vec<Type>,
             path: &mut FastCycleDetector<*const ()>,
             t: &Type,
-        ) -> Result<(), TypeError> {
-            t.map(path, |path, t| -> Result<(), TypeError> {
+        ) -> Result<(), TypeError<Type>> {
+            t.map(path, |path, t| -> Result<(), TypeError<Type>> {
                 match t {
                     Type::Generalize(generalize) => {
                         for sub in generalize.types.iter() {
@@ -235,11 +240,11 @@ impl Generalize {
         types
             .into_iter()
             .map(|t| {
-                all_nf &= t.as_type_ref().is_normal_form();
+                all_nf &= t.as_ref_dispatcher().is_normal_form();
                 collect(
                     &mut collected,
                     &mut FastCycleDetector::new(),
-                    t.as_type_ref(),
+                    t.as_ref_dispatcher(),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -253,12 +258,11 @@ impl Generalize {
                 if i != j && !absorbed[j] {
                     // 如果该类型是其他类型的子类型,则该类型被吸收
                     let mut assumptions_temp = smallvec![];
-                    let mut pattern_env_temp = Collector::new();
+                    let mut pattern_env_temp = Collector::new_disabled();
                     let mut check_ctx = TypeCheckContext::new(
                         &mut assumptions_temp,
                         (closure_env, closure_env),
                         &mut pattern_env_temp,
-                        false,
                     );
                     if collected[i].is(&collected[j], &mut check_ctx)?.is_some() {
                         absorbed[i] = true;
@@ -290,9 +294,9 @@ impl Generalize {
     pub fn new_raw<I, T>(types: I) -> Type
     where
         I: IntoIterator<Item = T>,
-        T: AsType,
+        T: AsDispatcher,
     {
-        let collected: Vec<_> = types.into_iter().map(|t| t.into_type()).collect();
+        let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         Self {
             types: Arc::from(collected),
             is_nf: false,

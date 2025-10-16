@@ -4,8 +4,8 @@ use arc_gc::{arc::GCArc, gc::GC, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsType, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
+        Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         closure::{Closure, ClosureEnv, ParamEnv},
         fixpoint::FixPointInner,
         pattern::Pattern,
@@ -37,7 +37,7 @@ impl GCTraceable<FixPointInner> for Invoke {
     }
 }
 
-impl Rootable for Invoke {
+impl Rootable<FixPointInner>for Invoke {
     fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
         self.inner.0.upgrade(collected);
         self.inner.1.upgrade(collected);
@@ -48,18 +48,22 @@ impl Rootable for Invoke {
 }
 
 impl CoinductiveType<Type> for Invoke {
+    type RefDispatcher<'a>
+        = TypeRef<'a>
+    where
+        Self: 'a;
     fn dispatch(self) -> Type {
         Type::Invoke(self)
     }
 
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError> {
+    fn dispatch_ref<'a>(&'a self) -> Self::RefDispatcher<'a> {
+        TypeRef::Invoke(self)
+    }
+
+    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError<Type>> {
         ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                pattern_env,
-                ctx.pattern_mode,
-            );
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
                 Type::Invoke(v) => {
                     let func_eq = self.inner.0.is(&v.inner.0, &mut inner_ctx)?;
@@ -91,7 +95,7 @@ impl CoinductiveType<Type> for Invoke {
         })
     }
 
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError> {
+    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError<Type>> {
         Ok(Self::new(
             self.inner.0.clone().reduce(ctx)?,
             self.inner.1.clone().reduce(ctx)?,
@@ -99,7 +103,7 @@ impl CoinductiveType<Type> for Invoke {
         ))
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, super::TypeError> {
+    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, super::TypeError<Type>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
@@ -128,16 +132,16 @@ impl Representable for Invoke {
 }
 
 impl Invoke {
-    pub fn new<U: AsType, V: AsType, W: AsType>(func: U, arg: V, continuation: Option<W>) -> Type {
-        let all_nf = func.as_type_ref().is_normal_form()
-            && arg.as_type_ref().is_normal_form()
+    pub fn new<U: AsDispatcher, V: AsDispatcher, W: AsDispatcher>(func: U, arg: V, continuation: Option<W>) -> Type {
+        let all_nf = func.as_ref_dispatcher().is_normal_form()
+            && arg.as_ref_dispatcher().is_normal_form()
             && continuation
                 .as_ref()
-                .map_or(true, |c| c.as_type_ref().is_normal_form());
+                .map_or(true, |c| c.as_ref_dispatcher().is_normal_form());
         let inner = Arc::new((
-            func.into_type(),
-            arg.into_type(),
-            continuation.map(|c| c.into_type()),
+            func.into_dispatcher(),
+            arg.into_dispatcher(),
+            continuation.map(|c| c.into_dispatcher()),
         ));
         Self {
             inner,
@@ -217,7 +221,7 @@ impl Invoke {
         v: Type,
         gc: &mut GC<FixPointInner>,
         roots: &'roots mut RootStack,
-    ) -> Result<Type, TypeError> {
+    ) -> Result<Type, TypeError<Type>> {
         // The `map` here is used to traverse the type structure without deep recursion
         // if `v` is already a value.
         v.map(&mut FastCycleDetector::new(), |_, ty| match ty {
@@ -295,7 +299,7 @@ impl Invoke {
         gc: &mut GC<FixPointInner>,
         roots: &'roots mut RootStack,
         cont_stack: &mut Vec<Type>,
-    ) -> Result<Type, TypeError> {
+    ) -> Result<Type, TypeError<Type>> {
         if self.inner.2.is_none() {
             // Tail call optimization: If there is no outer continuation,
             return Ok(v);

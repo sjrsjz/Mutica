@@ -1,14 +1,14 @@
-use arc_gc::arc::GCArc;
+use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
-use crate::types::{Type, fixpoint::FixPointInner};
+use crate::types::{GcAllocObject, Type};
 
-pub struct RootStack {
-    roots_a: Vec<GCArc<FixPointInner>>,
-    roots_b: Vec<GCArc<FixPointInner>>,
+pub struct RootStack<T: GcAllocObject<T>> {
+    roots_a: Vec<GCArc<T>>,
+    roots_b: Vec<GCArc<T>>,
     flag: bool,
 }
 
-impl RootStack {
+impl<T: GcAllocObject<T>> RootStack<T> {
     pub fn new() -> Self {
         Self {
             roots_a: Vec::new(),
@@ -18,7 +18,7 @@ impl RootStack {
     }
 
     /// 向当前根栈添加根
-    pub fn push(&mut self, root: GCArc<FixPointInner>) {
+    pub fn push(&mut self, root: GCArc<T>) {
         if self.flag {
             self.roots_b.push(root);
         } else {
@@ -27,7 +27,7 @@ impl RootStack {
     }
 
     /// 将一个类型连接到当前根栈
-    pub fn attach(&mut self, ty: &Type) {
+    pub fn attach(&mut self, ty: &Type<T>) {
         ty.upgrade(if self.flag {
             &mut self.roots_b
         } else {
@@ -56,7 +56,7 @@ impl RootStack {
     }
 }
 
-pub trait Rootable {
+pub trait Rootable<GcType: GCTraceable<GcType> + 'static> {
     #[allow(unused_variables)]
-    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<FixPointInner>>) {}
+    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<GcType>>) {}
 }
