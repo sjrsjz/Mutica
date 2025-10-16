@@ -61,7 +61,9 @@ impl<T: GcAllocObject<T>> Rootable<T> for List<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for List<T> {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for List<T> {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for List<T> {
     type RefDispatcher<'a>

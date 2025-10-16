@@ -224,7 +224,9 @@ impl<V: GcAllocObject<V>> Clone for Closure<V> {
     }
 }
 
-impl<V: GcAllocObject<V>> GcAllocObject<V> for Closure<V> {}
+impl<V: GcAllocObject<V>> GcAllocObject<V> for Closure<V> {
+    type Inner = Type<V>;
+}
 
 impl<V: GcAllocObject<V>> GCTraceable<V> for Closure<V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {

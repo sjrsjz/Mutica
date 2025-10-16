@@ -30,7 +30,9 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Opcode {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Opcode {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Opcode {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> Rootable<T> for Opcode {}
 

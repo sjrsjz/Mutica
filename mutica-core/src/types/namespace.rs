@@ -33,7 +33,9 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Namespace<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Namespace<T> {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Namespace<T> {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> Rootable<T> for Namespace<T> {
     fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<T>>) {

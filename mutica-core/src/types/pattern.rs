@@ -49,7 +49,9 @@ impl<T: GcAllocObject<T>> Representable for Pattern<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Pattern<T> {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Pattern<T> {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Pattern<T> {
     type RefDispatcher<'a>

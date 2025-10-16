@@ -20,7 +20,9 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for IntegerValue {
 
 impl<T: GcAllocObject<T>> Rootable<T> for IntegerValue {}
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for IntegerValue {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for IntegerValue {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for IntegerValue {
     type RefDispatcher<'a>

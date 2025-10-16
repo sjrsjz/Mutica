@@ -93,7 +93,7 @@ pub enum Type<T: GcAllocObject<T>> {
     // 字符值类型
     CharValue(CharacterValue),
     // 元组类型
-    Tuple(Tuple),
+    Tuple(Tuple<T>),
     // 列表类型（嵌套元组的优化表示）
     List(List<T>),
     // 泛化类型
@@ -101,7 +101,7 @@ pub enum Type<T: GcAllocObject<T>> {
     // 专化类型
     Specialize(Specialize),
     // 不动点类型
-    FixPoint(FixPoint),
+    FixPoint(FixPoint<T>),
     // 类型应用
     Invoke(Invoke),
     // 类型变量
@@ -126,11 +126,11 @@ pub enum TypeRef<'a, T: GcAllocObject<T>> {
     IntegerValue(&'a IntegerValue),
     Char(&'a Character),
     CharValue(&'a CharacterValue),
-    Tuple(&'a Tuple),
+    Tuple(&'a Tuple<T>),
     List(&'a List<T>),
-    Generalize(&'a Generalize),
+    Generalize(&'a Generalize<T>),
     Specialize(&'a Specialize),
-    FixPoint(&'a FixPoint),
+    FixPoint(&'a FixPoint<T>),
     Invoke(&'a Invoke),
     Variable(&'a Variable),
     Closure(&'a Closure<T>),
@@ -139,6 +139,71 @@ pub enum TypeRef<'a, T: GcAllocObject<T>> {
     Pattern(&'a Pattern<T>),
     Lazy(&'a Lazy<T>),
     Range(&'a TypeRange),
+}
+
+impl<T: GcAllocObject<T>> TypeRef<'_, T> {
+    fn clone(&self) -> Type<T> {
+        match self {
+            TypeRef::Bound(v) => Type::<T>::Bound((*v).clone()),
+            TypeRef::Integer(v) => Type::<T>::Integer((*v).clone()),
+            TypeRef::IntegerValue(v) => Type::<T>::IntegerValue((*v).clone()),
+            TypeRef::Char(v) => Type::<T>::Char((*v).clone()),
+            TypeRef::CharValue(v) => Type::<T>::CharValue((*v).clone()),
+            TypeRef::Tuple(v) => Type::<T>::Tuple((*v).clone()),
+            TypeRef::List(v) => Type::<T>::List((*v).clone()),
+            TypeRef::Generalize(v) => Type::<T>::Generalize((*v).clone()),
+            TypeRef::Specialize(v) => Type::<T>::Specialize((*v).clone()),
+            TypeRef::FixPoint(v) => Type::<T>::FixPoint((*v).clone()),
+            TypeRef::Invoke(v) => Type::<T>::Invoke((*v).clone()),
+            TypeRef::Variable(v) => Type::<T>::Variable((*v).clone()),
+            TypeRef::Closure(v) => Type::<T>::Closure((*v).clone()),
+            TypeRef::Opcode(v) => Type::<T>::Opcode((*v).clone()),
+            TypeRef::Namespace(v) => Type::<T>::Namespace((*v).clone()),
+            TypeRef::Pattern(v) => Type::<T>::Pattern((*v).clone()),
+            TypeRef::Lazy(v) => Type::<T>::Lazy((*v).clone()),
+            TypeRef::Range(v) => Type::<T>::Range((*v).clone()),
+        }
+    }
+}
+
+impl<'a, T: GcAllocObject<T>> TypeRef<'a, T> {
+    pub fn tagged_ptr(&self) -> TaggedPtr<()> {
+        match self {
+            TypeRef::Bound(v) => v.tagged_ptr(),
+            TypeRef::Integer(v) => v.tagged_ptr(),
+            TypeRef::IntegerValue(v) => v.tagged_ptr(),
+            TypeRef::Char(v) => v.tagged_ptr(),
+            TypeRef::CharValue(v) => v.tagged_ptr(),
+            TypeRef::Tuple(v) => v.tagged_ptr(),
+            TypeRef::List(v) => v.tagged_ptr(),
+            TypeRef::Generalize(v) => v.tagged_ptr(),
+            TypeRef::Specialize(v) => v.tagged_ptr(),
+            TypeRef::FixPoint(v) => v.tagged_ptr(),
+            TypeRef::Invoke(v) => v.tagged_ptr(),
+            TypeRef::Variable(v) => v.tagged_ptr(),
+            TypeRef::Closure(v) => v.tagged_ptr(),
+            TypeRef::Opcode(v) => v.tagged_ptr(),
+            TypeRef::Namespace(v) => v.tagged_ptr(),
+            TypeRef::Pattern(v) => v.tagged_ptr(),
+            TypeRef::Lazy(v) => v.tagged_ptr(),
+            TypeRef::Range(v) => v.tagged_ptr(),
+        }
+    }
+
+    fn map_inner<F, R>(
+        &self,
+        path: &mut FastCycleDetector<*const ()>,
+        f: F,
+    ) -> Result<R, TypeError<Type<T>, T>>
+    where
+        F: FnOnce(&mut FastCycleDetector<*const ()>, TypeRef<T>) -> R,
+        T: GcAllocObject<T, Inner = Type<T>>,
+    {
+        match self {
+            TypeRef::FixPoint(v) => v.map(path, f),
+            _ => Ok(f(path, self.clone())),
+        }
+    }
 }
 
 impl<T: GcAllocObject<T>> Debug for Type<T> {
@@ -209,7 +274,63 @@ macro_rules! type_dispatch {
     };
 }
 
-pub trait GcAllocObject<T: GCTraceable<T> + 'static>: GCTraceable<T> + 'static {}
+pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
+    GCTraceable<T> + 'static + Sized
+{
+    type Inner: CoinductiveType<Self::Inner, T>
+    where
+        T: GcAllocObject<T>;
+    fn new_placeholder() -> Self {
+        unimplemented!()
+    }
+
+    fn get_inner(&self) -> Option<&Self::Inner>
+    where
+        T: GcAllocObject<T>,
+    {
+        unimplemented!()
+    }
+
+    fn set_inner(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
+    where
+        T: GcAllocObject<T>,
+    {
+        unimplemented!()
+    }
+
+    // pub fn map<F, R>(
+    //     &self,
+    //     path: &mut FastCycleDetector<*const ()>,
+    //     f: F,
+    // ) -> Result<R, TypeError<Type<T>, T>>
+    // where
+    //     F: FnOnce(&mut FastCycleDetector<*const ()>, &Type<T>) -> R,
+    // {
+    //     match self {
+    //         Type::FixPoint(v) => v.map(path, f),
+    //         _ => Ok(f(path, self)),
+    //     }
+    // }
+
+    fn map_inner<F, R>(
+        &self,
+        path: &mut FastCycleDetector<*const ()>,
+        f: F,
+    ) -> Result<R, TypeError<Self::Inner, T>>
+    where
+        F: FnOnce(
+            &mut FastCycleDetector<*const ()>,
+            <Self::Inner as AsDispatcher<Self::Inner, T>>::RefDispatcher<'_>,
+        ) -> R,
+        T: GcAllocObject<T>,
+    {
+        if let Some(inner) = self.get_inner() {
+            Ok(f(path, inner.as_ref_dispatcher()))
+        } else {
+            Err(TypeError::UnresolvableType)
+        }
+    }
+}
 
 impl<T: GcAllocObject<T>> GCTraceable<T> for Type<T> {
     #[stacksafe::stacksafe]
@@ -218,7 +339,9 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Type<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Type<T> {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Type<T> {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> Rootable<T> for Type<T> {
     #[stacksafe::stacksafe]
@@ -304,18 +427,18 @@ macro_rules! as_type {
     };
 }
 
-impl<T: GcAllocObject<T>> Type<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Type<T> {
     pub fn map<F, R>(
         &self,
         path: &mut FastCycleDetector<*const ()>,
         f: F,
     ) -> Result<R, TypeError<Type<T>, T>>
     where
-        F: FnOnce(&mut FastCycleDetector<*const ()>, &Type<T>) -> R,
+        F: FnOnce(&mut FastCycleDetector<*const ()>, TypeRef<T>) -> R,
     {
         match self {
             Type::FixPoint(v) => v.map(path, f),
-            _ => Ok(f(path, self)),
+            _ => Ok(f(path, self.as_ref_dispatcher())),
         }
     }
 }

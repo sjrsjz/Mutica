@@ -17,7 +17,9 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Variable {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Variable {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Variable {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> Rootable<T> for Variable {}
 

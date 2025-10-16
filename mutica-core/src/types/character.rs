@@ -16,7 +16,9 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Character {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Character {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Character {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> Rootable<T> for Character {}
 
@@ -34,7 +36,7 @@ impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Character {
     }
 }
 
-impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Character {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Character {
     fn is(
         &self,
         other: TypeRef<T>,
@@ -69,8 +71,8 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Character {
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg.map(
             &mut FastCycleDetector::new(),
-            |_, arg: &Type<T>| match arg {
-                Type::<T>::IntegerValue(iv) => {
+            |_, arg: TypeRef<'_, T>| match arg {
+                TypeRef::IntegerValue(iv) => {
                     let v = iv.value();
                     if v > std::char::MAX as i64 || v < 0 {
                         return Err(TypeError::TypeMismatch(
@@ -85,7 +87,7 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Character {
                         std::char::from_u32(v as u32).unwrap(),
                     ))
                 }
-                Type::<T>::CharValue(_) => Ok(arg.clone()),
+                TypeRef::CharValue(_) => Ok(arg.clone()),
                 _ => Err(TypeError::TypeMismatch(
                     (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
                 )),
@@ -105,7 +107,7 @@ impl Representable for Character {
 }
 
 impl Character {
-    pub fn new<T: GcAllocObject<T>>() -> Type<T> {
+    pub fn new<T: GcAllocObject<T, Inner = Type<T>>>() -> Type<T> {
         Self {}.dispatch()
     }
 }

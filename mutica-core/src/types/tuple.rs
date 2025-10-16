@@ -33,7 +33,9 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Tuple<T> {
     }
 }
 
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Tuple<T> {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Tuple<T> {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Tuple<T> {
     type RefDispatcher<'a>
@@ -113,8 +115,8 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Tuple<T> {
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         ctx.arg
-            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::IntegerValue(iv) => {
+            .map_inner(&mut FastCycleDetector::new(), |_, arg| match arg {
+                TypeRef::IntegerValue(iv) => {
                     if self.types.is_empty() {
                         return Err(super::TypeError::TupleIndexOutOfBounds(Box::new((
                             self.clone().dispatch(),

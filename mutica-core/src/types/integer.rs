@@ -17,7 +17,9 @@ impl<T: GcAllocObject<T>> GCTraceable<T> for Integer {
 }
 
 impl<T: GcAllocObject<T>> Rootable<T> for Integer {}
-impl<T: GcAllocObject<T>> GcAllocObject<T> for Integer {}
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Integer {
+    type Inner = Type<T>;
+}
 
 impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Integer {
     type RefDispatcher<'a>
@@ -67,9 +69,9 @@ impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Integer {
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg
-            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::IntegerValue(_) => Ok(arg.clone()),
-                Type::CharValue(c) => Ok(IntegerValue::new(c.value() as i64)),
+            .map_inner(&mut FastCycleDetector::new(), |_, arg| match arg {
+                TypeRef::IntegerValue(_) => Ok(arg.clone()),
+                TypeRef::CharValue(c) => Ok(IntegerValue::new(c.value() as i64)),
                 _ => Err(super::TypeError::TypeMismatch(
                     (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
                 )),

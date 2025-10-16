@@ -5,9 +5,9 @@ use smallvec::smallvec;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef, closure::ClosureEnv,
-        fixpoint::FixPointInner, type_bound::TypeBound,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
+        closure::ClosureEnv, type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -61,54 +61,70 @@ use crate::{
 /// 1. **扁平化**：自动展开嵌套的 `Generalize` 类型
 /// 2. **吸收律**：移除被其他类型包含的冗余类型（与 Min 相反）
 /// 3. **简化**：单个类型时直接返回该类型，空集时返回 `⊥`
-#[derive(Clone)]
-pub struct Generalize {
-    types: Arc<[Type]>,
+pub struct Generalize<T: GcAllocObject<T>> {
+    types: Arc<[Type<T>]>,
     is_nf: bool,
 }
 
-impl GCTraceable<FixPointInner> for Generalize {
-    fn collect(
-        &self,
-        queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<FixPointInner>>,
-    ) {
+impl<T: GcAllocObject<T>> Clone for Generalize<T> {
+    fn clone(&self) -> Self {
+        Self {
+            types: self.types.clone(),
+            is_nf: self.is_nf,
+        }
+    }
+}
+
+impl<T: GcAllocObject<T>> GCTraceable<T> for Generalize<T> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         for sub in self.types.iter() {
             sub.collect(queue);
         }
     }
 }
 
-impl Rootable<FixPointInner>for Generalize {
-    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Generalize<T> {
+    type Inner = Type<T>;
+}
+
+impl<T: GcAllocObject<T>> Rootable<T> for Generalize<T> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for sub in self.types.iter() {
             sub.upgrade(collected);
         }
     }
 }
 
-impl CoinductiveType<Type> for Generalize {
+impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Generalize<T> {
     type RefDispatcher<'a>
-        = TypeRef<'a>
+        = TypeRef<'a, T>
     where
         Self: 'a;
-    fn dispatch(self) -> Type {
+
+    fn into_dispatcher(self) -> Type<T> {
         Type::Generalize(self)
     }
 
-    fn dispatch_ref<'a>(&'a self) -> Self::RefDispatcher<'a> {
+    fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
         TypeRef::Generalize(self)
     }
+}
 
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError<Type>> {
+impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Generalize<T> {
+    fn is(
+        &self,
+        other: TypeRef<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
                         if !sub.is(other, &mut inner_ctx)?.is_some() {
@@ -126,16 +142,22 @@ impl CoinductiveType<Type> for Generalize {
     /// `Max<T₁, ..., Tₙ>[V] = Max<T₁[V], ..., Tₙ[V]>`
     ///
     /// 类型应用操作分布到不可约集合中的每个类型上。
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError<Type>> {
-        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
+    fn reduce(
+        self,
+        ctx: &mut ReductionContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
         for sub in self.types.into_iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
         Self::new(&result, ctx.closure_env)
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError<Type>> {
-        let mut result = smallvec::SmallVec::<[Type; 8]>::new();
+    fn invoke(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
         for sub in self.types.iter() {
             result.push(sub.invoke(ctx)?);
         }
@@ -147,12 +169,12 @@ impl CoinductiveType<Type> for Generalize {
     }
 }
 
-impl CoinductiveTypeWithAny<Type> for Generalize {
-    fn has<V: CoinductiveType<Type> + Clone>(
+impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for Generalize<T> {
+    fn has<V: CoinductiveType<Type<T>, T> + Clone>(
         &self,
         other: &V,
-        ctx: &mut TypeCheckContext,
-    ) -> Result<Option<()>, super::TypeError<Type>> {
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|_| {
             let mut new_pattern_env = Collector::new_disabled();
             let mut inner_ctx =
@@ -168,7 +190,7 @@ impl CoinductiveTypeWithAny<Type> for Generalize {
     }
 }
 
-impl Representable for Generalize {
+impl<T: GcAllocObject<T>> Representable for Generalize<T> {
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
         let mut result = String::new();
         result.push_str("Max<");
@@ -183,7 +205,7 @@ impl Representable for Generalize {
     }
 }
 
-impl Generalize {
+impl<T: GcAllocObject<T>> Generalize<T> {
     /// 构造不可约类型集合，应用吸收律和简化规则（与Specialize对偶）
     ///
     /// ## 构造算法
@@ -207,29 +229,33 @@ impl Generalize {
     ///
     /// 最终结果保证：集合中任意两个类型都不存在子类型关系，
     /// 且保留的都是最泛化的类型。
-    pub fn new<I, T>(types: I, closure_env: &ClosureEnv) -> Result<Type, TypeError<Type>>
+    pub fn new<I, X>(
+        types: I,
+        closure_env: &ClosureEnv<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>>
     where
-        I: IntoIterator<Item = T>,
-        T: AsDispatcher,
+        I: IntoIterator<Item = X>,
+        X: AsDispatcher<Type<T>, T>,
     {
-        fn collect(
-            collected: &mut Vec<Type>,
+        fn collect<T: GcAllocObject<T>>(
+            collected: &mut Vec<Type<T>>,
             path: &mut FastCycleDetector<*const ()>,
-            t: &Type,
-        ) -> Result<(), TypeError<Type>> {
-            t.map(path, |path, t| -> Result<(), TypeError<Type>> {
-                match t {
-                    Type::Generalize(generalize) => {
+            x: Type<T>,
+        ) -> Result<(), TypeError<Type<T>, T>> {
+            if x.map_inner(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
+                Ok(match t {
+                    TypeRef::Generalize(generalize) => {
                         for sub in generalize.types.iter() {
-                            collect(collected, path, sub)?;
+                            collect(collected, path, sub.clone())?;
                         }
+                        false
                     }
-                    _ => {
-                        collected.push(t.clone());
-                    }
-                }
-                Ok(())
-            })?
+                    _ => true,
+                })
+            })?? {
+                collected.push(x);
+            }
+            Ok(())
         }
         let mut collected = Vec::new();
 
@@ -240,12 +266,10 @@ impl Generalize {
         types
             .into_iter()
             .map(|t| {
-                all_nf &= t.as_ref_dispatcher().is_normal_form();
-                collect(
-                    &mut collected,
-                    &mut FastCycleDetector::new(),
-                    t.as_ref_dispatcher(),
-                )
+                let x = t.into_dispatcher();
+                all_nf &= x.is_normal_form();
+
+                collect(&mut collected, &mut FastCycleDetector::new(), x)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut absorbed: smallvec::SmallVec<[bool; 8]> = smallvec![false; collected.len()];
@@ -291,10 +315,10 @@ impl Generalize {
     }
 
     /// 构造只有被reduce后才会正确化简的Generalize类型，不进行吸收律和简化
-    pub fn new_raw<I, T>(types: I) -> Type
+    pub fn new_raw<I, X>(types: I) -> Type<T>
     where
-        I: IntoIterator<Item = T>,
-        T: AsDispatcher,
+        I: IntoIterator<Item = X>,
+        X: AsDispatcher<Type<T>, T>,
     {
         let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         Self {
@@ -304,7 +328,7 @@ impl Generalize {
         .dispatch()
     }
 
-    pub fn types(&self) -> &[Type] {
+    pub fn types(&self) -> &[Type<T>] {
         &self.types
     }
 }

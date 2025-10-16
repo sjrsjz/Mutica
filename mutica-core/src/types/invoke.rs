@@ -4,10 +4,9 @@ use arc_gc::{arc::GCArc, gc::GC, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         closure::{Closure, ClosureEnv, ParamEnv},
-        fixpoint::FixPointInner,
         pattern::Pattern,
         type_bound::TypeBound,
         variable::Variable,
@@ -15,20 +14,25 @@ use crate::{
     util::{collector::Collector, cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
-#[derive(Clone)]
-pub struct Invoke {
+pub struct Invoke<T: GcAllocObject<T>> {
     // 0: function
     // 1: argument
     // 2: continuation
-    inner: Arc<(Type, Type, Option<Type>)>,
+    inner: Arc<(Type<T>, Type<T>, Option<Type<T>>)>,
     is_nf: bool,
 }
 
-impl GCTraceable<FixPointInner> for Invoke {
-    fn collect(
-        &self,
-        queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<FixPointInner>>,
-    ) {
+impl<T: GcAllocObject<T>> Clone for Invoke<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            is_nf: self.is_nf,
+        }
+    }
+}
+
+impl<T: GcAllocObject<T>> GCTraceable<T> for Invoke<T> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         self.inner.0.collect(queue);
         self.inner.1.collect(queue);
         if let Some(cont) = &self.inner.2 {
@@ -37,8 +41,12 @@ impl GCTraceable<FixPointInner> for Invoke {
     }
 }
 
-impl Rootable<FixPointInner>for Invoke {
-    fn upgrade(&self, collected: &mut Vec<GCArc<FixPointInner>>) {
+impl<T: GcAllocObject<T>> GcAllocObject<T> for Invoke<T> {
+    type Inner = Type<T>;
+}
+
+impl<T: GcAllocObject<T>> Rootable<T> for Invoke<T> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.inner.0.upgrade(collected);
         self.inner.1.upgrade(collected);
         if let Some(cont) = &self.inner.2 {
@@ -47,25 +55,32 @@ impl Rootable<FixPointInner>for Invoke {
     }
 }
 
-impl CoinductiveType<Type> for Invoke {
+impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for Invoke<T> {
     type RefDispatcher<'a>
-        = TypeRef<'a>
+        = TypeRef<'a, T>
     where
         Self: 'a;
-    fn dispatch(self) -> Type {
+
+    fn into_dispatcher(self) -> Type<T> {
         Type::Invoke(self)
     }
 
-    fn dispatch_ref<'a>(&'a self) -> Self::RefDispatcher<'a> {
+    fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
         TypeRef::Invoke(self)
     }
+}
 
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, super::TypeError<Type>> {
+impl<T: GcAllocObject<T>> CoinductiveType<Type<T>, T> for Invoke<T> {
+    fn is(
+        &self,
+        other: TypeRef<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                Type::Invoke(v) => {
+                TypeRef::Invoke(v) => {
                     let func_eq = self.inner.0.is(&v.inner.0, &mut inner_ctx)?;
                     if func_eq.is_none() {
                         return Ok(None);
@@ -84,18 +99,21 @@ impl CoinductiveType<Type> for Invoke {
                     }
                     Ok(Some(()))
                 }
-                Type::Bound(TypeBound::Top) => Ok(Some(())),
-                Type::Specialize(v) => v.has(self, &mut inner_ctx),
-                Type::Generalize(v) => v.has(self, &mut inner_ctx),
-                Type::FixPoint(v) => v.has(self, &mut inner_ctx),
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Specialize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Generalize(v) => v.has(self, &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => Ok(None),
             }
         })
     }
 
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, super::TypeError<Type>> {
+    fn reduce(
+        self,
+        ctx: &mut ReductionContext<Type<T>, T>,
+    ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         Ok(Self::new(
             self.inner.0.clone().reduce(ctx)?,
             self.inner.1.clone().reduce(ctx)?,
@@ -103,7 +121,10 @@ impl CoinductiveType<Type> for Invoke {
         ))
     }
 
-    fn invoke(&self, _ctx: &mut InvokeContext) -> Result<Type, super::TypeError<Type>> {
+    fn invoke(
+        &self,
+        _ctx: &mut InvokeContext<Type<T>, T>,
+    ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
@@ -112,7 +133,7 @@ impl CoinductiveType<Type> for Invoke {
     }
 }
 
-impl Representable for Invoke {
+impl<T: GcAllocObject<T>> Representable for Invoke<T> {
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
         if let Some(cont) = &self.inner.2 {
             format!(
@@ -131,18 +152,23 @@ impl Representable for Invoke {
     }
 }
 
-impl Invoke {
-    pub fn new<U: AsDispatcher, V: AsDispatcher, W: AsDispatcher>(func: U, arg: V, continuation: Option<W>) -> Type {
-        let all_nf = func.as_ref_dispatcher().is_normal_form()
-            && arg.as_ref_dispatcher().is_normal_form()
-            && continuation
-                .as_ref()
-                .map_or(true, |c| c.as_ref_dispatcher().is_normal_form());
-        let inner = Arc::new((
-            func.into_dispatcher(),
-            arg.into_dispatcher(),
-            continuation.map(|c| c.into_dispatcher()),
-        ));
+impl<T: GcAllocObject<T>> Invoke<T> {
+    pub fn new<
+        U: AsDispatcher<Type<T>, T>,
+        V: AsDispatcher<Type<T>, T>,
+        W: AsDispatcher<Type<T>, T>,
+    >(
+        func: U,
+        arg: V,
+        continuation: Option<W>,
+    ) -> Type<T> {
+        let func = func.into_dispatcher();
+        let arg = arg.into_dispatcher();
+        let continuation = continuation.map(|c| c.into_dispatcher());
+        let all_nf = func.is_normal_form()
+            && arg.is_normal_form()
+            && continuation.as_ref().map_or(true, |c| c.is_normal_form());
+        let inner = Arc::new((func, arg, continuation));
         Self {
             inner,
             is_nf: all_nf,
@@ -150,19 +176,19 @@ impl Invoke {
         .dispatch()
     }
 
-    pub fn func(&self) -> &Type {
+    pub fn func(&self) -> &Type<T> {
         &self.inner.0
     }
 
-    pub fn arg(&self) -> &Type {
+    pub fn arg(&self) -> &Type<T> {
         &self.inner.1
     }
 
-    pub fn continuation(&self) -> Option<&Type> {
+    pub fn continuation(&self) -> Option<&Type<T>> {
         self.inner.2.as_ref()
     }
 }
-impl Invoke {
+impl<T: GcAllocObject<T>> Invoke<T> {
     /// Flattens a nested computation by composing continuations.
     ///
     /// This method is the core of the scheduler's ability to handle algebraic effects and
@@ -218,15 +244,15 @@ impl Invoke {
     /// * `Err(TypeError)`: If applying the continuation fails.
     pub fn flat_compose<'roots>(
         &self,
-        v: Type,
-        gc: &mut GC<FixPointInner>,
-        roots: &'roots mut RootStack,
-    ) -> Result<Type, TypeError<Type>> {
+        v: Type<T>,
+        gc: &mut GC<T>,
+        roots: &'roots mut RootStack<T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // The `map` here is used to traverse the type structure without deep recursion
         // if `v` is already a value.
-        v.map(&mut FastCycleDetector::new(), |_, ty| match ty {
+        v.map_inner(&mut FastCycleDetector::new(), |_, ty| match ty {
             // Case 1: The result `v` is another `Invoke` instruction (the nested case).
-            Type::Invoke(invoke) => {
+            TypeRef::Invoke(invoke) => {
                 if self.inner.2.is_none() {
                     // Tail call optimization: If there is no outer continuation,
                     return Ok(invoke.clone().dispatch());
@@ -258,12 +284,12 @@ impl Invoke {
                             // C: The continuation of the inner instruction.
                             invoke.inner.2.as_ref().unwrap(),
                             // x: The value that will be passed to C.
-                            Variable::new_deburijn(0),
+                            Variable::new_debruijn(0),
                             // k: The continuation of the outer instruction (`self`).
                             self.inner.2.as_ref(),
                         ),
-                        None::<Type>,
-                        ClosureEnv::new(Vec::<Type>::new()), // The new closure captures no variables.
+                        None::<Type<T>>,
+                        ClosureEnv::new(Vec::<Type<T>>::new()), // The new closure captures no variables.
                     )),
                 ))
             }
@@ -276,11 +302,12 @@ impl Invoke {
                 }
                 // We are in the k(val) case.
                 // Simply invoke the outer continuation `k` with the value `v`.
-                let closure_env = ClosureEnv::new(Vec::<Type>::new());
-                let param_env = ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
+                let closure_env: ClosureEnv<Type<T>, T> = ClosureEnv::new(Vec::<Type<T>>::new());
+                let param_env: ParamEnv<Type<T>, T> =
+                    ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
                 let mut rec_assumptions = smallvec::SmallVec::new();
-                let mut invoke_ctx = InvokeContext::new(
-                    &ty,
+                let mut invoke_ctx: InvokeContext<'_, '_, Type<T>, T> = InvokeContext::new(
+                    &v,
                     &closure_env,
                     &param_env,
                     None, // The continuation's own continuation is not needed here.
@@ -295,19 +322,19 @@ impl Invoke {
 
     pub fn flat_compose_stack<'roots>(
         &self,
-        v: Type,
-        gc: &mut GC<FixPointInner>,
-        roots: &'roots mut RootStack,
-        cont_stack: &mut Vec<Type>,
-    ) -> Result<Type, TypeError<Type>> {
+        v: Type<T>,
+        gc: &mut GC<T>,
+        roots: &'roots mut RootStack<T>,
+        cont_stack: &mut Vec<Type<T>>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         if self.inner.2.is_none() {
             // Tail call optimization: If there is no outer continuation,
             return Ok(v);
         }
 
-        v.map(&mut FastCycleDetector::new(), |_, ty| match ty {
+        v.map_inner(&mut FastCycleDetector::new(), |_, ty| match ty {
             // Case 1: The result `v` is another `Invoke` instruction (the nested case).
-            Type::Invoke(invoke) => {
+            TypeRef::Invoke(invoke) => {
                 if invoke.inner.2.is_none() {
                     // Tail call optimization: If there is no inner continuation,
                     // we can directly use the outer continuation.
@@ -326,11 +353,14 @@ impl Invoke {
             _ => {
                 // We are in the k(val) case.
                 // Simply invoke the outer continuation `k` with the value `v`.
-                let closure_env = ClosureEnv::new(Vec::<Type>::new());
-                let param_env = ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
-                let mut rec_assumptions = smallvec::SmallVec::new();
-                let mut invoke_ctx = InvokeContext::new(
-                    &ty,
+                let closure_env: ClosureEnv<Type<T>, T> = ClosureEnv::new(Vec::<Type<T>>::new());
+                let param_env: ParamEnv<Type<T>, T> =
+                    ParamEnv::from_collector(Collector::new()).unwrap().unwrap();
+                let mut rec_assumptions: smallvec::SmallVec<
+                    [(super::TaggedPtr<()>, Type<T>, bool); 8],
+                > = smallvec::SmallVec::new();
+                let mut invoke_ctx: InvokeContext<'_, '_, Type<T>, T> = InvokeContext::new(
+                    &v,
                     &closure_env,
                     &param_env,
                     None, // The continuation's own continuation is not needed here.

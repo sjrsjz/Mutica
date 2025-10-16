@@ -9,8 +9,9 @@ use arc_gc::{
 use crate::{
     as_type,
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, InvokeContext, ReductionContext,
-        Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef, type_bound::TypeBound,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
+        type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
@@ -33,86 +34,149 @@ use crate::{
 /// 由于递归类型的定义需要引用自身，我们必须：
 /// 1. **先创建占位符**：分配类型引用但不指定内容
 /// 2. **后填充定义**：通过 `set` 方法设置具体的递归结构
-pub struct FixPointInner {
-    inner: OnceLock<Type>,
+pub struct FixPointInner<T: GcAllocObject<T>> {
+    inner: OnceLock<Type<T>>,
 }
 
-impl GCTraceable<FixPointInner> for FixPointInner {
-    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<FixPointInner>>) {
-        if let Some(t) = self.inner.get() {
-            t.collect(queue);
-        }
-    }
-}
-
-impl FixPointInner {
-    /// 安全的类型遍历，带循环检测
-    ///
-    /// 使用 [`CycleDetector`] 防止在遍历递归类型时陷入无限循环。
-    #[inline(always)]
-    fn map<F, R>(&self, path: &mut FastCycleDetector<*const ()>, f: F) -> Result<R, TypeError<Type>>
-    where
-        F: FnOnce(&mut FastCycleDetector<*const ()>, &Type) -> R,
-    {
-        match self.inner.get() {
-            Some(t) => path
-                .with_guard(t as *const _ as *const (), |path| t.map(path, f))
-                .ok_or(TypeError::InfiniteRecursion)?,
-            None => Err(TypeError::UnresolvableType),
-        }
-    }
-
+impl<T: GcAllocObject<T>> GcAllocObject<T> for FixPointInner<T> {
     /// 创建未初始化的不动点占位符
     ///
-    /// 这是递归类型定义的第一步：创建一个"洞"，稍后填充。
+    /// 这是递归类型定义的第一步：创建一个"洞"，稍后填充.
+    type Inner = Type<T>;
+
     fn new_placeholder() -> Self {
         FixPointInner {
             inner: OnceLock::new(),
         }
     }
 
+    fn get_inner(&self) -> Option<&Self::Inner>
+    where
+        T: GcAllocObject<T>,
+    {
+        self.inner.get()
+    }
+
+    fn map_inner<F, R>(
+        &self,
+        path: &mut FastCycleDetector<*const ()>,
+        f: F,
+    ) -> Result<R, TypeError<Self::Inner, T>>
+    where
+        F: FnOnce(
+            &mut FastCycleDetector<*const ()>,
+            <Self::Inner as AsDispatcher<Self::Inner, T>>::RefDispatcher<'_>,
+        ) -> R,
+        T: GcAllocObject<T>,
+    {
+        match self.inner.get() {
+            Some(t) => path
+                .with_guard(t as *const _ as *const (), |path| t.map_inner(path, f))
+                .ok_or(TypeError::InfiniteRecursion)?,
+            None => Err(TypeError::UnresolvableType),
+        }
+    }
+
+    fn set_inner(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
+    where
+        T: GcAllocObject<T>,
+    {
+        self.inner
+            .set(_value)
+            .map_err(|_| TypeError::RedeclaredType)
+    }
+}
+
+impl<T: GcAllocObject<T>> GCTraceable<T> for FixPointInner<T> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
+        if let Some(t) = self.inner.get() {
+            t.collect(queue);
+        }
+    }
+}
+
+impl<T: GcAllocObject<T>> FixPointInner<T> {
+    /// 安全的类型遍历，带循环检测
+    ///
+    /// 使用 [`CycleDetector`] 防止在遍历递归类型时陷入无限循环。
+    #[inline(always)]
+    fn map<F, R>(
+        &self,
+        path: &mut FastCycleDetector<*const ()>,
+        f: F,
+    ) -> Result<R, TypeError<Type<T>, T>>
+    where
+        F: FnOnce(&mut FastCycleDetector<*const ()>, TypeRef<T>) -> R,
+    {
+        match self.inner.get() {
+            Some(t) => path
+                .with_guard(t as *const _ as *const (), |path| t.map_inner(path, f))
+                .ok_or(TypeError::InfiniteRecursion)?,
+            None => Err(TypeError::UnresolvableType),
+        }
+    }
+
     /// 获取已初始化的类型内容
     ///
     /// 如果类型尚未通过 `set` 方法初始化，返回 `None`。
-    fn get(&self) -> Option<&Type> {
+    fn get(&self) -> Option<&Type<T>> {
         self.inner.get()
     }
 }
 
-#[derive(Clone)]
-pub struct FixPoint {
-    reference: GCArcWeak<FixPointInner>,
+pub struct FixPoint<T: GcAllocObject<T>> {
+    reference: GCArcWeak<T>,
     is_nf: Arc<RwLock<bool>>, // 是否为范式
                               // 由于递归类型需要set方法初始化,因此is_nf是共享的，它不能被简单的复制
 }
 
-impl GCTraceable<FixPointInner> for FixPoint {
-    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<FixPointInner>>) {
+impl<T: GcAllocObject<T>> Clone for FixPoint<T> {
+    fn clone(&self) -> Self {
+        Self {
+            reference: self.reference.clone(),
+            is_nf: self.is_nf.clone(),
+        }
+    }
+}
+
+impl<T: GcAllocObject<T>> GcAllocObject<T> for FixPoint<T> {
+    type Inner = Type<T>;
+}
+
+impl<T: GcAllocObject<T>> GCTraceable<T> for FixPoint<T> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
         queue.push_back(self.reference.clone());
     }
 }
 
-impl Rootable<FixPointInner>for FixPoint {
-    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<FixPointInner>>) {
+impl<T: GcAllocObject<T>> Rootable<T> for FixPoint<T> {
+    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<T>>) {
         if let Some(inner) = self.reference.upgrade() {
             collected.push(inner);
         }
     }
 }
 
-impl FixPoint {
-    pub fn map<F, R>(&self, path: &mut FastCycleDetector<*const ()>, f: F) -> Result<R, TypeError<Type>>
+impl<T: GcAllocObject<T>> FixPoint<T> {
+    pub fn map<F, R>(
+        &self,
+        path: &mut FastCycleDetector<*const ()>,
+        f: F,
+    ) -> Result<R, TypeError<<T as GcAllocObject<T>>::Inner, T>>
     where
-        F: FnOnce(&mut FastCycleDetector<*const ()>, &Type) -> R,
+        F: FnOnce(
+            &mut FastCycleDetector<*const ()>,
+            <T::Inner as AsDispatcher<T::Inner, T>>::RefDispatcher<'_>,
+        ) -> R,
     {
         self.reference
             .upgrade()
             .ok_or(TypeError::UnresolvableType)
-            .and_then(|inner| inner.as_ref().map(path, f))
+            .and_then(|inner: GCArc<T>| inner.as_ref().map_inner(path, f))
     }
 }
 
-impl FixPoint {
+impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     /// 创建递归类型占位符
     ///
     /// ## 返回值
@@ -121,11 +185,8 @@ impl FixPoint {
     /// - 未初始化的 `FixPoint`
     /// - 对应的强引用以保证 GC 安全
 
-    pub fn new_placeholder<'roots>(
-        gc: &mut GC<FixPointInner>,
-        roots: &'roots mut RootStack,
-    ) -> Type {
-        let pointer = gc.create(FixPointInner::new_placeholder());
+    pub fn new_placeholder<'roots>(gc: &mut GC<T>, roots: &'roots mut RootStack<T>) -> Type<T> {
+        let pointer = gc.create(T::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
             is_nf: Arc::new(RwLock::new(true)), // 协归纳假设初始为范式
@@ -142,36 +203,36 @@ impl FixPoint {
     /// ## 错误
     /// - `RedeclaredType`: 类型已经被设置过
     /// - `UnresolvableType`: 不动点引用已失效
-    pub fn set<V: AsDispatcher>(&self, t: V) -> Result<(), TypeError<Type>> {
+    pub fn set<V: AsDispatcher<Type<T>, T>>(&self, t: V) -> Result<(), TypeError<Type<T>, T>> {
         if let Some(inner) = self.reference.upgrade() {
+            let t = t.into_dispatcher();
             *self
                 .is_nf
                 .write()
-                .map_err(|_| TypeError::UnresolvableType)? = t.as_ref_dispatcher().is_normal_form(); // lock poisoned
-            inner
-                .as_ref()
-                .inner
-                .set(t.into_dispatcher())
-                .map_err(|_| TypeError::RedeclaredType) // already initialized
+                .map_err(|_| TypeError::UnresolvableType)? = t.is_normal_form(); // lock poisoned
+            inner.as_ref().set_inner(t);
+            Ok(())
         } else {
             Err(TypeError::UnresolvableType) // reference is dead
         }
     }
 }
 
-impl CoinductiveType<Type> for FixPoint {
+impl<T: GcAllocObject<T>> AsDispatcher<Type<T>, T> for FixPoint<T> {
     type RefDispatcher<'a>
-        = TypeRef<'a>
+        = TypeRef<'a, T>
     where
         Self: 'a;
-    fn dispatch(self) -> Type {
+    fn into_dispatcher(self) -> Type<T> {
         Type::FixPoint(self)
     }
 
-    fn dispatch_ref<'a>(&'a self) -> Self::RefDispatcher<'a> {
+    fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
         TypeRef::FixPoint(self)
     }
+}
 
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPoint<T> {
     /// 递归类型的子类型检查
     ///
     /// ## 算法原理
@@ -189,17 +250,24 @@ impl CoinductiveType<Type> for FixPoint {
     /// ```
     ///
     /// 即：在假设 μX.S <: μY.T 的前提下，检查展开后的类型关系。
-    fn is(&self, other: &Type, ctx: &mut TypeCheckContext) -> Result<Option<()>, TypeError<Type>> {
+    fn is(
+        &self,
+        other: TypeRef<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                Type::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                Type::Pattern(v) => v.has(self, &mut inner_ctx),
-                Type::Variable(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
+                TypeRef::Pattern(v) => v.has(self, &mut inner_ctx),
+                TypeRef::Variable(v) => v.has(self, &mut inner_ctx),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
-                        let inner = inner.as_ref().get().ok_or(TypeError::UnresolvableType)?;
+                        let inner = inner
+                            .as_ref()
+                            .get_inner()
+                            .ok_or(TypeError::UnresolvableType)?;
                         let self_ptr = inner.tagged_ptr();
                         let other_ptr = other.tagged_ptr();
                         let assumption_pair = (self_ptr, other_ptr);
@@ -227,10 +295,16 @@ impl CoinductiveType<Type> for FixPoint {
     /// `(μX.T)[V] = T[μX.T/X][V]`
     ///
     /// 即：将递归类型应用到输入上，等价于将展开的类型应用到输入上。
-    fn reduce(self, ctx: &mut ReductionContext) -> Result<Type, TypeError<Type>> {
+    fn reduce(
+        self,
+        ctx: &mut ReductionContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
             Some(inner) => {
-                let inner_type = inner.as_ref().get().ok_or(TypeError::UnresolvableType)?;
+                let inner_type = inner
+                    .as_ref()
+                    .get_inner()
+                    .ok_or(TypeError::UnresolvableType)?;
                 for r in ctx.rec_assumptions.iter_mut().rev() {
                     if r.0 == inner_type.tagged_ptr() {
                         //已经假设递归的归约结果,直接返回
@@ -257,11 +331,14 @@ impl CoinductiveType<Type> for FixPoint {
         }
     }
 
-    fn invoke(&self, ctx: &mut InvokeContext) -> Result<Type, TypeError<Type>> {
+    fn invoke(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
             Some(inner) => inner
                 .as_ref()
-                .get()
+                .get_inner()
                 .ok_or(TypeError::UnresolvableType)
                 .and_then(|t| t.invoke(ctx)),
             None => Err(TypeError::UnresolvableType), // reference is dead
@@ -276,18 +353,21 @@ impl CoinductiveType<Type> for FixPoint {
     }
 }
 
-impl CoinductiveTypeWithAny<Type> for FixPoint {
-    fn has<V: CoinductiveType<Type> + Clone>(
+impl<T: GcAllocObject<T>> CoinductiveTypeWithAny<Type<T>, T> for FixPoint<T> {
+    fn has<V: CoinductiveType<Type<T>, T>>(
         &self,
         other: &V,
-        ctx: &mut TypeCheckContext,
-    ) -> Result<Option<()>, TypeError<Type>> {
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match self.reference.upgrade() {
                 Some(inner) => other.is(
-                    inner.as_ref().get().ok_or(TypeError::UnresolvableType)?,
+                    inner
+                        .as_ref()
+                        .get_inner()
+                        .ok_or(TypeError::UnresolvableType)?,
                     &mut inner_ctx,
                 ),
                 None => Err(TypeError::UnresolvableType), // reference is dead
@@ -296,7 +376,7 @@ impl CoinductiveTypeWithAny<Type> for FixPoint {
     }
 }
 
-impl Representable for FixPoint {
+impl<T: GcAllocObject<T>> Representable for FixPoint<T> {
     /// 递归类型的字符串表示
     ///
     /// 使用数学记号 `μ.地址 内容` 表示不动点类型，其中：
@@ -307,7 +387,7 @@ impl Representable for FixPoint {
     /// 对于循环引用，只显示地址以避免无限递归打印。
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
         match self.reference.upgrade() {
-            Some(inner) => match inner.as_ref().get() {
+            Some(inner) => match inner.as_ref().get_inner() {
                 Some(t) => {
                     match path.with_guard(t as *const _ as *const (), |path| t.represent(path)) {
                         Some(s) => format!("μ.{:?} {}", t as *const _ as *const (), s),
