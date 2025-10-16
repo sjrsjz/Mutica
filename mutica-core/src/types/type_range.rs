@@ -167,7 +167,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeR
                         return Ok(None);
                     }
 
-                    if self.tag.is_left_closed() || !v.tag.is_left_closed() {
+                    if self.tag.is_left_closed() && !v.tag.is_left_closed() {
                         let mut inner_ctx = TypeCheckContext::new(
                             ctx.assumptions,
                             ctx.closure_env,
@@ -190,7 +190,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeR
                         &mut pattern_env_disabled,
                     );
 
-                    if self.tag.is_right_closed() || !v.tag.is_right_closed() {
+                    if self.tag.is_right_closed() && !v.tag.is_right_closed() {
                         if v.range
                             .1
                             .is(self.range.1.as_ref_dispatcher(), &mut inner_ctx)?
