@@ -87,17 +87,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                     self.represent(&mut FastCycleDetector::new())
                 )
             }
-            // 由于Pattern的特殊性，非模式匹配下的Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
-            match other {
-                TypeRef::Pattern(v) => {
-                    if self.debruijn_index == v.debruijn_index {
-                        self.expr.is(v.expr.as_ref_dispatcher(), &mut inner_ctx)
-                    } else {
-                        Ok(None)
-                    }
-                }
-                _ => Ok(None),
-            }
+            // // 由于Pattern的特殊性，非模式匹配下的Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
+            // match other {
+            //     TypeRef::Pattern(v) => {
+            //         if self.debruijn_index == v.debruijn_index {
+            //             self.expr.is(v.expr.as_ref_dispatcher(), &mut inner_ctx)
+            //         } else {
+            //             Ok(None)
+            //         }
+            //     }
+            //     _ => Ok(None),
+            // }
+
+            // 虽然使用Pattern进行类型检查可以判定alpha等价性
+            // 但是它会导致TypeBound的反向子类型关系失效
+            // 因此这里直接透过Pattern进行比较
+            self.expr.is(other, &mut inner_ctx)
         })
     }
 

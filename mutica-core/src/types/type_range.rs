@@ -220,7 +220,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|_| {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+            let r_cmp = other.is(self.range.1.as_ref_dispatcher(), &mut inner_ctx)?; // X <= D
+            if r_cmp.is_none() {
+                return Ok(None);
+            }
+
+            // 下面的所有匹配都不允许模式的解构
             let mut new_pattern_env = Collector::new_disabled();
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.assumptions,
@@ -230,13 +238,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 
             let l_cmp = self.range.0.is(other.clone(), &mut inner_ctx)?; // C <= X
             if l_cmp.is_none() {
-                return Ok(None);
-            }
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
-
-            let r_cmp = other.is(self.range.1.as_ref_dispatcher(), &mut inner_ctx)?; // X <= D
-            if r_cmp.is_none() {
                 return Ok(None);
             }
 
