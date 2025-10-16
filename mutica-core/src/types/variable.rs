@@ -60,6 +60,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => {
                     let self_idx = self.index;
                     let v_idx = v.index;
@@ -75,7 +77,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                     let value_r = ctx.closure_env.1.get(r)?;
                     value_l.is(value_r.as_ref_dispatcher(), &mut inner_ctx)
                 }
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     if self.index >= 0 {
                         // 如果是正数,说明是全局变量,无法确定类型

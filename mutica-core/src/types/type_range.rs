@@ -229,15 +229,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             );
 
             let l_cmp = self.range.0.is(other.clone(), &mut inner_ctx)?; // C <= X
+            if l_cmp.is_none() {
+                return Ok(None);
+            }
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
 
             let r_cmp = other.is(self.range.1.as_ref_dispatcher(), &mut inner_ctx)?; // X <= D
-            if l_cmp.is_some() && r_cmp.is_some() {
-                Ok(Some(()))
-            } else {
-                Ok(None)
+            if r_cmp.is_none() {
+                return Ok(None);
             }
+
+            if !self.tag.is_left_closed() {
+                // (C, D] or (C, D)
+                let mut inner_ctx =
+                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
+                if other
+                    .is(self.range.0.as_ref_dispatcher(), &mut inner_ctx)?
+                    .is_some()
+                // when X <= C then check fail
+                {
+                    // not X </: C then check fail
+                    return Ok(None);
+                }
+            }
+
+            if !self.tag.is_right_closed() {
+                // [C, D) or (C, D)
+                let mut inner_ctx = TypeCheckContext::new(
+                    ctx.assumptions,
+                    (ctx.closure_env.1, ctx.closure_env.0),
+                    &mut new_pattern_env,
+                );
+                if self.range.1.is(other, &mut inner_ctx)?.is_some()
+                // when D <= X then check fail
+                {
+                    // not D </: X then check fail
+                    return Ok(None);
+                }
+            }
+
+            Ok(Some(()))
         })
     }
 }

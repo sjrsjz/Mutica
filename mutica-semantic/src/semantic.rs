@@ -103,6 +103,10 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::Literal(expr) => {
                 Self::build_mapping(expr, mapping, source_file);
             }
+            LinearTypeAst::TypeRange { lower, upper, .. } => {
+                Self::build_mapping(lower, mapping, source_file);
+                Self::build_mapping(upper, mapping, source_file);
+            }
         }
     }
 }

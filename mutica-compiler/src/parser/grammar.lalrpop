@@ -85,6 +85,7 @@ extern {
         "{" => LexerToken::LBrace,
         "}" => LexerToken::RBrace,
         "|>" => LexerToken::PipeGreaterThan,
+        ".." => LexerToken::Range,
     }
 }
 
@@ -585,7 +586,55 @@ MulDiv: WithLocation<TypeAst> = {
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
+    <t: TypeRange> => t,
     <t: Factor> => t,
+}
+
+TypeRange: WithLocation<TypeAst> = {
+    <l:@L> "[" <start: Primary> <dot_l:@L> ".." <dot_r:@R> <end: Primary> "]" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+1, TokenColor::Punctuation);
+        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        WithLocation::new(TypeAst::TypeRange {
+            lower: Box::new(start),
+            upper: Box::new(end),
+            l_inclusive: true,
+            u_inclusive: true,
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "[" <start: Primary> <dot_l:@L> ".." <dot_r:@R> <end: Primary> ")" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+1, TokenColor::Punctuation);
+        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        WithLocation::new(TypeAst::TypeRange {
+            lower: Box::new(start),
+            upper: Box::new(end),
+            l_inclusive: true,
+            u_inclusive: false,
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "(" <start: Primary> <dot_l:@L> ".." <dot_r:@R> <end: Primary> "]" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+1, TokenColor::Punctuation);
+        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        WithLocation::new(TypeAst::TypeRange {
+            lower: Box::new(start),
+            upper: Box::new(end),
+            l_inclusive: false,
+            u_inclusive: true,
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "(" <start: Primary> <dot_l:@L> ".." <dot_r:@R> <end: Primary> ")" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+1, TokenColor::Punctuation);
+        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
+        WithLocation::new(TypeAst::TypeRange {
+            lower: Box::new(start),
+            upper: Box::new(end),
+            l_inclusive: false,
+            u_inclusive: false,
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
 }
 
 Let: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {

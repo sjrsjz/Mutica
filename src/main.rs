@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::{collections::HashMap, fs, path::PathBuf, process};
+use std::{collections::HashMap, fs, path::PathBuf, process, sync::OnceLock};
 
 use mutica_compiler::{
     ariadne,
@@ -9,11 +9,66 @@ use mutica_compiler::{
     },
 };
 use mutica_core::{
-    arc_gc::gc::GC,
+    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
     scheduler,
-    types::{Representable, Type, TypeRef, fixpoint::FixPointInner},
+    types::{AsDispatcher, GcAllocObject, Representable, Type, TypeError, TypeRef},
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
+
+// 定义一个用于GC堆分配的类型
+pub struct TypeGcOnceLock {
+    inner: OnceLock<Type<TypeGcOnceLock>>,
+}
+
+impl GcAllocObject<TypeGcOnceLock> for TypeGcOnceLock {
+    /// 创建未初始化的不动点占位符
+    ///
+    /// 这是递归类型定义的第一步：创建一个"洞"，稍后填充.
+    type Inner = Type<TypeGcOnceLock>;
+
+    fn new_placeholder() -> Self {
+        TypeGcOnceLock {
+            inner: OnceLock::new(),
+        }
+    }
+
+    fn get_inner(&self) -> Option<&Self::Inner> {
+        self.inner.get()
+    }
+
+    fn map_inner<F, R>(
+        &self,
+        path: &mut FastCycleDetector<*const ()>,
+        f: F,
+    ) -> Result<R, TypeError<Self::Inner, TypeGcOnceLock>>
+    where
+        F: FnOnce(
+            &mut FastCycleDetector<*const ()>,
+            <Self::Inner as AsDispatcher<Self::Inner, TypeGcOnceLock>>::RefDispatcher<'_>,
+        ) -> R,
+    {
+        match self.inner.get() {
+            Some(t) => path
+                .with_guard(t as *const _ as *const (), |path| t.map_inner(path, f))
+                .ok_or(TypeError::InfiniteRecursion)?,
+            None => Err(TypeError::UnresolvableType),
+        }
+    }
+
+    fn set_inner(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, TypeGcOnceLock>> {
+        self.inner
+            .set(_value)
+            .map_err(|_| TypeError::RedeclaredType)
+    }
+}
+
+impl GCTraceable<TypeGcOnceLock> for TypeGcOnceLock {
+    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<TypeGcOnceLock>>) {
+        if let Some(t) = self.inner.get() {
+            t.collect(queue);
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "mutica")]
@@ -211,7 +266,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         }
     };
 
-    fn dump_stack(stack: &[Type<FixPointInner>]) -> String {
+    fn dump_stack(stack: &[Type<TypeGcOnceLock>]) -> String {
         let mut result = String::new();
         for (i, ty) in stack.iter().enumerate() {
             result.push_str(&format!(

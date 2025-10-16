@@ -395,6 +395,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Type<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Type<T> {
     type Inner = Type<T>;
+    fn get_inner(&self) -> Option<&Self::Inner>
+    where
+        T: GcAllocObject<T>,
+    {
+        Some(self)
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Type<T> {

@@ -22,6 +22,7 @@ use mutica_core::types::pattern::Pattern;
 use mutica_core::types::specialize::Specialize;
 use mutica_core::types::tuple::Tuple;
 use mutica_core::types::type_bound::TypeBound;
+use mutica_core::types::type_range::{TypeRange, TypeRangeTag};
 use mutica_core::types::variable::Variable;
 use mutica_core::types::{GcAllocObject, Type, TypeError};
 use mutica_core::util::rootstack::RootStack;
@@ -107,6 +108,12 @@ pub enum TypeAst {
         expr: Box<WithLocation<TypeAst>>,
     },
     Literal(Box<WithLocation<TypeAst>>),
+    TypeRange {
+        lower: Box<WithLocation<TypeAst>>,
+        upper: Box<WithLocation<TypeAst>>,
+        l_inclusive: bool,
+        u_inclusive: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +157,12 @@ pub enum BasicTypeAst {
         expr: Box<WithLocation<BasicTypeAst>>,
     },
     Literal(Box<WithLocation<BasicTypeAst>>),
+    TypeRange {
+        lower: Box<WithLocation<BasicTypeAst>>,
+        upper: Box<WithLocation<BasicTypeAst>>,
+        l_inclusive: bool,
+        u_inclusive: bool,
+    },
 }
 
 pub struct LinearizeContext {
@@ -442,6 +455,24 @@ impl BasicTypeAst {
                 LinearTypeAst::Literal(Box::new(inner.linearize(ctx, inner.location()).finalize())),
                 loc,
             )),
+            BasicTypeAst::TypeRange {
+                lower,
+                upper,
+                l_inclusive,
+                u_inclusive,
+            } => {
+                let lower = lower.linearize(ctx, lower.location());
+                let upper = upper.linearize(ctx, upper.location());
+                let ty = LinearTypeAst::TypeRange {
+                    lower: Box::new(lower.tail_type().clone()),
+                    upper: Box::new(upper.tail_type().clone()),
+                    l_inclusive: *l_inclusive,
+                    u_inclusive: *u_inclusive,
+                };
+                let mut bindings = lower.bindings;
+                bindings.extend(upper.bindings);
+                LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
+            }
         }
     }
 }
@@ -523,6 +554,12 @@ pub enum LinearTypeAst<'ast> {
         expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
     Literal(Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    TypeRange {
+        lower: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        upper: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        l_inclusive: bool,
+        u_inclusive: bool,
+    },
 }
 
 impl TypeAst {
@@ -896,6 +933,20 @@ impl TypeAst {
                     }
                 }
             }
+            TypeAst::TypeRange {
+                lower,
+                upper,
+                l_inclusive,
+                u_inclusive,
+            } => WithLocation::new(
+                BasicTypeAst::TypeRange {
+                    lower: Box::new(lower.into_basic(multifile_builder, lower.location())),
+                    upper: Box::new(upper.into_basic(multifile_builder, upper.location())),
+                    l_inclusive: *l_inclusive,
+                    u_inclusive: *u_inclusive,
+                },
+                loc,
+            ),
         }
     }
 
@@ -990,6 +1041,10 @@ impl TypeAst {
             TypeAst::Literal(inner) => {
                 inner.collect_errors(errors);
             }
+            TypeAst::TypeRange { lower, upper, .. } => {
+                lower.collect_errors(errors);
+                upper.collect_errors(errors);
+            }
         }
     }
 
@@ -1083,6 +1138,17 @@ impl TypeAst {
                 expr: Box::new(Self::sanitize(*expr)),
             },
             TypeAst::Literal(inner) => TypeAst::Literal(Box::new(Self::sanitize(*inner))),
+            TypeAst::TypeRange {
+                lower,
+                upper,
+                l_inclusive,
+                u_inclusive,
+            } => TypeAst::TypeRange {
+                lower: Box::new(Self::sanitize(*lower)),
+                upper: Box::new(Self::sanitize(*upper)),
+                l_inclusive,
+                u_inclusive,
+            },
         })
     }
 }
@@ -1600,6 +1666,34 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
+            LinearTypeAst::TypeRange {
+                lower,
+                upper,
+                l_inclusive,
+                u_inclusive,
+            } => {
+                // 范围类型的下界不允许出现模式变量（因为它的子类型检查是逆变的，模式匹配无法处理逆变）
+                let lower_res = lower.flow(ctx, false, lower.location(), errors);
+                // 范围类型的上界允许出现模式变量（它是协变的）
+                let upper_res = upper.flow(ctx, pattern_mode, upper.location(), errors);
+                let mut all_captures = lower_res.captures;
+                all_captures.extend(upper_res.captures);
+
+                FlowResult::complex(
+                    WithLocation::new(
+                        LinearTypeAst::TypeRange {
+                            lower: Box::new(lower_res.ty),
+                            upper: Box::new(upper_res.ty),
+                            l_inclusive: *l_inclusive,
+                            u_inclusive: *u_inclusive,
+                        },
+                        loc,
+                    ),
+                    all_captures,
+                    upper_res.patterns,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
         }
     }
 }
@@ -1933,6 +2027,38 @@ impl<'ast> LinearTypeAst<'ast> {
                 Ok(BuildResult::complex(
                     Lazy::new(&inner_type.ty),
                     inner_type.patterns,
+                ))
+            }
+            LinearTypeAst::TypeRange {
+                lower,
+                upper,
+                l_inclusive,
+                u_inclusive,
+            } => {
+                // 由于模式匹配是针对子类型的匹配，而下界的检查方向是反向的，也就是说无论如何我们都无法给下界的“模式变量”一个合适的匹配方向
+                // 因此我们强制要求下界的类型中不允许出现模式变量
+                let lower_type =
+                    lower.to_type(ctx, pattern_counter, false, gc, roots, lower.location())?;
+                // 上界的匹配方向是正常的，因此允许出现模式变量
+                let upper_type = upper.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    upper.location(),
+                )?;
+                Ok(BuildResult::complex(
+                    TypeRange::new(
+                        (&lower_type.ty, &upper_type.ty),
+                        match (l_inclusive, u_inclusive) {
+                            (true, true) => TypeRangeTag::LClosedRClosed,
+                            (true, false) => TypeRangeTag::LClosedROpen,
+                            (false, true) => TypeRangeTag::LOpenRClosed,
+                            (false, false) => TypeRangeTag::LOpenROpen,
+                        },
+                    ),
+                    upper_type.patterns,
                 ))
             }
         }

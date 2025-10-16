@@ -58,6 +58,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
                 TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })

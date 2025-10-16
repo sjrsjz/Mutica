@@ -1,4 +1,4 @@
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
@@ -34,59 +34,6 @@ use crate::{
 /// 由于递归类型的定义需要引用自身，我们必须：
 /// 1. **先创建占位符**：分配类型引用但不指定内容
 /// 2. **后填充定义**：通过 `set` 方法设置具体的递归结构
-pub struct FixPointInner {
-    inner: OnceLock<Type<FixPointInner>>,
-}
-
-impl GcAllocObject<FixPointInner> for FixPointInner {
-    /// 创建未初始化的不动点占位符
-    ///
-    /// 这是递归类型定义的第一步：创建一个"洞"，稍后填充.
-    type Inner = Type<FixPointInner>;
-
-    fn new_placeholder() -> Self {
-        FixPointInner {
-            inner: OnceLock::new(),
-        }
-    }
-
-    fn get_inner(&self) -> Option<&Self::Inner> {
-        self.inner.get()
-    }
-
-    fn map_inner<F, R>(
-        &self,
-        path: &mut FastCycleDetector<*const ()>,
-        f: F,
-    ) -> Result<R, TypeError<Self::Inner, FixPointInner>>
-    where
-        F: FnOnce(
-            &mut FastCycleDetector<*const ()>,
-            <Self::Inner as AsDispatcher<Self::Inner, FixPointInner>>::RefDispatcher<'_>,
-        ) -> R,
-    {
-        match self.inner.get() {
-            Some(t) => path
-                .with_guard(t as *const _ as *const (), |path| t.map_inner(path, f))
-                .ok_or(TypeError::InfiniteRecursion)?,
-            None => Err(TypeError::UnresolvableType),
-        }
-    }
-
-    fn set_inner(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, FixPointInner>> {
-        self.inner
-            .set(_value)
-            .map_err(|_| TypeError::RedeclaredType)
-    }
-}
-
-impl GCTraceable<FixPointInner> for FixPointInner {
-    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<FixPointInner>>) {
-        if let Some(t) = self.inner.get() {
-            t.collect(queue);
-        }
-    }
-}
 
 pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
     reference: GCArcWeak<T>,

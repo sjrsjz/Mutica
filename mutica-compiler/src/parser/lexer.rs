@@ -159,4 +159,6 @@ pub enum LexerToken {
     RBrace,
     #[token("|>")]
     PipeGreaterThan,
+    #[token("..")]
+    Range,
 }

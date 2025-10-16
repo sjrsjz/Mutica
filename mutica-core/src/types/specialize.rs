@@ -126,7 +126,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
                 TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-
+                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ if enabled => {
                     // 当 pattern_mode 不为 false 时,表示需要匹配子模式
                     // 这时不能短路返回,因为可能需要多个子类型共同匹配一个模式
