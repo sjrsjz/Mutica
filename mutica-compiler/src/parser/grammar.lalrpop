@@ -37,10 +37,10 @@ extern {
         "any" => LexerToken::Any,
         "none" => LexerToken::None,
         "import" => LexerToken::Import,
+        "require" => LexerToken::Require,
         "if" => LexerToken::If,
         "then" => LexerToken::Then,
         "else" => LexerToken::Else,
-        "neg" => LexerToken::Neg,
         "rot" => LexerToken::Rot,
         "__add" => LexerToken::DunderAdd,
         "__sub" => LexerToken::DunderSub,
@@ -232,7 +232,6 @@ Term: WithLocation<TypeAst> = {
         TokenColor::fill_colors(colors, rbrace_l..rbrace_r, TokenColor::Punctuation);
         t
     },
-    <neg: Neg> => neg,
     <rot: Rot> => rot,
     <np: Namespace> => np,
     <a: AtomType> => a,
@@ -249,18 +248,9 @@ Namespace: WithLocation<TypeAst> = {
     },
 }
 
-Neg: WithLocation<TypeAst> = {
-    <l:@L> <neg_l:@L> "neg" <neg_r:@R> <a: Term> <r:@R> => {
-        TokenColor::fill_colors(colors, neg_l..neg_r, TokenColor::Operator);
-        WithLocation::new(TypeAst::Neg {
-            value: Box::new(a),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-}
-
 Rot: WithLocation<TypeAst> = {
     <l:@L> <rot_l:@L> "rot" <rot_r:@R> <a: Term> <r:@R> => {
-        TokenColor::fill_colors(colors, rot_l..rot_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, rot_l..rot_r, TokenColor::Keyword);
         WithLocation::new(TypeAst::Rot {
             value: Box::new(a),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
@@ -751,8 +741,21 @@ Loop: WithLocation<TypeAst> = {
     },
 }
 
+Require: WithLocation<TypeAst> = {
+    <l:@L> "require" <arg: Type> <con_l:@L> ";" <con_r:@R> <expr: Type> <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, con_l..con_r, TokenColor::Punctuation);
+        WithLocation::new(TypeAst::Closure {
+            pattern: Box::new(arg),
+            body: Box::new(expr),
+            fail_branch: None,
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
 
 pub Type: WithLocation<TypeAst> = {
+    <r: Require> => r,
     <l: Loop> => l,
     <e: Effect> => e,
     <e: Expression> => e,

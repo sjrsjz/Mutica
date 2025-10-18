@@ -62,6 +62,8 @@ pub enum LexerToken {
     Any,
     #[token("import")]
     Import,
+    #[token("require")]
+    Require,
     #[token("none")]
     None,
     #[token("if")]
@@ -70,8 +72,6 @@ pub enum LexerToken {
     Then,
     #[token("else")]
     Else,
-    #[token("neg")]
-    Neg,
     #[token("rot")]
     Rot,
     #[token("__add")]

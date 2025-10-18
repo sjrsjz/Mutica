@@ -133,6 +133,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Pattern<T> {
+    #[stacksafe::stacksafe]
     fn accept(
         &self,
         other: Self::RefDispatcher<'_>,

@@ -2,12 +2,9 @@ use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
-use crate::{
-    types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, Type, TypeCheckContext, TypeRef,
-    },
-    util::collector::Collector,
+use crate::types::{
+    AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable, Rootable,
+    Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
 };
 
 pub struct Rotate<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -74,15 +71,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                TypeRef::Rot(v) => self
-                    .value
-                    .fulfill(v.value.as_ref_dispatcher(), &mut inner_ctx), // Rot A <: Rot B => A <: B
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Rot(v) => {
+                    // 反转方向
+                    let mut inner_ctx = TypeCheckContext::new(
+                        ctx.assumptions,
+                        (ctx.closure_env.1, ctx.closure_env.0),
+                        pattern_env,
+                    );
+                    if v.value
+                        .fulfill(self.as_ref_dispatcher(), &mut inner_ctx)?
+                        .is_some()
+                    {
+                        Ok(None)
+                    } else {
+                        Ok(Some(()))
+                    }
+                }
                 _ => Ok(None),
             }
         })
@@ -109,24 +120,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Rotate<T> {
-    fn accept(
-        &self,
-        other: Self::RefDispatcher<'_>,
-        ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|_| {
-            let mut pattern_env_disabled = Collector::new_disabled();
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut pattern_env_disabled);
-
-            // Rot 语义为方向反转，即：
-            // A <: Rot B => B <: A
-            self.value.fulfill(other, &mut inner_ctx)
-        })
-    }
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rotate<T> {
     pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Type<T> {
         let value = value.into_dispatcher();
@@ -136,5 +129,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rotate<T> {
             is_nf,
         }
         .dispatch()
+    }
+
+    pub fn value(&self) -> &Type<T> {
+        self.value.as_ref()
     }
 }

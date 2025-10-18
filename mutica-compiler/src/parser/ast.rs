@@ -17,7 +17,6 @@ use mutica_core::types::invoke::Invoke;
 use mutica_core::types::lazy::Lazy;
 use mutica_core::types::list::List;
 use mutica_core::types::namespace::Namespace;
-use mutica_core::types::neg::Negative;
 use mutica_core::types::opcode::Opcode;
 use mutica_core::types::pattern::Pattern;
 use mutica_core::types::rot::Rotate;
@@ -109,9 +108,6 @@ pub enum TypeAst {
         expr: Box<WithLocation<TypeAst>>,
     },
     Literal(Box<WithLocation<TypeAst>>),
-    Neg {
-        value: Box<WithLocation<TypeAst>>,
-    },
     Rot {
         value: Box<WithLocation<TypeAst>>,
     },
@@ -158,9 +154,6 @@ pub enum BasicTypeAst {
         expr: Box<WithLocation<BasicTypeAst>>,
     },
     Literal(Box<WithLocation<BasicTypeAst>>),
-    Neg {
-        value: Box<WithLocation<BasicTypeAst>>,
-    },
     Rot {
         value: Box<WithLocation<BasicTypeAst>>,
     },
@@ -456,13 +449,6 @@ impl BasicTypeAst {
                 LinearTypeAst::Literal(Box::new(inner.linearize(ctx, inner.location()).finalize())),
                 loc,
             )),
-            BasicTypeAst::Neg { value } => {
-                let value = value.linearize(ctx, value.location());
-                let ty = LinearTypeAst::Neg {
-                    value: Box::new(value.tail_type().clone()),
-                };
-                LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
-            }
             BasicTypeAst::Rot { value } => {
                 let value = value.linearize(ctx, value.location());
                 let ty = LinearTypeAst::Rot {
@@ -551,9 +537,6 @@ pub enum LinearTypeAst<'ast> {
         expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
     Literal(Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
-    Neg {
-        value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
-    },
     Rot {
         value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
@@ -930,12 +913,6 @@ impl TypeAst {
                     }
                 }
             }
-            TypeAst::Neg { value } => WithLocation::new(
-                BasicTypeAst::Neg {
-                    value: Box::new(value.into_basic(multifile_builder, value.location())),
-                },
-                loc,
-            ),
             TypeAst::Rot { value } => WithLocation::new(
                 BasicTypeAst::Rot {
                     value: Box::new(value.into_basic(multifile_builder, value.location())),
@@ -1036,7 +1013,7 @@ impl TypeAst {
             TypeAst::Literal(inner) => {
                 inner.collect_errors(errors);
             }
-            TypeAst::Neg { value } | TypeAst::Rot { value } => {
+            TypeAst::Rot { value } => {
                 value.collect_errors(errors);
             }
         }
@@ -1132,9 +1109,6 @@ impl TypeAst {
                 expr: Box::new(Self::sanitize(*expr)),
             },
             TypeAst::Literal(inner) => TypeAst::Literal(Box::new(Self::sanitize(*inner))),
-            TypeAst::Neg { value } => TypeAst::Neg {
-                value: Box::new(Self::sanitize(*value)),
-            },
             TypeAst::Rot { value } => TypeAst::Rot {
                 value: Box::new(Self::sanitize(*value)),
             },
@@ -1655,20 +1629,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::Neg { value } => {
-                let value_res = value.flow(ctx, pattern_mode, value.location(), errors);
-                FlowResult::complex(
-                    WithLocation::new(
-                        LinearTypeAst::Neg {
-                            value: Box::new(value_res.ty),
-                        },
-                        loc,
-                    ),
-                    value_res.captures,
-                    value_res.patterns,
-                )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
-            }
             LinearTypeAst::Rot { value } => {
                 // Rot类型内不允许出现模式变量，因为Rot检查是反向的
                 let value_res = value.flow(ctx, false, value.location(), errors);
@@ -2017,20 +1977,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 Ok(BuildResult::complex(
                     Lazy::new(&inner_type.ty),
                     inner_type.patterns,
-                ))
-            }
-            LinearTypeAst::Neg { value } => {
-                let value_type = value.to_type(
-                    ctx,
-                    pattern_counter,
-                    pattern_mode,
-                    gc,
-                    roots,
-                    value.location(),
-                )?;
-                Ok(BuildResult::complex(
-                    Negative::new(&value_type.ty),
-                    value_type.patterns,
                 ))
             }
             LinearTypeAst::Rot { value } => {

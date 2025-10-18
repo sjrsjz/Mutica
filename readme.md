@@ -163,11 +163,7 @@ This coinductively-defined system enables:
 
 - **Precise Structural Validation**: Accurately models traditional subtyping behaviors like width and depth for records, and covariance/contravariance for functions, as a subset of its capabilities.
 
-- **Meta-level Type Modifiers**: Introduces unique type modifiers like `neg` and `rot` that operate on the validation process itself, allowing for powerful meta-programming at the type level.
-    - **`neg` (Negation)**: Reverses the boolean outcome of a constraint check, enabling powerful negative constraints (e.g., `T & neg NotThis`).
-    - **`rot` (Rotation)**: Reverses the direction of the check, providing a tool to express contravariance and exact type matching (e.g., `T & rot T`).
-
-- **Emergent Properties**: The orthogonal combination of these simple rules allows for the expression of complex type-level concepts like `Bottom`, `Top`, and `Exact` types from first principles.
+- **Emergent Properties**: The orthogonal combination of these simple rules allows for the expression of complex type-level concepts like `Bottom`, `Top` types from first principles.
 
 - **Decidability by Design**: The entire system is crafted to be purely syntactic, ensuring that all constraint checks are decidable and can be efficiently executed by the compiler, avoiding the theoretical traps of semantic negation in recursive contexts.
 

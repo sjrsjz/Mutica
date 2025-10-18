@@ -124,8 +124,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
                         if !sub.fulfill(other, &mut inner_ctx)?.is_some() {
@@ -171,6 +169,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Generalize<T> {
+    #[stacksafe::stacksafe]
     fn accept(
         &self,
         other: Self::RefDispatcher<'_>,

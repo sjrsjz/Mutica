@@ -11,7 +11,6 @@ pub mod invoke;
 pub mod lazy;
 pub mod list;
 pub mod namespace;
-pub mod neg;
 pub mod opcode;
 pub mod pattern;
 pub mod rot;
@@ -42,7 +41,6 @@ use crate::{
         lazy::Lazy,
         list::List,
         namespace::Namespace,
-        neg::Negative,
         opcode::Opcode,
         pattern::Pattern,
         rot::Rotate,
@@ -78,7 +76,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Namespace(v) => Type::<T>::Namespace(v.clone()),
             Type::Pattern(v) => Type::<T>::Pattern(v.clone()),
             Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            Type::Neg(v) => Type::<T>::Neg(v.clone()),
             Type::Rot(v) => Type::<T>::Rot(v.clone()),
         }
     }
@@ -119,8 +116,6 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Pattern(Pattern<T>),
     // 惰性包装器
     Lazy(Lazy<T>),
-    // Neg变换
-    Neg(Negative<T>),
     // Rot变换
     Rot(Rotate<T>),
 }
@@ -143,7 +138,6 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Namespace(&'a Namespace<T>),
     Pattern(&'a Pattern<T>),
     Lazy(&'a Lazy<T>),
-    Neg(&'a Negative<T>),
     Rot(&'a Rotate<T>),
 }
 
@@ -167,7 +161,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
             TypeRef::Namespace(v) => TypeRef::Namespace(v),
             TypeRef::Pattern(v) => TypeRef::Pattern(v),
             TypeRef::Lazy(v) => TypeRef::Lazy(v),
-            TypeRef::Neg(v) => TypeRef::Neg(v),
             TypeRef::Rot(v) => TypeRef::Rot(v),
         }
     }
@@ -195,7 +188,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Namespace(v) => Type::<T>::Namespace(v.clone()),
             TypeRef::Pattern(v) => Type::<T>::Pattern(v.clone()),
             TypeRef::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            TypeRef::Neg(v) => Type::<T>::Neg(v.clone()),
             TypeRef::Rot(v) => Type::<T>::Rot(v.clone()),
         }
     }
@@ -221,7 +213,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Namespace(v) => v.tagged_ptr(),
             TypeRef::Pattern(v) => v.tagged_ptr(),
             TypeRef::Lazy(v) => v.tagged_ptr(),
-            TypeRef::Neg(v) => v.tagged_ptr(),
             TypeRef::Rot(v) => v.tagged_ptr(),
         }
     }
@@ -264,7 +255,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Namespace(v) => v.fulfill(other, ctx),
             TypeRef::Pattern(v) => v.fulfill(other, ctx),
             TypeRef::Lazy(v) => v.fulfill(other, ctx),
-            TypeRef::Neg(v) => v.fulfill(other, ctx),
             TypeRef::Rot(v) => v.fulfill(other, ctx),
         }
     }
@@ -333,7 +323,6 @@ macro_rules! type_dispatch {
             Type::Namespace(v) => v.$method($($args),*),
             Type::Pattern(v) => v.$method($($args),*),
             Type::Lazy(v) => v.$method($($args),*),
-            Type::Neg(v) => v.$method($($args),*),
             Type::Rot(v) => v.$method($($args),*),
         }
     };
@@ -470,7 +459,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Namespace(v) => v.is_normal_form(),
             Type::Pattern(v) => v.is_normal_form(),
             Type::Lazy(v) => v.is_normal_form(),
-            Type::Neg(v) => v.is_normal_form(),
             Type::Rot(v) => v.is_normal_form(),
         }
     }
@@ -552,7 +540,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Namespace(v) => TypeRef::Namespace(v),
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
-            Type::Neg(v) => TypeRef::Neg(v),
             Type::Rot(v) => TypeRef::Rot(v),
         }
     }
@@ -588,7 +575,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Namespace(v) => TypeRef::Namespace(v),
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
-            Type::Neg(v) => TypeRef::Neg(v),
             Type::Rot(v) => TypeRef::Rot(v),
         }
     }
