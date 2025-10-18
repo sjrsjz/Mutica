@@ -47,7 +47,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Variable
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Variable<T> {
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -56,12 +56,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
                 TypeRef::Variable(v) => {
                     let self_idx = self.index;
                     let v_idx = v.index;
@@ -75,7 +76,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
 
                     let value_l = ctx.closure_env.0.get(l)?;
                     let value_r = ctx.closure_env.1.get(r)?;
-                    value_l.is(value_r.as_ref_dispatcher(), &mut inner_ctx)
+                    value_l.fulfill(value_r.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => {
                     if self.index >= 0 {
@@ -84,7 +85,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                     }
                     let r = (-1 - self.index) as usize;
                     let value = ctx.closure_env.1.get(r)?;
-                    value.is(other, &mut inner_ctx)
+                    value.fulfill(other, &mut inner_ctx)
                 }
             }
         })
@@ -119,7 +120,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Variable<T> {
-    fn has(
+    fn accept(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,

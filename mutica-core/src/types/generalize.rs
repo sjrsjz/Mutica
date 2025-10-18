@@ -111,7 +111,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Generali
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Generalize<T> {
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -120,15 +120,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
-                        if !sub.is(other, &mut inner_ctx)?.is_some() {
+                        if !sub.fulfill(other, &mut inner_ctx)?.is_some() {
                             return Ok(None);
                         }
                     }
@@ -171,7 +171,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Generalize<T> {
-    fn has(
+    fn accept(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -290,7 +290,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
                         &mut pattern_env_temp,
                     );
                     if collected[i]
-                        .is(collected[j].as_ref_dispatcher(), &mut check_ctx)?
+                        .fulfill(collected[j].as_ref_dispatcher(), &mut check_ctx)?
                         .is_some()
                     {
                         absorbed[i] = true;

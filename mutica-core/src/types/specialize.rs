@@ -111,7 +111,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Specialize<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Specialize<T> {
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -121,19 +121,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                
                 _ if enabled => {
                     // 当 pattern_mode 不为 false 时,表示需要匹配子模式
                     // 这时不能短路返回,因为可能需要多个子类型共同匹配一个模式
                     let mut matched = false;
                     for sub in self.types.iter() {
                         // 实际上fallback可能会导致pattern_env被意外修改,我们需要一个可回滚的机制
-                        matched |= sub.is(other.clone(), &mut inner_ctx)?.is_some()
+                        matched |= sub.fulfill(other.clone(), &mut inner_ctx)?.is_some()
                     }
                     Ok(if matched { Some(()) } else { None })
                 }
@@ -141,7 +142,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
                 _ => {
                     // 当 pattern_mode 为 false 时,表示不需要匹配子模式,短路返回不会影响正确性
                     for sub in self.types.iter() {
-                        if sub.is(other.clone(), &mut inner_ctx)?.is_some() {
+                        if sub.fulfill(other.clone(), &mut inner_ctx)?.is_some() {
                             return Ok(Some(()));
                         }
                     }
@@ -184,7 +185,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Specialize<T> {
-    fn has(
+    fn accept(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -301,7 +302,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
                         &mut pattern_env,
                     );
                     if collected[j]
-                        .is(collected[i].as_ref_dispatcher(), &mut check_ctx)?
+                        .fulfill(collected[i].as_ref_dispatcher(), &mut check_ctx)?
                         .is_some()
                     {
                         absorbed[i] = true;

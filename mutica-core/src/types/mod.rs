@@ -11,12 +11,13 @@ pub mod invoke;
 pub mod lazy;
 pub mod list;
 pub mod namespace;
+pub mod neg;
 pub mod opcode;
 pub mod pattern;
+pub mod rot;
 pub mod specialize;
 pub mod tuple;
 pub mod type_bound;
-pub mod type_range;
 pub mod variable;
 
 use std::{error::Error, fmt::Debug, sync::Arc};
@@ -41,12 +42,13 @@ use crate::{
         lazy::Lazy,
         list::List,
         namespace::Namespace,
+        neg::Negative,
         opcode::Opcode,
         pattern::Pattern,
+        rot::Rotate,
         specialize::Specialize,
         tuple::Tuple,
         type_bound::TypeBound,
-        type_range::TypeRange,
         variable::Variable,
     },
     util::{
@@ -76,7 +78,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Namespace(v) => Type::<T>::Namespace(v.clone()),
             Type::Pattern(v) => Type::<T>::Pattern(v.clone()),
             Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            Type::Range(v) => Type::<T>::Range(v.clone()),
+            Type::Neg(v) => Type::<T>::Neg(v.clone()),
+            Type::Rot(v) => Type::<T>::Rot(v.clone()),
         }
     }
 }
@@ -116,8 +119,10 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Pattern(Pattern<T>),
     // 惰性包装器
     Lazy(Lazy<T>),
-    // 类型范围
-    Range(TypeRange<T>),
+    // Neg变换
+    Neg(Negative<T>),
+    // Rot变换
+    Rot(Rotate<T>),
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
@@ -138,7 +143,8 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Namespace(&'a Namespace<T>),
     Pattern(&'a Pattern<T>),
     Lazy(&'a Lazy<T>),
-    Range(&'a TypeRange<T>),
+    Neg(&'a Negative<T>),
+    Rot(&'a Rotate<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
@@ -161,7 +167,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
             TypeRef::Namespace(v) => TypeRef::Namespace(v),
             TypeRef::Pattern(v) => TypeRef::Pattern(v),
             TypeRef::Lazy(v) => TypeRef::Lazy(v),
-            TypeRef::Range(v) => TypeRef::Range(v),
+            TypeRef::Neg(v) => TypeRef::Neg(v),
+            TypeRef::Rot(v) => TypeRef::Rot(v),
         }
     }
 }
@@ -188,7 +195,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Namespace(v) => Type::<T>::Namespace(v.clone()),
             TypeRef::Pattern(v) => Type::<T>::Pattern(v.clone()),
             TypeRef::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            TypeRef::Range(v) => Type::<T>::Range(v.clone()),
+            TypeRef::Neg(v) => Type::<T>::Neg(v.clone()),
+            TypeRef::Rot(v) => Type::<T>::Rot(v.clone()),
         }
     }
 }
@@ -213,7 +221,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Namespace(v) => v.tagged_ptr(),
             TypeRef::Pattern(v) => v.tagged_ptr(),
             TypeRef::Lazy(v) => v.tagged_ptr(),
-            TypeRef::Range(v) => v.tagged_ptr(),
+            TypeRef::Neg(v) => v.tagged_ptr(),
+            TypeRef::Rot(v) => v.tagged_ptr(),
         }
     }
 
@@ -238,24 +247,25 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         match self {
-            TypeRef::Bound(v) => v.is(other, ctx),
-            TypeRef::Integer(v) => v.is(other, ctx),
-            TypeRef::IntegerValue(v) => v.is(other, ctx),
-            TypeRef::Char(v) => v.is(other, ctx),
-            TypeRef::CharValue(v) => v.is(other, ctx),
-            TypeRef::Tuple(v) => v.is(other, ctx),
-            TypeRef::List(v) => v.is(other, ctx),
-            TypeRef::Generalize(v) => v.is(other, ctx),
-            TypeRef::Specialize(v) => v.is(other, ctx),
-            TypeRef::FixPoint(v) => v.is(other, ctx),
-            TypeRef::Invoke(v) => v.is(other, ctx),
-            TypeRef::Variable(v) => v.is(other, ctx),
-            TypeRef::Closure(v) => v.is(other, ctx),
-            TypeRef::Opcode(v) => v.is(other, ctx),
-            TypeRef::Namespace(v) => v.is(other, ctx),
-            TypeRef::Pattern(v) => v.is(other, ctx),
-            TypeRef::Lazy(v) => v.is(other, ctx),
-            TypeRef::Range(v) => v.is(other, ctx),
+            TypeRef::Bound(v) => v.fulfill(other, ctx),
+            TypeRef::Integer(v) => v.fulfill(other, ctx),
+            TypeRef::IntegerValue(v) => v.fulfill(other, ctx),
+            TypeRef::Char(v) => v.fulfill(other, ctx),
+            TypeRef::CharValue(v) => v.fulfill(other, ctx),
+            TypeRef::Tuple(v) => v.fulfill(other, ctx),
+            TypeRef::List(v) => v.fulfill(other, ctx),
+            TypeRef::Generalize(v) => v.fulfill(other, ctx),
+            TypeRef::Specialize(v) => v.fulfill(other, ctx),
+            TypeRef::FixPoint(v) => v.fulfill(other, ctx),
+            TypeRef::Invoke(v) => v.fulfill(other, ctx),
+            TypeRef::Variable(v) => v.fulfill(other, ctx),
+            TypeRef::Closure(v) => v.fulfill(other, ctx),
+            TypeRef::Opcode(v) => v.fulfill(other, ctx),
+            TypeRef::Namespace(v) => v.fulfill(other, ctx),
+            TypeRef::Pattern(v) => v.fulfill(other, ctx),
+            TypeRef::Lazy(v) => v.fulfill(other, ctx),
+            TypeRef::Neg(v) => v.fulfill(other, ctx),
+            TypeRef::Rot(v) => v.fulfill(other, ctx),
         }
     }
 }
@@ -323,7 +333,8 @@ macro_rules! type_dispatch {
             Type::Namespace(v) => v.$method($($args),*),
             Type::Pattern(v) => v.$method($($args),*),
             Type::Lazy(v) => v.$method($($args),*),
-            Type::Range(v) => v.$method($($args),*),
+            Type::Neg(v) => v.$method($($args),*),
+            Type::Rot(v) => v.$method($($args),*),
         }
     };
 }
@@ -412,12 +423,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Type<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<T> {
     #[stacksafe::stacksafe]
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
-        type_dispatch!(self, is, other, ctx)
+        type_dispatch!(self, fulfill, other, ctx)
     }
 
     #[stacksafe::stacksafe]
@@ -459,7 +470,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Namespace(v) => v.is_normal_form(),
             Type::Pattern(v) => v.is_normal_form(),
             Type::Lazy(v) => v.is_normal_form(),
-            Type::Range(v) => v.is_normal_form(),
+            Type::Neg(v) => v.is_normal_form(),
+            Type::Rot(v) => v.is_normal_form(),
         }
     }
 }
@@ -540,7 +552,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Namespace(v) => TypeRef::Namespace(v),
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
-            Type::Range(v) => TypeRef::Range(v),
+            Type::Neg(v) => TypeRef::Neg(v),
+            Type::Rot(v) => TypeRef::Rot(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -575,7 +588,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Namespace(v) => TypeRef::Namespace(v),
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
-            Type::Range(v) => TypeRef::Range(v),
+            Type::Neg(v) => TypeRef::Neg(v),
+            Type::Rot(v) => TypeRef::Rot(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -698,7 +712,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     GcAllocObject<V> + Clone + Rootable<V> + Representable + AsDispatcher<U, V>
 {
-    fn is(
+    fn fulfill(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<U, V>,
@@ -726,10 +740,10 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
             &mut pattern_env,
         );
         Ok(self
-            .is(other.as_ref_dispatcher(), type_check_ctx)?
+            .fulfill(other.as_ref_dispatcher(), type_check_ctx)?
             .is_some()
             && other
-                .is(self.as_ref_dispatcher(), type_check_ctx)?
+                .fulfill(self.as_ref_dispatcher(), type_check_ctx)?
                 .is_some())
     }
 
@@ -748,7 +762,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
 pub trait CoinductiveTypeWithAny<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     AsDispatcher<U, V>
 {
-    fn has(
+    fn accept(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<U, V>,

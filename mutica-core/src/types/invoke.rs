@@ -71,7 +71,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Invoke<T
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invoke<T> {
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -80,24 +80,33 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
+                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
                 TypeRef::Invoke(v) => {
                     let func_eq = self
                         .inner
                         .0
-                        .is(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
+                        .fulfill(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
                     if func_eq.is_none() {
                         return Ok(None);
                     }
                     let arg_eq = self
                         .inner
                         .1
-                        .is(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
+                        .fulfill(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
                     if arg_eq.is_none() {
                         return Ok(None);
                     }
                     let cont_eq = match (&self.inner.2, &v.inner.2) {
                         (Some(cont1), Some(cont2)) => {
-                            cont1.is(cont2.as_ref_dispatcher(), &mut inner_ctx)?
+                            cont1.fulfill(cont2.as_ref_dispatcher(), &mut inner_ctx)?
                         }
                         (None, None) => Some(()),
                         _ => None,
@@ -107,13 +116,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                     }
                     Ok(Some(()))
                 }
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })

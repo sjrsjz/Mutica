@@ -70,6 +70,10 @@ pub enum LexerToken {
     Then,
     #[token("else")]
     Else,
+    #[token("neg")]
+    Neg,
+    #[token("rot")]
+    Rot,
     #[token("__add")]
     DunderAdd,
     #[token("__sub")]

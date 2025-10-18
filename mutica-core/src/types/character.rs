@@ -42,7 +42,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Characte
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Character<T> {
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -51,14 +51,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
-                TypeRef::Char(_) => Ok(Some(())),
+                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Char(_) => Ok(Some(())),
                 _ => Ok(None),
             }
         })

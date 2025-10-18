@@ -256,7 +256,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Closure<
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closure<T> {
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -265,6 +265,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
+                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
                 TypeRef::Closure(v) => {
                     // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                     // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
@@ -281,7 +290,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     let pattern_match = v
                         .inner
                         .pattern
-                        .is(self.inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
+                        .fulfill(self.inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
                         .is_some();
 
                     if !pattern_match {
@@ -298,7 +307,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     let expr_match = self
                         .inner
                         .expr
-                        .is(v.inner.expr.as_ref_dispatcher(), &mut expr_ctx)?
+                        .fulfill(v.inner.expr.as_ref_dispatcher(), &mut expr_ctx)?
                         .is_some();
 
                     if !expr_match {
@@ -312,7 +321,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                                 ctx.closure_env,
                                 &mut pattern_env_disabled,
                             );
-                            a.is(b.as_ref_dispatcher(), &mut fb_ctx)?.is_some()
+                            a.fulfill(b.as_ref_dispatcher(), &mut fb_ctx)?.is_some()
                         }
                         (None, None) => true,
                         _ => false,
@@ -324,13 +333,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
                     Ok(Some(()))
                 }
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -376,7 +378,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
         if ctx
             .arg
-            .is(
+            .fulfill(
                 self.inner.pattern.as_ref_dispatcher(),
                 &mut pattern_check_ctx,
             )?

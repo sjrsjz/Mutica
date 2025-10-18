@@ -2,17 +2,20 @@ use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
-use crate::types::{
-    AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable, Rootable,
-    Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
+use crate::{
+    types::{
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
+        Rootable, Type, TypeCheckContext, TypeRef,
+    },
+    util::collector::Collector,
 };
 
-pub struct Lazy<T: GcAllocObject<T, Inner = Type<T>>> {
+pub struct Rotate<T: GcAllocObject<T, Inner = Type<T>>> {
     value: Arc<Type<T>>,
     is_nf: bool,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Rotate<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
@@ -21,47 +24,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Rotate<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         self.value.collect(queue);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Rotate<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Rotate<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.value.upgrade(collected);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Rotate<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
     ) -> String {
-        format!("Lazy<{}>", self.value.represent(path))
+        format!("Rot<{}>", self.value.represent(path))
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Rotate<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
         Self: 'a;
 
     fn into_dispatcher(self) -> Type<T> {
-        Type::Lazy(self)
+        Type::Rot(self)
     }
 
     fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
-        TypeRef::Lazy(self)
+        TypeRef::Rot(self)
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotate<T> {
     fn fulfill(
         &self,
         other: TypeRef<T>,
@@ -71,18 +74,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
+                TypeRef::Rot(v) => self
+                    .value
+                    .fulfill(v.value.as_ref_dispatcher(), &mut inner_ctx), // Rot A <: Rot B => A <: B
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Lazy(v) => self
-                    .value
-                    .fulfill(v.value.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -109,7 +109,25 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Rotate<T> {
+    fn accept(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|_| {
+            let mut pattern_env_disabled = Collector::new_disabled();
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut pattern_env_disabled);
+
+            // Rot 语义为方向反转，即：
+            // A <: Rot B => B <: A
+            self.value.fulfill(other, &mut inner_ctx)
+        })
+    }
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rotate<T> {
     pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Type<T> {
         let value = value.into_dispatcher();
         let is_nf = value.is_normal_form();

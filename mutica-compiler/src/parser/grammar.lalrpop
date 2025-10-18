@@ -40,6 +40,8 @@ extern {
         "if" => LexerToken::If,
         "then" => LexerToken::Then,
         "else" => LexerToken::Else,
+        "neg" => LexerToken::Neg,
+        "rot" => LexerToken::Rot,
         "__add" => LexerToken::DunderAdd,
         "__sub" => LexerToken::DunderSub,
         "__mul" => LexerToken::DunderMul,
@@ -230,6 +232,8 @@ Term: WithLocation<TypeAst> = {
         TokenColor::fill_colors(colors, rbrace_l..rbrace_r, TokenColor::Punctuation);
         t
     },
+    <neg: Neg> => neg,
+    <rot: Rot> => rot,
     <np: Namespace> => np,
     <a: AtomType> => a,
 }
@@ -241,6 +245,24 @@ Namespace: WithLocation<TypeAst> = {
         WithLocation::new(TypeAst::Namespace {
             tag: tag,
             expr: Box::new(t),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
+Neg: WithLocation<TypeAst> = {
+    <l:@L> <neg_l:@L> "neg" <neg_r:@R> <a: Term> <r:@R> => {
+        TokenColor::fill_colors(colors, neg_l..neg_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Neg {
+            value: Box::new(a),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
+Rot: WithLocation<TypeAst> = {
+    <l:@L> <rot_l:@L> "rot" <rot_r:@R> <a: Term> <r:@R> => {
+        TokenColor::fill_colors(colors, rot_l..rot_r, TokenColor::Operator);
+        WithLocation::new(TypeAst::Rot {
+            value: Box::new(a),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
@@ -425,7 +447,6 @@ Factor: WithLocation<TypeAst> = {
             expr: Box::new(a),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <t: TypeRange> => t,
     <a: Apply> => a,
 }
 
@@ -590,52 +611,6 @@ MulDiv: WithLocation<TypeAst> = {
     <t: Factor> => t,
 }
 
-TypeRange: WithLocation<TypeAst> = {
-    <l:@L> "[" <start: Factor> <dot_l:@L> ".." <dot_r:@R> <end: Factor> "]" <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+1, TokenColor::Punctuation);
-        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
-        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
-        WithLocation::new(TypeAst::TypeRange {
-            lower: Box::new(start),
-            upper: Box::new(end),
-            l_inclusive: true,
-            u_inclusive: true,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-    <l:@L> "[" <start: Factor> <dot_l:@L> ".." <dot_r:@R> <end: Factor> ")" <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+1, TokenColor::Punctuation);
-        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
-        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
-        WithLocation::new(TypeAst::TypeRange {
-            lower: Box::new(start),
-            upper: Box::new(end),
-            l_inclusive: true,
-            u_inclusive: false,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-    <l:@L> "(" <start: Factor> <dot_l:@L> ".." <dot_r:@R> <end: Factor> "]" <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+1, TokenColor::Punctuation);
-        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
-        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
-        WithLocation::new(TypeAst::TypeRange {
-            lower: Box::new(start),
-            upper: Box::new(end),
-            l_inclusive: false,
-            u_inclusive: true,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-    <l:@L> "(" <start: Factor> <dot_l:@L> ".." <dot_r:@R> <end: Factor> ")" <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+1, TokenColor::Punctuation);
-        TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
-        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
-        WithLocation::new(TypeAst::TypeRange {
-            lower: Box::new(start),
-            upper: Box::new(end),
-            l_inclusive: false,
-            u_inclusive: false,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-}
 
 Let: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     <l:@L> "let" <id: Primary> <a_l:@L> "=" <a_r:@R> <value: Type> ";" <r:@R> => {

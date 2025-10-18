@@ -4,15 +4,15 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::types::{
     AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable, Rootable,
-    Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
+    Type, TypeCheckContext, TypeRef,
 };
 
-pub struct Lazy<T: GcAllocObject<T, Inner = Type<T>>> {
+pub struct Negative<T: GcAllocObject<T, Inner = Type<T>>> {
     value: Arc<Type<T>>,
     is_nf: bool,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Negative<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
@@ -21,47 +21,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Negative<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         self.value.collect(queue);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Negative<T> {
     type Inner = Type<T>;
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Negative<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.value.upgrade(collected);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Negative<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
     ) -> String {
-        format!("Lazy<{}>", self.value.represent(path))
+        format!("Neg<{}>", self.value.represent(path))
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Negative<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
         Self: 'a;
 
     fn into_dispatcher(self) -> Type<T> {
-        Type::Lazy(self)
+        Type::Neg(self)
     }
 
     fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
-        TypeRef::Lazy(self)
+        TypeRef::Neg(self)
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Negative<T> {
     fn fulfill(
         &self,
         other: TypeRef<T>,
@@ -71,18 +71,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
+                TypeRef::Neg(v) => self
+                    .value
+                    .fulfill(v.value.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Lazy(v) => self
-                    .value
-                    .fulfill(v.value.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
@@ -109,7 +106,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Negative<T> {
+    fn accept(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+
+            // Neg 语义为命题反转，即：
+            // A <: Neg B => not (A <: B)
+            if other
+                .is(self.value.as_ref_dispatcher(), &mut inner_ctx)?
+                .is_some()
+            {
+                return Ok(None);
+            }
+            Ok(Some(()))
+        })
+    }
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> Negative<T> {
     pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Type<T> {
         let value = value.into_dispatcher();
         let is_nf = value.is_normal_form();

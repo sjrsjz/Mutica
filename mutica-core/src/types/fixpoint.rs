@@ -11,7 +11,6 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
@@ -164,7 +163,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     /// ```
     ///
     /// 即：在假设 μX.S <: μY.T 的前提下，检查展开后的类型关系。
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -172,34 +171,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
-            match other {
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())), // 快速路径
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                _ => match self.reference.upgrade() {
-                    Some(inner) => {
-                        let inner = inner
-                            .as_ref()
-                            .get_inner()
-                            .ok_or(TypeError::UnresolvableType)?;
-                        let self_ptr = inner.tagged_ptr();
-                        let other_ptr = other.tagged_ptr();
-                        let assumption_pair = (self_ptr, other_ptr);
+            match self.reference.upgrade() {
+                Some(inner) => {
+                    let inner = inner
+                        .as_ref()
+                        .get_inner()
+                        .ok_or(TypeError::UnresolvableType)?;
+                    let self_ptr = inner.tagged_ptr();
+                    let other_ptr = other.tagged_ptr();
+                    let assumption_pair = (self_ptr, other_ptr);
 
-                        // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
-                        let already_assumed =
-                            inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
-                        if already_assumed {
-                            return Ok(Some(())); // already assumed
-                        }
-
-                        inner_ctx.assumptions.push(assumption_pair);
-                        let result = inner.is(other, &mut inner_ctx);
-                        inner_ctx.assumptions.pop();
-                        result
+                    // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
+                    let already_assumed =
+                        inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
+                    if already_assumed {
+                        return Ok(Some(())); // already assumed
                     }
-                    None => Err(TypeError::UnresolvableType), // reference is dead
-                },
+
+                    inner_ctx.assumptions.push(assumption_pair);
+                    let result = inner.fulfill(other, &mut inner_ctx);
+                    inner_ctx.assumptions.pop();
+                    result
+                }
+                None => Err(TypeError::UnresolvableType), // reference is dead
             }
         })
     }
@@ -268,7 +262,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for FixPoint<T> {
-    fn has(
+    fn accept(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,

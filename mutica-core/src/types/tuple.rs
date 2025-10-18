@@ -53,7 +53,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Tuple<T>
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple<T> {
-    fn is(
+    fn fulfill(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -62,6 +62,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match other {
+                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Neg(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Rot(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
                 TypeRef::Tuple(other_types) => {
                     if self.types.len() != other_types.len() {
@@ -69,7 +77,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     }
                     for (self_type, other_type) in self.types.iter().zip(other_types.types.iter()) {
                         if self_type
-                            .is(other_type.as_ref_dispatcher(), &mut inner_ctx)?
+                            .fulfill(other_type.as_ref_dispatcher(), &mut inner_ctx)?
                             .is_none()
                         {
                             return Ok(None);
@@ -87,19 +95,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     let first = &self.types[0];
                     let head = v.head().unwrap();
                     if first
-                        .is(head.as_ref_dispatcher(), &mut inner_ctx)?
+                        .fulfill(head.as_ref_dispatcher(), &mut inner_ctx)?
                         .is_none()
                     {
                         return Ok(None);
                     }
-                    self.types[1].is(v.view(1).as_ref_dispatcher(), &mut inner_ctx)
+                    self.types[1].fulfill(v.view(1).as_ref_dispatcher(), &mut inner_ctx)
                 }
-                TypeRef::Specialize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Generalize(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Range(v) => v.has(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(None),
             }
         })
