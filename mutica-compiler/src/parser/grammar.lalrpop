@@ -352,7 +352,7 @@ MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
 
 HandleWith: WithLocation<TypeAst> = {
     <l:@L> "handle" <t: Primary> <catch_l:@L> "with" <catch_r:@R> <handlers: MatchBranch+> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+3, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, l..l+6, TokenColor::Keyword);
         TokenColor::fill_colors(colors, catch_l..catch_r, TokenColor::Keyword);
         TokenColor::fill_colors(colors, v_l..v_r, TokenColor::Operator);
         TokenColor::fill_colors(colors, r-5..r, TokenColor::Keyword);
