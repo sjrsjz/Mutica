@@ -38,8 +38,6 @@ pub enum LexerToken {
 
     #[token("let")]
     Let,
-    #[token("perform")]
-    Perform,
     #[token("with")]
     With,
     #[token("match")]
@@ -78,6 +76,8 @@ pub enum LexerToken {
     Else,
     #[token("rot")]
     Rot,
+    #[token("handle")]
+    Handle,
     #[token("__add")]
     DunderAdd,
     #[token("__sub")]

@@ -388,7 +388,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             let mut reduce_ctx = ReductionContext::new(
                 self.inner.env(),
                 &param_env,
-                ctx.continuation,
                 ctx.rec_assumptions,
                 ctx.gc,
                 ctx.roots,
@@ -404,7 +403,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             let mut reduce_ctx = ReductionContext::new(
                 ctx.closure_env,
                 ctx.param_env,
-                ctx.continuation,
                 ctx.rec_assumptions,
                 ctx.gc,
                 ctx.roots,

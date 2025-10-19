@@ -8,6 +8,10 @@ use crate::{
         TypeError, TypeRef,
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
+        invoke::{
+            Invoke, InvokeCountinuationStyle, shrink_to_last_continuation,
+            shrink_to_last_perform_handler,
+        },
         list::List,
         opcode::Opcode,
         tuple::Tuple,
@@ -16,7 +20,7 @@ use crate::{
 };
 
 pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
-    cont_stack: Vec<Type<T>>, // Continuation stack
+    cont_stack: Vec<InvokeCountinuationStyle<T>>, // Continuation stack
     current_type: Option<Type<T>>,
     roots: RootStack<Type<T>, T>,
 }
@@ -87,6 +91,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         .collect::<Vec<_>>();
                     Ok(Some(List::new(chars)))
                 }
+                "perform" => Err(TypeError::Exception(arg.clone().into())),
                 _ => Ok(None),
             }
         })?
@@ -99,7 +104,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         let mut reduction_ctx = ReductionContext::new(
             &empty_v,
             &empty_p,
-            None,
             &mut rec_assumptions,
             gc,
             &mut self.roots,
@@ -114,51 +118,61 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         let (next_type, updated) =
             reduced.map(&mut FastCycleDetector::new(), |_, inner| match inner {
                 TypeRef::Invoke(invoke) => {
-                    let mut rec_assumptions2 = smallvec::SmallVec::new();
-                    let mut invoke_ctx = InvokeContext::new(
+                    let invoke_context = &mut InvokeContext::new(
                         invoke.arg(),
                         &empty_v,
                         &empty_p,
-                        invoke.continuation(),
-                        &mut rec_assumptions2,
+                        &mut rec_assumptions,
                         gc,
                         &mut self.roots,
                     );
-
-                    let result = match Self::io(invoke.func(), invoke.arg())? {
-                        Some(io_result) => io_result,
-                        None => invoke.func().invoke(&mut invoke_ctx)?,
+                    let io_result = Self::io(invoke.func(), invoke.arg());
+                    let io_result = match io_result {
+                        Ok(v) => v,
+                        Err(TypeError::Exception(v)) => {
+                            let raise_handler =
+                                match shrink_to_last_perform_handler(&mut self.cont_stack) {
+                                    Some(handler) => handler,
+                                    None => {
+                                        return Err(TypeError::MissingRaiseHandler(Box::new(
+                                            invoke.arg().clone(),
+                                        )));
+                                    }
+                                };
+                            let raise_invoke = Invoke::new(
+                                raise_handler,
+                                *v,
+                                invoke.continuation(),
+                                invoke.raise_handler(),
+                            );
+                            return Ok((raise_invoke, true));
+                        }
+                        Err(e) => return Err(e),
                     };
-                    let result = invoke.flat_compose_stack(
-                        result,
-                        gc,
-                        &mut self.roots,
-                        &mut self.cont_stack,
-                    )?;
+                    let invoke_result = match io_result {
+                        Some(io_result) => io_result,
+                        None => invoke.func().invoke(invoke_context)?,
+                    };
+
+                    let result = match invoke.continuation_style() {
+                        InvokeCountinuationStyle::TailCall => invoke_result,
+                        v => {
+                            self.cont_stack.push(v.clone());
+                            invoke_result
+                        }
+                    };
                     Ok((result, true))
                 }
                 _ => {
-                    if self.cont_stack.is_empty() {
-                        // No more continuation, we are done
-                        return Ok((inner.clone_data(), false));
+                    if let Some(cont) = shrink_to_last_continuation(&mut self.cont_stack) {
+                        Ok((
+                            Invoke::new(cont, inner.clone_data(), None::<Type<T>>, None::<Type<T>>),
+                            true,
+                        ))
+                    } else {
+                        // No more continuations
+                        Ok((reduced.clone(), false))
                     }
-                    // Now take a continuation from the stack and invoke it
-                    let k = self.cont_stack.pop().unwrap();
-                    let mut rec_assumptions2 = smallvec::SmallVec::new();
-                    let mut invoke_ctx = InvokeContext::new(
-                        &reduced,
-                        &empty_v,
-                        &empty_p,
-                        None,
-                        &mut rec_assumptions2,
-                        gc,
-                        &mut self.roots,
-                    );
-                    let result = match Self::io(&k, &reduced)? {
-                        Some(io_result) => io_result,
-                        None => k.invoke(&mut invoke_ctx)?,
-                    };
-                    Ok((result, true))
                 }
             })??;
         self.current_type = Some(next_type);
@@ -172,14 +186,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     pub fn sweep_roots(&mut self) {
         self.roots.sweep();
         for ty in &self.cont_stack {
-            self.roots.attach(ty);
+            match ty {
+                InvokeCountinuationStyle::TailCall => (),
+                InvokeCountinuationStyle::CPS(v) => {
+                    self.roots.attach(v);
+                }
+                InvokeCountinuationStyle::HPS(v) => {
+                    self.roots.attach(v);
+                }
+                InvokeCountinuationStyle::CHPS(a, b) => {
+                    self.roots.attach(a);
+                    self.roots.attach(b);
+                }
+            }
         }
         if let Some(current) = &self.current_type {
             self.roots.attach(current);
         }
     }
 
-    pub fn stack(&self) -> &[Type<T>] {
+    pub fn stack(&self) -> &[InvokeCountinuationStyle<T>] {
         &self.cont_stack
     }
 

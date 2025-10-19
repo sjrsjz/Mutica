@@ -85,7 +85,11 @@ impl<'ast> SourceMapping<'ast> {
                 func,
                 arg,
                 continuation,
+                perform_handler,
             } => {
+                if let Some(perform_handler) = perform_handler {
+                    Self::build_mapping(perform_handler, mapping, source_file);
+                }
                 if let Some(continuation) = continuation {
                     Self::build_mapping(continuation, mapping, source_file);
                 }

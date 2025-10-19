@@ -11,7 +11,10 @@ use mutica_compiler::{
 use mutica_core::{
     arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
     scheduler,
-    types::{AsDispatcher, GcAllocObject, Representable, Type, TypeError, TypeRef},
+    types::{
+        AsDispatcher, GcAllocObject, Representable, Type, TypeError, TypeRef,
+        invoke::InvokeCountinuationStyle,
+    },
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
@@ -266,13 +269,22 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         }
     };
 
-    fn dump_stack(stack: &[Type<TypeGcOnceLock>]) -> String {
+    fn dump_stack(stack: &[InvokeCountinuationStyle<TypeGcOnceLock>]) -> String {
         let mut result = String::new();
         for (i, ty) in stack.iter().enumerate() {
             result.push_str(&format!(
                 "## [{}]: {}\n",
                 i,
-                ty.display(&mut FastCycleDetector::new())
+                match ty {
+                    InvokeCountinuationStyle::TailCall => "TailCall".to_string(),
+                    InvokeCountinuationStyle::CPS(v) => v.display(&mut FastCycleDetector::new()),
+                    InvokeCountinuationStyle::HPS(v) => v.display(&mut FastCycleDetector::new()),
+                    InvokeCountinuationStyle::CHPS(a, b) => format!(
+                        "CRPS({}, {})",
+                        a.display(&mut FastCycleDetector::new()),
+                        b.display(&mut FastCycleDetector::new())
+                    ),
+                }
             ));
         }
         result

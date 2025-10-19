@@ -298,9 +298,11 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     TypeMismatch(Box<(U, String)>),
     UnboundVariable(isize),
     AssertFailed(Box<(U, U)>),
-    MissingContinuation,
+    MissingContinuation(Box<U>),
+    MissingRaiseHandler(Box<U>),
     RuntimeError(Arc<dyn Error + Send + Sync>),
     OtherError(String),
+    Exception(Box<U>),
     #[doc(hidden)]
     Pandom(std::marker::PhantomData<V>),
 }
@@ -326,8 +328,10 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::AssertFailed(types) => {
                 write!(f, "Assert failed: {:?} </: {:?}", types.0, types.1)
             }
-            TypeError::MissingContinuation => write!(f, "Missing continuation"),
+            TypeError::MissingContinuation(ty) => write!(f, "Missing continuation: {:?}", ty),
+            TypeError::MissingRaiseHandler(ty) => write!(f, "Missing raise handler: {:?}", ty),
             TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
+            TypeError::Exception(ty) => write!(f, "Exception raised: {:?}", ty),
             TypeError::OtherError(msg) => write!(f, "Other error: {}", msg),
             TypeError::Pandom(_) => write!(f, "Pandom error (hidden)"),
         }
@@ -682,7 +686,6 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, 
 pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub closure_env: &'a ClosureEnv<U, V>,
     pub param_env: &'a ParamEnv<U, V>,
-    pub continuation: Option<&'a U>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
@@ -692,7 +695,6 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
     pub fn new(
         closure_env: &'a ClosureEnv<U, V>,
         param_env: &'a ParamEnv<U, V>,
-        continuation: Option<&'a U>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
@@ -700,7 +702,6 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
         Self {
             closure_env,
             param_env,
-            continuation,
             rec_assumptions,
             gc,
             roots,
@@ -713,7 +714,6 @@ pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<
     pub arg: &'a U,
     pub closure_env: &'a ClosureEnv<U, V>,
     pub param_env: &'a ParamEnv<U, V>,
-    pub continuation: Option<&'a U>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
@@ -724,7 +724,6 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
         arg: &'a U,
         closure_env: &'a ClosureEnv<U, V>,
         param_env: &'a ParamEnv<U, V>,
-        continuation: Option<&'a U>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
@@ -733,7 +732,6 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
             arg,
             closure_env,
             param_env,
-            continuation,
             rec_assumptions,
             gc,
             roots,

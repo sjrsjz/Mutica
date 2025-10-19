@@ -24,7 +24,6 @@ extern {
         r#""([^"\\]|\\.)*""# => LexerToken::StringLit(<String>),
 
         "let" => LexerToken::Let,
-        "perform" => LexerToken::Perform,
         "with" => LexerToken::With,
         "match" => LexerToken::Match,
         "rec" => LexerToken::Rec,
@@ -44,6 +43,7 @@ extern {
         "then" => LexerToken::Then,
         "else" => LexerToken::Else,
         "rot" => LexerToken::Rot,
+        "handle" => LexerToken::Handle,
         "__add" => LexerToken::DunderAdd,
         "__sub" => LexerToken::DunderSub,
         "__mul" => LexerToken::DunderMul,
@@ -294,7 +294,8 @@ Apply: WithLocation<TypeAst> = {
         WithLocation::new(TypeAst::Invoke {
             func: Box::new(f),
             arg: Box::new(x),
-            continuation: Box::new(k),
+            continuation: Some(Box::new(k)),
+            perform_handler: None,
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <f: Apply> <x: Term> <r:@R> => WithLocation::new(TypeAst::Apply {
@@ -346,6 +347,27 @@ MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
         TokenColor::fill_colors(colors, pipe_l..pipe_r, TokenColor::Operator);
         TokenColor::fill_colors(colors, arrow_l..arrow_r, TokenColor::Operator);
         (pattern, t)
+    },
+}
+
+HandleWith: WithLocation<TypeAst> = {
+    <l:@L> "handle" <t: Primary> <catch_l:@L> "with" <catch_r:@R> <handlers: MatchBranch+> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+3, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, catch_l..catch_r, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, v_l..v_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, r-5..r, TokenColor::Keyword);
+        WithLocation::new(TypeAst::HandleWith {
+            closure: Box::new(WithLocation::new(TypeAst::Closure {
+                pattern: Box::new(WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                body: Box::new(t),
+                fail_branch: None,
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            init_val: Box::new(WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            handler: Box::new(WithLocation::new(TypeAst::Match {
+                value: None,
+                match_branch: handlers,
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
 
@@ -420,6 +442,7 @@ Primary: WithLocation<TypeAst> = {
     <l: List> => l,
     <r: RecursiveGen> => r,
     <c: Closure> => c,
+    <h: HandleWith> => h,
     <m: Match> => m,
     <i: IfElse> => i,
     <c: Calculate> => c,
@@ -627,25 +650,6 @@ Let: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     },
 }
 
-Perform: (WithLocation<TypeAst>, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    <l:@L> "perform" <id: Primary> <a_l:@L> "=" <a_r:@R>  <f: Type> <w_l:@L> "with" <w_r:@R> <value: Type> ";" <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
-        TokenColor::fill_colors(colors, a_l..a_r, TokenColor::Operator);
-        TokenColor::fill_colors(colors, w_l..w_r, TokenColor::Keyword);
-        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
-        (id, f, value)
-    },
-}
-
-DiscardPerform: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    <l:@L> "perform" <f: Type> <w_l:@L> "with" <w_r:@R> <e: Type> ";" <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
-        TokenColor::fill_colors(colors, w_l..w_r, TokenColor::Keyword);
-        TokenColor::fill_colors(colors, r-1..r, TokenColor::Punctuation);
-        (f, e)
-    },
-}
-
 Discard: WithLocation<TypeAst> = {
     <l:@L> "discard" <e: Type> ";" <r:@R> => {
         TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
@@ -716,31 +720,6 @@ Expression: WithLocation<TypeAst> = {
     },
 }
 
-Effect: WithLocation<TypeAst> = {
-    <l:@L> <perform_expr: Perform> <e: Type> <r:@R> => {
-        WithLocation::new(TypeAst::Invoke {
-            func: Box::new(perform_expr.1),
-            arg: Box::new(perform_expr.2),
-            continuation: Box::new(WithLocation::new(TypeAst::Closure {
-                pattern: Box::new(perform_expr.0),
-                body: Box::new(e),
-                fail_branch: None,
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-    <l:@L> <discard_perform: DiscardPerform> <e: Type> <r:@R> => {
-        WithLocation::new(TypeAst::Invoke {
-            func: Box::new(discard_perform.0),
-            arg: Box::new(discard_perform.1),
-            continuation: Box::new(WithLocation::new(TypeAst::Closure {
-                pattern: Box::new(WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                body: Box::new(e),
-                fail_branch: None,
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-}
-
 Loop: WithLocation<TypeAst> = {
     <l:@L> <rec_expr: Recursive> <e: Type> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
@@ -773,7 +752,6 @@ Require: WithLocation<TypeAst> = {
 pub Type: WithLocation<TypeAst> = {
     <r: Require> => r,
     <l: Loop> => l,
-    <e: Effect> => e,
     <e: Expression> => e,
     <t: Tuple> => t,
 }

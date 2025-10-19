@@ -68,7 +68,13 @@ pub enum TypeAst {
     Invoke {
         func: Box<WithLocation<TypeAst>>,
         arg: Box<WithLocation<TypeAst>>,
-        continuation: Box<WithLocation<TypeAst>>,
+        continuation: Option<Box<WithLocation<TypeAst>>>,
+        perform_handler: Option<Box<WithLocation<TypeAst>>>,
+    },
+    HandleWith {
+        closure: Box<WithLocation<TypeAst>>,
+        init_val: Box<WithLocation<TypeAst>>,
+        handler: Box<WithLocation<TypeAst>>,
     },
     Expression {
         binding_patterns: Vec<WithLocation<TypeAst>>,
@@ -136,7 +142,8 @@ pub enum BasicTypeAst {
     Invoke {
         func: Box<WithLocation<BasicTypeAst>>,
         arg: Box<WithLocation<BasicTypeAst>>,
-        continuation: Box<WithLocation<BasicTypeAst>>,
+        continuation: Option<Box<WithLocation<BasicTypeAst>>>,
+        perform_handler: Option<Box<WithLocation<BasicTypeAst>>>,
     },
     Closure {
         pattern: Box<WithLocation<BasicTypeAst>>,
@@ -146,6 +153,11 @@ pub enum BasicTypeAst {
     Apply {
         func: Box<WithLocation<BasicTypeAst>>,
         arg: Box<WithLocation<BasicTypeAst>>,
+    },
+    HandleWith {
+        closure: Box<WithLocation<BasicTypeAst>>,
+        init_val: Box<WithLocation<BasicTypeAst>>,
+        handler: Box<WithLocation<BasicTypeAst>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
@@ -276,6 +288,7 @@ impl<'ast> LinearizeResult<'ast> {
                         )
                     }
                 },
+                perform_handler: None,
             })
         }
         ty
@@ -385,18 +398,56 @@ impl BasicTypeAst {
                 func,
                 arg,
                 continuation,
+                perform_handler,
             } => {
                 let func = func.linearize(ctx, func.location());
                 let arg = arg.linearize(ctx, arg.location());
-                let continuation = continuation.linearize(ctx, continuation.location());
+                let continuation = match continuation {
+                    Some(continuation) => Some(Box::new(
+                        continuation.linearize(ctx, continuation.location()),
+                    )),
+                    None => None,
+                };
+                let perform_handler = match perform_handler {
+                    Some(perform_handler) => Some(Box::new(
+                        perform_handler.linearize(ctx, perform_handler.location()),
+                    )),
+                    None => None,
+                };
                 let ty = LinearTypeAst::Invoke {
                     func: func.tail_type().clone().into(),
                     arg: arg.tail_type().clone().into(),
-                    continuation: Some(continuation.tail_type().clone().into()),
+                    continuation: continuation.as_ref().map(|c| c.tail_type().clone().into()),
+                    perform_handler: perform_handler
+                        .as_ref()
+                        .map(|r| r.tail_type().clone().into()),
                 };
                 let mut bindings = func.bindings;
                 bindings.extend(arg.bindings);
-                bindings.extend(continuation.bindings);
+                if let Some(continuation) = continuation {
+                    bindings.extend(continuation.bindings);
+                }
+                if let Some(perform_handler) = perform_handler {
+                    bindings.extend(perform_handler.bindings);
+                }
+                LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
+            }
+            BasicTypeAst::HandleWith {
+                closure,
+                init_val,
+                handler,
+            } => {
+                let closure = closure.linearize(ctx, closure.location());
+                let init_val = init_val.linearize(ctx, init_val.location());
+                let handler = handler.linearize(ctx, handler.location());
+                let ty = LinearTypeAst::Invoke {
+                    func: closure.tail_type().clone().into(),
+                    arg: init_val.tail_type().clone().into(),
+                    continuation: None,
+                    perform_handler: Some(handler.tail_type().clone().into()),
+                };
+                let mut bindings = closure.bindings;
+                bindings.extend(handler.bindings);
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Closure {
@@ -537,6 +588,7 @@ pub enum LinearTypeAst<'ast> {
         func: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         arg: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         continuation: Option<Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
+        perform_handler: Option<Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
@@ -622,13 +674,29 @@ impl TypeAst {
                 func,
                 arg,
                 continuation,
+                perform_handler,
             } => WithLocation::new(
                 BasicTypeAst::Invoke {
                     func: Box::new(func.into_basic(multifile_builder, func.location())),
                     arg: Box::new(arg.into_basic(multifile_builder, arg.location())),
-                    continuation: Box::new(
-                        continuation.into_basic(multifile_builder, continuation.location()),
-                    ),
+                    continuation: continuation
+                        .as_ref()
+                        .map(|c| Box::new(c.into_basic(multifile_builder, c.location()))),
+                    perform_handler: perform_handler
+                        .as_ref()
+                        .map(|h| Box::new(h.into_basic(multifile_builder, h.location()))),
+                },
+                loc,
+            ),
+            TypeAst::HandleWith {
+                closure,
+                init_val,
+                handler,
+            } => WithLocation::new(
+                BasicTypeAst::HandleWith {
+                    closure: Box::new(closure.into_basic(multifile_builder, closure.location())),
+                    init_val: Box::new(init_val.into_basic(multifile_builder, init_val.location())),
+                    handler: Box::new(handler.into_basic(multifile_builder, handler.location())),
                 },
                 loc,
             ),
@@ -967,10 +1035,25 @@ impl TypeAst {
                 func,
                 arg,
                 continuation,
+                perform_handler,
             } => {
                 func.collect_errors(errors);
                 arg.collect_errors(errors);
-                continuation.collect_errors(errors);
+                if let Some(continuation) = continuation {
+                    continuation.collect_errors(errors);
+                }
+                if let Some(perform_handler) = perform_handler {
+                    perform_handler.collect_errors(errors);
+                }
+            }
+            TypeAst::HandleWith {
+                closure,
+                init_val,
+                handler: catch,
+            } => {
+                closure.collect_errors(errors);
+                init_val.collect_errors(errors);
+                catch.collect_errors(errors);
             }
             TypeAst::Expression {
                 binding_patterns,
@@ -1068,10 +1151,21 @@ impl TypeAst {
                 func,
                 arg,
                 continuation,
+                perform_handler,
             } => TypeAst::Invoke {
                 func: Box::new(Self::sanitize(*func)),
                 arg: Box::new(Self::sanitize(*arg)),
-                continuation: Box::new(Self::sanitize(*continuation)),
+                continuation: continuation.map(|c| Box::new(Self::sanitize(*c))),
+                perform_handler: perform_handler.map(|h| Box::new(Self::sanitize(*h))),
+            },
+            TypeAst::HandleWith {
+                closure,
+                init_val,
+                handler: catch,
+            } => TypeAst::HandleWith {
+                closure: Box::new(Self::sanitize(*closure)),
+                init_val: Box::new(Self::sanitize(*init_val)),
+                handler: Box::new(Self::sanitize(*catch)),
             },
             TypeAst::Expression {
                 binding_patterns,
@@ -1402,16 +1496,23 @@ impl<'ast> LinearTypeAst<'ast> {
                 func,
                 arg,
                 continuation,
+                perform_handler,
             } => {
                 let func_res = func.flow(ctx, pattern_mode, func.location(), errors);
                 let arg_res = arg.flow(ctx, pattern_mode, arg.location(), errors);
                 let cont_res = continuation.as_ref().map(|continuation| {
                     continuation.flow(ctx, pattern_mode, continuation.location(), errors)
                 });
+                let perform_handler_res = perform_handler.as_ref().map(|perform_handler| {
+                    perform_handler.flow(ctx, pattern_mode, perform_handler.location(), errors)
+                });
                 let mut all_captures = func_res.captures;
                 all_captures.extend(arg_res.captures);
                 if let Some(cont_res) = &cont_res {
                     all_captures.extend(cont_res.captures.clone());
+                }
+                if let Some(perform_handler_res) = &perform_handler_res {
+                    all_captures.extend(perform_handler_res.captures.clone());
                 }
 
                 let mut all_patterns = func_res.patterns;
@@ -1430,12 +1531,22 @@ impl<'ast> LinearTypeAst<'ast> {
                             .map(|(name, loc)| WithLocation::new(name, loc.location())),
                     );
                 }
+                if let Some(perform_handler_res) = &perform_handler_res {
+                    all_patterns.extend(
+                        perform_handler_res
+                            .patterns
+                            .clone()
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    );
+                }
                 FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Invoke {
                             func: Box::new(func_res.ty),
                             arg: Box::new(arg_res.ty),
                             continuation: cont_res.map(|r| Box::new(r.ty)),
+                            perform_handler: perform_handler_res.map(|r| Box::new(r.ty)),
                         },
                         loc,
                     ),
@@ -1682,6 +1793,15 @@ pub struct BuildResult<T: GcAllocObject<T, Inner = Type<T>>> {
     patterns: Vec<WithLocation<String>>, // 按照de Bruijn索引顺序排列的模式变量
 }
 
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for BuildResult<T> {
+    fn clone(&self) -> Self {
+        BuildResult {
+            ty: self.ty.clone(),
+            patterns: self.patterns.clone(),
+        }
+    }
+}
+
 impl<T: GcAllocObject<T, Inner = Type<T>>> BuildResult<T> {
     pub fn simple(ty: Type<T>) -> Self {
         BuildResult {
@@ -1818,6 +1938,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 func,
                 arg,
                 continuation,
+                perform_handler,
             } => {
                 let func_type =
                     func.to_type(ctx, pattern_counter, false, gc, roots, func.location())?;
@@ -1840,13 +1961,32 @@ impl<'ast> LinearTypeAst<'ast> {
                     )?),
                     None => None,
                 };
+                let perform_handler_type = match perform_handler {
+                    Some(perform_handler) => Some(perform_handler.to_type(
+                        ctx,
+                        pattern_counter,
+                        false,
+                        gc,
+                        roots,
+                        perform_handler.location(),
+                    )?),
+                    None => None,
+                };
                 let mut fold_vec = vec![func_type, arg_type];
-                if let Some(ct) = continuation_type {
-                    fold_vec.push(ct);
+                if let Some(ct) = &continuation_type {
+                    fold_vec.push(ct.clone());
+                }
+                if let Some(rht) = &perform_handler_type {
+                    fold_vec.push(rht.clone());
                 }
                 let (types, patterns) = BuildResult::fold(fold_vec);
                 Ok(BuildResult::complex(
-                    Invoke::new(&types[0], &types[1], types.get(2)),
+                    Invoke::new(
+                        &types[0],
+                        &types[1],
+                        continuation_type.as_ref().map(|t| &t.ty),
+                        perform_handler_type.as_ref().map(|t| &t.ty),
+                    ),
                     patterns,
                 ))
             }

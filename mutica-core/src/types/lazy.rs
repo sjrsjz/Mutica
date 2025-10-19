@@ -117,4 +117,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<T> {
         }
         .dispatch()
     }
+
+    pub fn value(&self) -> &Type<T> {
+        self.value.as_ref()
+    }
 }
