@@ -41,10 +41,12 @@ impl<'ast> SourceMapping<'ast> {
         // 递归处理子节点
         match node.value() {
             LinearTypeAst::Int => (),
+            LinearTypeAst::Float => (),
             LinearTypeAst::Char => (),
             LinearTypeAst::Top => (),
             LinearTypeAst::Bottom => (),
             LinearTypeAst::IntLiteral(_) => (),
+            LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
             LinearTypeAst::Variable(_) => (),
             LinearTypeAst::Tuple(items) => {

@@ -4,6 +4,8 @@ pub mod character;
 pub mod character_value;
 pub mod closure;
 pub mod fixpoint;
+pub mod float;
+pub mod float_value;
 pub mod generalize;
 pub mod integer;
 pub mod integer_value;
@@ -34,6 +36,8 @@ use crate::{
         character_value::CharacterValue,
         closure::{Closure, ClosureEnv, ParamEnv},
         fixpoint::FixPoint,
+        float::Float,
+        float_value::FloatValue,
         generalize::Generalize,
         integer::Integer,
         integer_value::IntegerValue,
@@ -62,6 +66,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Bound(v) => Type::<T>::Bound(v.clone()),
             Type::Integer(v) => Type::<T>::Integer(v.clone()),
             Type::IntegerValue(v) => Type::<T>::IntegerValue(v.clone()),
+            Type::Float(v) => Type::<T>::Float(v.clone()),
+            Type::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
             Type::Char(v) => Type::<T>::Char(v.clone()),
             Type::CharValue(v) => Type::<T>::CharValue(v.clone()),
             Type::Tuple(v) => Type::<T>::Tuple(v.clone()),
@@ -88,6 +94,10 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Integer(Integer<T>),
     // 整数值类型
     IntegerValue(IntegerValue<T>),
+    // 浮点类型
+    Float(Float<T>),
+    // 浮点值类型
+    FloatValue(FloatValue<T>),
     // 字符类型
     Char(Character<T>),
     // 字符值类型
@@ -124,6 +134,8 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Bound(&'a TypeBound<T>),
     Integer(&'a Integer<T>),
     IntegerValue(&'a IntegerValue<T>),
+    Float(&'a Float<T>),
+    FloatValue(&'a FloatValue<T>),
     Char(&'a Character<T>),
     CharValue(&'a CharacterValue<T>),
     Tuple(&'a Tuple<T>),
@@ -147,6 +159,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
             TypeRef::Bound(v) => TypeRef::Bound(v),
             TypeRef::Integer(v) => TypeRef::Integer(v),
             TypeRef::IntegerValue(v) => TypeRef::IntegerValue(v),
+            TypeRef::Float(v) => TypeRef::Float(v),
+            TypeRef::FloatValue(v) => TypeRef::FloatValue(v),
             TypeRef::Char(v) => TypeRef::Char(v),
             TypeRef::CharValue(v) => TypeRef::CharValue(v),
             TypeRef::Tuple(v) => TypeRef::Tuple(v),
@@ -174,6 +188,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Bound(v) => Type::<T>::Bound(v.clone()),
             TypeRef::Integer(v) => Type::<T>::Integer(v.clone()),
             TypeRef::IntegerValue(v) => Type::<T>::IntegerValue(v.clone()),
+            TypeRef::Float(v) => Type::<T>::Float(v.clone()),
+            TypeRef::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
             TypeRef::Char(v) => Type::<T>::Char(v.clone()),
             TypeRef::CharValue(v) => Type::<T>::CharValue(v.clone()),
             TypeRef::Tuple(v) => Type::<T>::Tuple(v.clone()),
@@ -199,6 +215,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Bound(v) => v.tagged_ptr(),
             TypeRef::Integer(v) => v.tagged_ptr(),
             TypeRef::IntegerValue(v) => v.tagged_ptr(),
+            TypeRef::Float(v) => v.tagged_ptr(),
+            TypeRef::FloatValue(v) => v.tagged_ptr(),
             TypeRef::Char(v) => v.tagged_ptr(),
             TypeRef::CharValue(v) => v.tagged_ptr(),
             TypeRef::Tuple(v) => v.tagged_ptr(),
@@ -241,6 +259,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Bound(v) => v.fulfill(other, ctx),
             TypeRef::Integer(v) => v.fulfill(other, ctx),
             TypeRef::IntegerValue(v) => v.fulfill(other, ctx),
+            TypeRef::Float(v) => v.fulfill(other, ctx),
+            TypeRef::FloatValue(v) => v.fulfill(other, ctx),
             TypeRef::Char(v) => v.fulfill(other, ctx),
             TypeRef::CharValue(v) => v.fulfill(other, ctx),
             TypeRef::Tuple(v) => v.fulfill(other, ctx),
@@ -270,31 +290,48 @@ use thiserror::Error;
 
 #[derive(Clone, Error)]
 pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    #[error("Unresolvable type (e.g. fixpoint reference lost)")]
     UnresolvableType,
-    #[error("Infinite recursion")]
     InfiniteRecursion,
-    #[error("Type redeclared")]
     RedeclaredType,
-    #[error("Non-applicable type: {0:?}")]
     NonApplicableType(Box<U>),
-    #[error("Tuple index out of bounds")]
     TupleIndexOutOfBounds(Box<(U, U)>),
-    #[error("Type mismatch")]
     TypeMismatch(Box<(U, String)>),
-    #[error("Unbound variable: id={0}")]
     UnboundVariable(isize),
-    #[error("Assert failed: L </: R")]
     AssertFailed(Box<(U, U)>),
-    #[error("Missing continuation")]
     MissingContinuation,
-    #[error("Runtime error: {0}")]
     RuntimeError(Arc<dyn Error + Send + Sync>),
-    #[error("Other error: {0}")]
     OtherError(String),
-    #[error("Pandom")]
     #[doc(hidden)]
     Pandom(std::marker::PhantomData<V>),
+}
+
+impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display for TypeError<U, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeError::UnresolvableType => {
+                write!(f, "Unresolvable type (e.g. fixpoint reference lost)")
+            }
+            TypeError::InfiniteRecursion => write!(f, "Infinite recursion"),
+            TypeError::RedeclaredType => write!(f, "Type redeclared"),
+            TypeError::NonApplicableType(ty) => write!(f, "Non-applicable type: {:?}", ty),
+            TypeError::TupleIndexOutOfBounds(types) => write!(
+                f,
+                "Tuple index out of bounds for types: {:?} and {:?}",
+                types.0, types.1
+            ),
+            TypeError::TypeMismatch(info) => {
+                write!(f, "Type mismatch: expected {}, found {:?}", info.1, info.0)
+            }
+            TypeError::UnboundVariable(id) => write!(f, "Unbound variable: id={}", id),
+            TypeError::AssertFailed(types) => {
+                write!(f, "Assert failed: {:?} </: {:?}", types.0, types.1)
+            }
+            TypeError::MissingContinuation => write!(f, "Missing continuation"),
+            TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
+            TypeError::OtherError(msg) => write!(f, "Other error: {}", msg),
+            TypeError::Pandom(_) => write!(f, "Pandom error (hidden)"),
+        }
+    }
 }
 
 impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> Debug for TypeError<U, V> {
@@ -309,6 +346,8 @@ macro_rules! type_dispatch {
             Type::Bound(v) => v.$method($($args),*),
             Type::Integer(v) => v.$method($($args),*),
             Type::IntegerValue(v) => v.$method($($args),*),
+            Type::Float(v) => v.$method($($args),*),
+            Type::FloatValue(v) => v.$method($($args),*),
             Type::Tuple(v) => v.$method($($args),*),
             Type::Generalize(v) => v.$method($($args),*),
             Type::Specialize(v) => v.$method($($args),*),
@@ -445,6 +484,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Bound(v) => v.is_normal_form(),
             Type::Integer(v) => v.is_normal_form(),
             Type::IntegerValue(v) => v.is_normal_form(),
+            Type::Float(v) => v.is_normal_form(),
+            Type::FloatValue(v) => v.is_normal_form(),
             Type::Char(v) => v.is_normal_form(),
             Type::CharValue(v) => v.is_normal_form(),
             Type::Tuple(v) => v.is_normal_form(),
@@ -526,6 +567,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Bound(v) => TypeRef::Bound(v),
             Type::Integer(v) => TypeRef::Integer(v),
             Type::IntegerValue(v) => TypeRef::IntegerValue(v),
+            Type::Float(v) => TypeRef::Float(v),
+            Type::FloatValue(v) => TypeRef::FloatValue(v),
             Type::Char(v) => TypeRef::Char(v),
             Type::CharValue(v) => TypeRef::CharValue(v),
             Type::Tuple(v) => TypeRef::Tuple(v),
@@ -561,6 +604,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Bound(v) => TypeRef::Bound(v),
             Type::Integer(v) => TypeRef::Integer(v),
             Type::IntegerValue(v) => TypeRef::IntegerValue(v),
+            Type::Float(v) => TypeRef::Float(v),
+            Type::FloatValue(v) => TypeRef::FloatValue(v),
             Type::Char(v) => TypeRef::Char(v),
             Type::CharValue(v) => TypeRef::CharValue(v),
             Type::Tuple(v) => TypeRef::Tuple(v),
@@ -716,13 +761,17 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
 
     fn is_normal_form(&self) -> bool;
 
-    fn equivalent(&self, other: &Self) -> Result<bool, TypeError<U, V>> {
+    fn equals(
+        &self,
+        closure_env_l: &ClosureEnv<U, V>,
+        closure_env_r: &ClosureEnv<U, V>,
+        other: &Self,
+    ) -> Result<bool, TypeError<U, V>> {
         let mut assumptions = SmallVec::new();
-        let empty_env = ClosureEnv::<U, V>::new(Vec::<U>::new());
         let mut pattern_env = Collector::new_disabled();
         let type_check_ctx = &mut TypeCheckContext::new(
             &mut assumptions,
-            (&empty_env, &empty_env),
+            (closure_env_l, closure_env_r),
             &mut pattern_env,
         );
         Ok(self

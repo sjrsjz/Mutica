@@ -71,6 +71,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     io::stdout().flush().unwrap();
                     Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
                 }
+                "repr" => {
+                    let repr = arg.represent(&mut FastCycleDetector::new());
+                    let chars = repr
+                        .chars()
+                        .map(|c| CharacterValue::new(c))
+                        .collect::<Vec<_>>();
+                    Ok(Some(List::new(chars)))
+                }
+                "display" => {
+                    let disp = arg.display(&mut FastCycleDetector::new());
+                    let chars = disp
+                        .chars()
+                        .map(|c| CharacterValue::new(c))
+                        .collect::<Vec<_>>();
+                    Ok(Some(List::new(chars)))
+                }
                 _ => Ok(None),
             }
         })?

@@ -10,6 +10,8 @@ use mutica_core::types::character::Character;
 use mutica_core::types::character_value::CharacterValue;
 use mutica_core::types::closure::{Closure, ClosureEnv};
 use mutica_core::types::fixpoint::FixPoint;
+use mutica_core::types::float::Float;
+use mutica_core::types::float_value::FloatValue;
 use mutica_core::types::generalize::Generalize;
 use mutica_core::types::integer::Integer;
 use mutica_core::types::integer_value::IntegerValue;
@@ -42,6 +44,7 @@ pub enum AtomicOpcode {
     Greater,
     Is,
     IO(String),
+    Neg,
 }
 
 #[derive(Debug, Clone)]
@@ -49,11 +52,13 @@ pub enum TypeAst {
     ParseError(ErrorRecovery<usize, LexerToken, LexicalError>),
     Import(String), // 用于import语句
     Int,
+    Float, // Added for float type
     Char,
     Top,
     Bottom,
     DiscardPattern, // 用于表示_模式
     IntLiteral(i64),
+    FloatLiteral(f64), // Added for float literal
     CharLiteral(char),
     Variable(String),
     Tuple(Vec<WithLocation<TypeAst>>),
@@ -116,10 +121,12 @@ pub enum TypeAst {
 #[derive(Debug, Clone)]
 pub enum BasicTypeAst {
     Int,
+    Float,
     Char,
     Top,
     Bottom,
     IntLiteral(i64),
+    FloatLiteral(f64),
     CharLiteral(char),
     Variable(String),
     Tuple(Vec<WithLocation<BasicTypeAst>>),
@@ -286,6 +293,9 @@ impl BasicTypeAst {
             BasicTypeAst::Int => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Int, loc))
             }
+            BasicTypeAst::Float => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Float, loc))
+            }
             BasicTypeAst::Char => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Char, loc))
             }
@@ -297,6 +307,9 @@ impl BasicTypeAst {
             }
             BasicTypeAst::IntLiteral(v) => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::IntLiteral(*v), loc))
+            }
+            BasicTypeAst::FloatLiteral(v) => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::FloatLiteral(*v), loc))
             }
             BasicTypeAst::CharLiteral(v) => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::CharLiteral(*v), loc))
@@ -503,9 +516,11 @@ impl Default for FlowedMetaData<'_> {
 pub enum LinearTypeAst<'ast> {
     Int,
     Char,
+    Float,
     Top,
     Bottom,
     IntLiteral(i64),
+    FloatLiteral(f64),
     CharLiteral(char),
     Variable(String), // None 表示续体
     Tuple(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
@@ -558,11 +573,13 @@ impl TypeAst {
                 )
             }
             TypeAst::Int => WithLocation::new(BasicTypeAst::Int, loc),
+            TypeAst::Float => WithLocation::new(BasicTypeAst::Float, loc),
             TypeAst::Char => WithLocation::new(BasicTypeAst::Char, loc),
             TypeAst::Top => WithLocation::new(BasicTypeAst::Top, loc),
             TypeAst::Bottom => WithLocation::new(BasicTypeAst::Bottom, loc),
             TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // discard 只允许丢弃unit
             TypeAst::IntLiteral(v) => WithLocation::new(BasicTypeAst::IntLiteral(*v), loc),
+            TypeAst::FloatLiteral(v) => WithLocation::new(BasicTypeAst::FloatLiteral(*v), loc),
             TypeAst::CharLiteral(v) => WithLocation::new(BasicTypeAst::CharLiteral(*v), loc),
             TypeAst::Variable(name) => WithLocation::new(BasicTypeAst::Variable(name.clone()), loc),
             TypeAst::Tuple(elements) => WithLocation::new(
@@ -928,11 +945,13 @@ impl TypeAst {
                 errors.push(span.clone());
             }
             TypeAst::Int
+            | TypeAst::Float
             | TypeAst::Char
             | TypeAst::Top
             | TypeAst::Bottom
             | TypeAst::DiscardPattern
             | TypeAst::IntLiteral(_)
+            | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => {}
@@ -1023,11 +1042,13 @@ impl TypeAst {
         ast.map(|ast| match ast {
             TypeAst::ParseError(_) => TypeAst::Bottom,
             TypeAst::Int
+            | TypeAst::Float
             | TypeAst::Char
             | TypeAst::Top
             | TypeAst::Bottom
             | TypeAst::DiscardPattern
             | TypeAst::IntLiteral(_)
+            | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => ast,
@@ -1216,6 +1237,10 @@ impl<'ast> LinearTypeAst<'ast> {
                 WithLocation::new(LinearTypeAst::Int, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
+            LinearTypeAst::Float => FlowResult::simple(
+                WithLocation::new(LinearTypeAst::Float, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            ),
             LinearTypeAst::Char => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Char, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
@@ -1230,6 +1255,10 @@ impl<'ast> LinearTypeAst<'ast> {
             ),
             LinearTypeAst::IntLiteral(v) => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::IntLiteral(*v), loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            ),
+            LinearTypeAst::FloatLiteral(v) => FlowResult::simple(
+                WithLocation::new(LinearTypeAst::FloatLiteral(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
             LinearTypeAst::CharLiteral(v) => FlowResult::simple(
@@ -1697,10 +1726,12 @@ impl<'ast> LinearTypeAst<'ast> {
     ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError<'ast>>> {
         match self {
             LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
+            LinearTypeAst::Float => Ok(BuildResult::simple(Float::new())),
             LinearTypeAst::Char => Ok(BuildResult::simple(Character::new())),
             LinearTypeAst::Top => Ok(BuildResult::simple(TypeBound::top())),
             LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom())),
             LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(*v))),
+            LinearTypeAst::FloatLiteral(v) => Ok(BuildResult::simple(FloatValue::new(*v))),
             LinearTypeAst::CharLiteral(v) => Ok(BuildResult::simple(CharacterValue::new(*v))),
             LinearTypeAst::Variable(var) => {
                 if let Some(ty) = ctx.current_layer().get(var) {
@@ -1907,6 +1938,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     AtomicOpcode::Mod => Opcode::Mod,
                     AtomicOpcode::Less => Opcode::Less,
                     AtomicOpcode::Greater => Opcode::Greater,
+                    AtomicOpcode::Neg => Opcode::Neg,
                     AtomicOpcode::Is => Opcode::Is,
                     AtomicOpcode::IO(v) => Opcode::IO(v.clone().into()),
                 })))

@@ -21,6 +21,8 @@ impl Default for LexicalError {
 #[logos(error = LexicalError)]
 pub enum LexerToken {
     // 支持十进制、十六进制(0x)、八进制(0o)、二进制(0b)
+    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().to_owned())]
+    FloatNum(String),
     #[regex("0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+", |lex| lex.slice().to_owned())]
     Num(String),
     #[token("_", priority = 3)]
@@ -52,6 +54,8 @@ pub enum LexerToken {
     Discard,
     #[token("int")]
     Int,
+    #[token("float")]
+    Float,
     #[token("char")]
     Char,
     #[token("true")]

@@ -17,6 +17,7 @@ extern {
 
     enum LexerToken {
         "_" => LexerToken::Wildcard,
+        r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+" => LexerToken::FloatNum(<String>),
         r"[0-9]+" => LexerToken::Num(<String>),
         r"[a-zA-Z_][a-zA-Z0-9_]*" => LexerToken::Ident(<String>),
         r"'(\\'|\x22|\\n|\\r|\\t|\\\\|[^'\\])'" => LexerToken::CharLit(<String>),
@@ -32,6 +33,7 @@ extern {
         "discard" => LexerToken::Discard,
         "int" => LexerToken::Int,
         "char" => LexerToken::Char,
+        "float" => LexerToken::Float,
         "true" => LexerToken::True,
         "false" => LexerToken::False,
         "any" => LexerToken::Any,
@@ -103,6 +105,12 @@ Num: i64 = <l:@L> <s:r"[0-9]+"> <r:@R> => {
         s.parse().unwrap()
     }
 };
+
+Float: f64 = <l:@L> <s:r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+"> <r:@R> => {
+    TokenColor::fill_colors(colors, l..r, TokenColor::Number);
+    s.parse().unwrap()
+};
+
 Ident: String = <l:@L> <s:r"[a-zA-Z_][a-zA-Z0-9_]*"> <r:@R> => {
     TokenColor::fill_colors(colors, l..r, TokenColor::Identifier);
     s.to_string()
@@ -138,6 +146,10 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> "int" <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Type);
         WithLocation::new(TypeAst::Int, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> "float" <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+        WithLocation::new(TypeAst::Float, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> "char" <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Type);
@@ -199,6 +211,7 @@ AtomType: WithLocation<TypeAst> = {
         TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
         WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
+    <l:@L> <f: Float> <r:@R> => WithLocation::new(TypeAst::FloatLiteral(f), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(n), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(id), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -425,9 +438,12 @@ Factor: WithLocation<TypeAst> = {
             value: Box::new(a),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> <op_l:@L> "-" <op_r:@R> <n: Num> <r:@R> => {
+    <l:@L> <op_l:@L> "-" <op_r:@R> <n: Factor> <r:@R> => {
         TokenColor::fill_colors(colors, op_l..op_r, TokenColor::Operator);
-        WithLocation::new(TypeAst::IntLiteral(-n), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Neg), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(n),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <def_l:@L> <id: Ident> <def_r:@R> <colon_l:@L> ":" <colon_r:@R> <a: Factor> <r:@R> => {
         TokenColor::fill_colors(colors, def_l..def_r, TokenColor::Declaration);

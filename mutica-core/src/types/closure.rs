@@ -136,6 +136,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
     }
 
     fn check_equivalent(types: &smallvec::SmallVec<[U; 8]>) -> Result<bool, TypeError<U, V>> {
+        let empty_closure_env = ClosureEnv::<U, V>::new(Vec::<U>::new());
         if types.is_empty() {
             // 我们不承认“空洞的真理”，因为“空洞的真理”会导致空匹配无法被严格处理，如果仅仅只是处理成 Bottom 那么会导致类型黑洞引发错误传播
             // 这在构造主义逻辑中是不可接受的
@@ -143,7 +144,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
         }
         let base_type = &types[0];
         for ty in types.iter().skip(1) {
-            if !ty.equivalent(base_type)? {
+            if !ty.equals(&empty_closure_env, &empty_closure_env, base_type)? {
                 return Ok(false);
             }
         }

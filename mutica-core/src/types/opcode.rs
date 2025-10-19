@@ -4,7 +4,8 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        closure::ClosureEnv, integer_value::IntegerValue, type_bound::TypeBound,
+        closure::ClosureEnv, float_value::FloatValue, integer_value::IntegerValue,
+        type_bound::TypeBound,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector},
 };
@@ -23,6 +24,7 @@ pub enum Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
     Is,
     // I/O
     IO(Box<String>),
+    Neg,
     Pandom(std::marker::PhantomData<T>),
 }
 
@@ -39,6 +41,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Opcode<T> {
             Opcode::Greater => Opcode::Greater,
             Opcode::Is => Opcode::Is,
             Opcode::IO(v) => Opcode::IO(v.clone()),
+            Opcode::Neg => Opcode::Neg,
             Opcode::Pandom(_) => Opcode::Pandom(std::marker::PhantomData),
         }
     }
@@ -125,23 +128,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     format!("Unhandled IO operation: {}", v),
                 ),
             ))),
-            // Opcode::Input => {
-            //     // 从stdin读取一行输入，返回List<CharacterValue>类型
-            //     let mut input = String::new();
-            //     std::io::stdin()
-            //         .read_line(&mut input)
-            //         .map_err(|e| TypeError::RuntimeError(std::sync::Arc::new(e)))?;
-            //     let chars = input
-            //         .chars()
-            //         .map(|c| CharacterValue::new(c))
-            //         .collect::<Vec<_>>();
-            //     Ok(List::new(chars))
-            // }
-            // Opcode::Print => {
-            //     // 打印参数
-            //     print!("{}", ctx.arg.display(&mut FastCycleDetector::new()));
-            //     Ok(Tuple::new(Vec::<Type>::new()))
-            // }
+            Opcode::Neg => {
+                if let Type::IntegerValue(n) = ctx.arg {
+                    Ok(IntegerValue::new(-n.value()))
+                } else if let Type::FloatValue(n) = ctx.arg {
+                    Ok(FloatValue::new(-n.value()))
+                } else {
+                    Err(TypeError::TypeMismatch(
+                        (ctx.arg.clone(), "IntegerValue | FloatValue".into()).into(),
+                    ))
+                }
+            }
             Opcode::Is => {
                 if let Type::Tuple(tuple) = ctx.arg {
                     if tuple.len() == 2 {
@@ -193,7 +190,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 Opcode::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            (ctx.arg.clone(), "Non-zero".into()).into(),
+                                            (ctx.arg.clone(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
                                         Ok(IntegerValue::new(l.value() / r.value()))
@@ -202,10 +199,44 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 Opcode::Mod => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            (ctx.arg.clone(), "Non-zero".into()).into(),
+                                            (ctx.arg.clone(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
                                         Ok(IntegerValue::new(l.value() % r.value()))
+                                    }
+                                }
+                                Opcode::Less => Ok(if l.value() < r.value() {
+                                    TypeBound::top()
+                                } else {
+                                    TypeBound::bottom()
+                                }),
+                                Opcode::Greater => Ok(if l.value() > r.value() {
+                                    TypeBound::top()
+                                } else {
+                                    TypeBound::bottom()
+                                }),
+                                _ => unreachable!(),
+                            },
+                            (Type::FloatValue(l), Type::FloatValue(r)) => match self {
+                                Opcode::Add => Ok(FloatValue::new(l.value() + r.value())),
+                                Opcode::Sub => Ok(FloatValue::new(l.value() - r.value())),
+                                Opcode::Mul => Ok(FloatValue::new(l.value() * r.value())),
+                                Opcode::Div => {
+                                    if r.value() == 0.0 {
+                                        Err(TypeError::TypeMismatch(
+                                            (ctx.arg.clone(), "Non-zero float".into()).into(),
+                                        ))
+                                    } else {
+                                        Ok(FloatValue::new(l.value() / r.value()))
+                                    }
+                                }
+                                Opcode::Mod => {
+                                    if r.value() == 0.0 {
+                                        Err(TypeError::TypeMismatch(
+                                            (ctx.arg.clone(), "Non-zero float".into()).into(),
+                                        ))
+                                    } else {
+                                        Ok(FloatValue::new(l.value() % r.value()))
                                     }
                                 }
                                 Opcode::Less => Ok(if l.value() < r.value() {
@@ -224,7 +255,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
 
                             // }
                             _ => Err(TypeError::TypeMismatch(
-                                (ctx.arg.clone(), "(IntegerValue, IntegerValue)".into()).into(),
+                                (
+                                    ctx.arg.clone(),
+                                    "(IntegerValue | FloatValue, IntegerValue | FloatValue)".into(),
+                                )
+                                    .into(),
                             )),
                         }
                     } else {
@@ -260,6 +295,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
             Opcode::Mod => "Mod".to_string(),
             Opcode::Less => "Less".to_string(),
             Opcode::Greater => "Greater".to_string(),
+            Opcode::Neg => "Neg".to_string(),
             Opcode::Is => "Is".to_string(),
             Opcode::IO(v) => format!("IO({})", v),
             Opcode::Pandom(_) => "Pandom".to_string(),
