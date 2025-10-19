@@ -9,8 +9,7 @@ use crate::{
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
         invoke::{
-            Invoke, InvokeCountinuationStyle, shrink_to_last_continuation,
-            shrink_to_last_perform_handler,
+            Invoke, InvokeCountinuationStyle, find_last_continuation, find_last_perform_handler,
         },
         list::List,
         opcode::Opcode,
@@ -130,15 +129,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let io_result = match io_result {
                         Ok(v) => v,
                         Err(TypeError::Exception(v)) => {
-                            let raise_handler =
-                                match shrink_to_last_perform_handler(&mut self.cont_stack) {
-                                    Some(handler) => handler,
-                                    None => {
-                                        return Err(TypeError::MissingRaiseHandler(Box::new(
-                                            invoke.arg().clone(),
-                                        )));
-                                    }
-                                };
+                            let raise_handler = match find_last_perform_handler(&self.cont_stack) {
+                                Some(handler) => handler,
+                                None => {
+                                    return Err(TypeError::MissingRaiseHandler(Box::new(
+                                        invoke.arg().clone(),
+                                    )));
+                                }
+                            };
                             let raise_invoke = Invoke::new(
                                 raise_handler,
                                 *v,
@@ -164,7 +162,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     Ok((result, true))
                 }
                 _ => {
-                    if let Some(cont) = shrink_to_last_continuation(&mut self.cont_stack) {
+                    let result = if let Some(cont) = find_last_continuation(&mut self.cont_stack) {
                         Ok((
                             Invoke::new(cont, inner.clone_data(), None::<Type<T>>, None::<Type<T>>),
                             true,
@@ -172,7 +170,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     } else {
                         // No more continuations
                         Ok((reduced.clone(), false))
-                    }
+                    };
+                    self.cont_stack.pop();
+                    result
                 }
             })??;
         self.current_type = Some(next_type);

@@ -283,10 +283,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
     }
 }
 
-pub fn shrink_to_last_continuation<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: &'a mut Vec<InvokeCountinuationStyle<T>>,
-) -> Option<Type<T>> {
-    while let Some(cont) = cont_stack.pop() {
+pub fn find_last_continuation<'a, T: GcAllocObject<T, Inner = Type<T>>>(
+    cont_stack: &'a Vec<InvokeCountinuationStyle<T>>,
+) -> Option<&'a Type<T>> {
+    for cont in cont_stack.iter().rev() {
         match cont {
             InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::HPS(_) => {}
             InvokeCountinuationStyle::CPS(cont) => {
@@ -300,10 +300,10 @@ pub fn shrink_to_last_continuation<'a, T: GcAllocObject<T, Inner = Type<T>>>(
     None
 }
 
-pub fn shrink_to_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: &'a mut Vec<InvokeCountinuationStyle<T>>,
-) -> Option<Type<T>> {
-    while let Some(cont) = cont_stack.pop() {
+pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
+    cont_stack: &'a Vec<InvokeCountinuationStyle<T>>,
+) -> Option<&'a Type<T>> {
+    for cont in cont_stack.iter().rev() {
         match cont {
             InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::CPS(_) => {}
             InvokeCountinuationStyle::HPS(cont) => {
