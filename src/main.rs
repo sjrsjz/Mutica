@@ -10,11 +10,8 @@ use mutica_compiler::{
 };
 use mutica_core::{
     arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
-    scheduler,
-    types::{
-        AsDispatcher, GcAllocObject, Representable, Type, TypeError, TypeRef,
-        invoke::InvokeCountinuationStyle,
-    },
+    scheduler::{self, ContinuationOrHandler, stack::Stack},
+    types::{AsDispatcher, GcAllocObject, Representable, Type, TypeError, TypeRef},
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
@@ -269,24 +266,20 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         }
     };
 
-    fn dump_stack(stack: &[InvokeCountinuationStyle<TypeGcOnceLock>]) -> String {
+    fn dump_stack(stack: &Stack<ContinuationOrHandler<TypeGcOnceLock>>) -> String {
         let mut result = String::new();
         for (i, ty) in stack.iter().enumerate() {
             result.push_str(&format!(
                 "## [{}]: {}\n",
                 i,
                 match ty {
-                    InvokeCountinuationStyle::TailCall => "TailCall".to_string(),
-                    InvokeCountinuationStyle::CPS(v) => format!("Continuation - {}", 
-                        v.display(&mut FastCycleDetector::new())
+                    ContinuationOrHandler::Continuation(t) => format!(
+                        "Continuation - {}",
+                        t.display(&mut FastCycleDetector::new())
                     ),
-                    InvokeCountinuationStyle::HPS(v) => format!("Handler - {}", 
+                    ContinuationOrHandler::PerformHandler(v) => format!(
+                        "WithPerformHandler - Perform Handler: {}",
                         v.display(&mut FastCycleDetector::new())
-                    ),
-                    InvokeCountinuationStyle::CHPS(a, b) => format!(
-                        "Continuation & Handler - {}, {}",
-                        a.display(&mut FastCycleDetector::new()),
-                        b.display(&mut FastCycleDetector::new())
                     ),
                 }
             ));

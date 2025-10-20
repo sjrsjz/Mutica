@@ -1,18 +1,53 @@
+pub mod stack;
+
 use std::{io::Write, sync::Arc};
 
 use arc_gc::gc::GC;
 
 use crate::{
+    scheduler::stack::Stack,
     types::{
-        character_value::CharacterValue, closure::{ClosureEnv, ParamEnv}, invoke::{
-            find_last_continuation, find_last_perform_handler, shrink_to_last_perform_handler, Invoke, InvokeCountinuationStyle
-        }, list::List, opcode::Opcode, tuple::Tuple, CoinductiveType, GcAllocObject, InvokeContext, ReductionContext, Representable, Type, TypeError, TypeRef
+        CoinductiveType, GcAllocObject, InvokeContext, ReductionContext, Representable, Type,
+        TypeError, TypeRef,
+        character_value::CharacterValue,
+        closure::{ClosureEnv, ParamEnv},
+        invoke::{Invoke, InvokeCountinuationStyle},
+        list::List,
+        opcode::Opcode,
+        tuple::Tuple,
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
+pub enum ContinuationOrHandler<T: GcAllocObject<T, Inner = Type<T>>> {
+    Continuation(Type<T>),
+    PerformHandler(Type<T>),
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for ContinuationOrHandler<T> {
+    fn clone(&self) -> Self {
+        match self {
+            ContinuationOrHandler::Continuation(v) => {
+                ContinuationOrHandler::Continuation(v.clone())
+            }
+            ContinuationOrHandler::PerformHandler(v) => {
+                ContinuationOrHandler::PerformHandler(v.clone())
+            }
+        }
+    }
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> ContinuationOrHandler<T> {
+    pub fn as_type(&self) -> &Type<T> {
+        match self {
+            ContinuationOrHandler::Continuation(v) => v,
+            ContinuationOrHandler::PerformHandler(v) => v,
+        }
+    }
+}
+
 pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
-    cont_stack: Vec<InvokeCountinuationStyle<T>>, // Continuation stack
+    cont_stack: Stack<ContinuationOrHandler<T>>,
     current_type: Option<Type<T>>,
     roots: RootStack<Type<T>, T>,
 }
@@ -22,7 +57,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         let mut roots = RootStack::new();
         roots.attach(&initial_type);
         Self {
-            cont_stack: vec![],
+            cont_stack: Stack::new(),
             current_type: Some(initial_type),
             roots,
         }
@@ -123,31 +158,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let io_result = match io_result {
                         Ok(v) => v,
                         Err(TypeError::Perform(v)) => {
-                            let raise_handler = match find_last_perform_handler(&self.cont_stack) {
-                                Some(handler) => handler,
-                                None => {
-                                    return Err(TypeError::MissingPerformHandler(Box::new(
-                                        invoke.arg().clone(),
-                                    )));
-                                }
-                            };
-                            let raise_invoke = Invoke::new(
-                                raise_handler,
+                            let (perform_handler, index) =
+                                match find_last_perform_handler(&self.cont_stack) {
+                                    Some(handler) => handler,
+                                    None => {
+                                        return Err(TypeError::MissingPerformHandler(Box::new(
+                                            invoke.arg().clone(),
+                                        )));
+                                    }
+                                };
+                            let perform_invoke = Invoke::new(
+                                perform_handler,
                                 *v,
                                 invoke.continuation(),
                                 invoke.perform_handler(),
                             );
-                            return Ok((raise_invoke, true));
+                            self.cont_stack.fork(index); // 踢掉perform handler及其上面的frame
+                            return Ok((perform_invoke, true));
                         }
                         Err(TypeError::Break(v)) => {
-                            let (_, cont)  = match shrink_to_last_perform_handler(&mut self.cont_stack) {
-                                Some(cont) => cont,
-                                None => {
-                                    return Err(TypeError::MissingContinuation(Box::new(
-                                        invoke.arg().clone(),
-                                    )));
-                                }
-                            };
+                            let (_, cont) =
+                                match shrink_to_last_perform_handler(&mut self.cont_stack) {
+                                    Some(cont) => cont,
+                                    None => {
+                                        return Err(TypeError::MissingContinuation(Box::new(
+                                            invoke.arg().clone(),
+                                        )));
+                                    }
+                                };
                             if cont.is_none() {
                                 return Err(TypeError::MissingContinuation(Box::new(
                                     invoke.arg().clone(),
@@ -168,64 +206,98 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         None => invoke.func().invoke(invoke_context)?,
                     };
 
-                    let result = match invoke.continuation_style() {
-                        InvokeCountinuationStyle::TailCall => invoke_result,
-                        v => {
-                            self.cont_stack.push(v.clone());
-                            invoke_result
+                    match invoke.continuation_style() {
+                        InvokeCountinuationStyle::TailCall => (),
+                        InvokeCountinuationStyle::CPS(v) => self
+                            .cont_stack
+                            .push(ContinuationOrHandler::Continuation(v.clone())),
+                        InvokeCountinuationStyle::HPS(v) => {
+                            self.cont_stack
+                                .push(ContinuationOrHandler::PerformHandler(v.clone()));
+                        }
+                        InvokeCountinuationStyle::CHPS(a, b) => {
+                            self.cont_stack
+                                .push(ContinuationOrHandler::Continuation(a.clone()));
+                            self.cont_stack
+                                .push(ContinuationOrHandler::PerformHandler(b.clone()));
                         }
                     };
-                    Ok((result, true))
+                    Ok((invoke_result, true))
                 }
-                _ => {
-                    let result = if let Some(cont) = find_last_continuation(&mut self.cont_stack) {
-                        Ok((
-                            Invoke::new(cont, inner.clone_data(), None::<Type<T>>, None::<Type<T>>),
-                            true,
-                        ))
-                    } else {
-                        // No more continuations
-                        Ok((reduced.clone(), false))
-                    };
-                    self.cont_stack.pop();
-                    result
+                _ => Ok(loop {
+                    match self.cont_stack.pop_and_auto_defork() {
+                        Some(ContinuationOrHandler::Continuation(v)) => break Some(v),
+                        Some(ContinuationOrHandler::PerformHandler(_)) => continue,
+                        None => break None,
+                    }
                 }
+                .map(|cont| {
+                    (
+                        Invoke::new(cont, inner.clone_data(), None::<Type<T>>, None::<Type<T>>),
+                        true,
+                    )
+                })
+                .unwrap_or((reduced.clone(), false))),
             })??;
         self.current_type = Some(next_type);
         // println!(
-        //     "-> Current type: {}\n",
-        //     self.current_type.represent(&mut FastCycleDetector::new())
+        //     "-> Current type: {}",
+        //     self.current_type
+        //         .as_ref()
+        //         .unwrap()
+        //         .represent(&mut FastCycleDetector::new())
         // );
+        // println!("Frames: {:?}", self.cont_stack.frames());
+
+        // for ty in self.cont_stack.real_stack() {
+        //     match ty {
+        //         ContinuationOrHandler::Continuation(v) => {
+        //             println!(
+        //                 "  Continuation in stack: {}",
+        //                 v.display(&mut FastCycleDetector::new())
+        //             );
+        //         }
+        //         ContinuationOrHandler::PerformHandler(v) => {
+        //             println!(
+        //                 "  Perform Handler in stack: {}",
+        //                 v.display(&mut FastCycleDetector::new())
+        //             );
+        //         }
+        //     }
+        // }
+        // println!("\n");
         Ok(updated)
     }
 
     pub fn sweep_roots(&mut self) {
         self.roots.sweep();
-        for ty in &self.cont_stack {
-            match ty {
-                InvokeCountinuationStyle::TailCall => (),
-                InvokeCountinuationStyle::CPS(v) => {
-                    self.roots.attach(v);
-                }
-                InvokeCountinuationStyle::HPS(v) => {
-                    self.roots.attach(v);
-                }
-                InvokeCountinuationStyle::CHPS(a, b) => {
-                    self.roots.attach(a);
-                    self.roots.attach(b);
-                }
-            }
+        for ty in self.cont_stack.real_stack() {
+            self.roots.attach(ty.as_type());
         }
         if let Some(current) = &self.current_type {
             self.roots.attach(current);
         }
     }
 
-    pub fn stack(&self) -> &[InvokeCountinuationStyle<T>] {
+    pub fn stack(&self) -> &Stack<ContinuationOrHandler<T>> {
         &self.cont_stack
     }
 
     pub fn current(&self) -> &Type<T> {
         self.current_type.as_ref().expect("Current type is None")
     }
+}
+
+pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
+    cont_stack: &'a Stack<ContinuationOrHandler<T>>,
+) -> Option<(&'a Type<T>, usize)> {
+    for (index, cont) in cont_stack.iter().rev().enumerate() {
+        match cont {
+            ContinuationOrHandler::PerformHandler(v) => {
+                return Some((v, cont_stack.len() - 1 - index));
+            }
+            _ => continue,
+        }
+    }
+    None
 }

@@ -226,12 +226,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
         func: U,
         arg: V,
         continuation: Option<A>,
-        raise_continuation: Option<A>,
+        perform_continuation: Option<A>,
     ) -> Type<T> {
         let func = func.into_dispatcher();
         let arg = arg.into_dispatcher();
         let continuation = continuation.map(|c| c.into_dispatcher());
-        let raise_continuation = raise_continuation.map(|c| c.into_dispatcher());
+        let raise_continuation = perform_continuation.map(|c| c.into_dispatcher());
         let all_nf = func.is_normal_form()
             && arg.is_normal_form()
             && continuation.as_ref().map_or(true, |c| c.is_normal_form())
@@ -281,56 +281,4 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
     pub fn continuation_style(&self) -> &InvokeCountinuationStyle<T> {
         &self.inner.2
     }
-}
-
-pub fn find_last_continuation<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: &'a [InvokeCountinuationStyle<T>],
-) -> Option<&'a Type<T>> {
-    for cont in cont_stack.iter().rev() {
-        match cont {
-            InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::HPS(_) => {}
-            InvokeCountinuationStyle::CPS(cont) => {
-                return Some(cont);
-            }
-            InvokeCountinuationStyle::CHPS(cont1, _) => {
-                return Some(cont1);
-            }
-        }
-    }
-    None
-}
-
-pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: &'a [InvokeCountinuationStyle<T>],
-) -> Option<&'a Type<T>> {
-    for cont in cont_stack.iter().rev() {
-        match cont {
-            InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::CPS(_) => {}
-            InvokeCountinuationStyle::HPS(cont) => {
-                return Some(cont);
-            }
-            InvokeCountinuationStyle::CHPS(_, cont2) => {
-                return Some(cont2);
-            }
-        }
-    }
-    None
-}
-
-pub fn shrink_to_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: &mut Vec<InvokeCountinuationStyle<T>>,
-) -> Option<(Type<T>, Option<Type<T>>)> {
-    while let Some(cont) = cont_stack.pop() {
-        match cont {
-            InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::CPS(_) => {}
-            InvokeCountinuationStyle::HPS(cont) => {
-                let last_cont = find_last_continuation(cont_stack);
-                return Some((cont, last_cont.cloned()));
-            }
-            InvokeCountinuationStyle::CHPS(cont, cont2) => {
-                return Some((cont2, Some(cont)));
-            }
-        }
-    }
-    None
 }
