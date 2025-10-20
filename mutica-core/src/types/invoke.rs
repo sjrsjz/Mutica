@@ -180,7 +180,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
             self.continuation()
                 .map(|c| c.clone().reduce(ctx))
                 .transpose()?,
-            self.raise_handler()
+            self.perform_handler()
                 .map(|c| c.clone().reduce(ctx))
                 .transpose()?,
         ))
@@ -270,7 +270,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
         }
     }
 
-    pub fn raise_handler(&self) -> Option<&Type<T>> {
+    pub fn perform_handler(&self) -> Option<&Type<T>> {
         match &self.inner.2 {
             InvokeCountinuationStyle::TailCall => None,
             InvokeCountinuationStyle::CPS(_) | InvokeCountinuationStyle::HPS(_) => None,
@@ -284,7 +284,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
 }
 
 pub fn find_last_continuation<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: &'a Vec<InvokeCountinuationStyle<T>>,
+    cont_stack: &'a [InvokeCountinuationStyle<T>],
 ) -> Option<&'a Type<T>> {
     for cont in cont_stack.iter().rev() {
         match cont {
@@ -301,7 +301,7 @@ pub fn find_last_continuation<'a, T: GcAllocObject<T, Inner = Type<T>>>(
 }
 
 pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: &'a Vec<InvokeCountinuationStyle<T>>,
+    cont_stack: &'a [InvokeCountinuationStyle<T>],
 ) -> Option<&'a Type<T>> {
     for cont in cont_stack.iter().rev() {
         match cont {
@@ -311,6 +311,24 @@ pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
             }
             InvokeCountinuationStyle::CHPS(_, cont2) => {
                 return Some(cont2);
+            }
+        }
+    }
+    None
+}
+
+pub fn shrink_to_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
+    cont_stack: &mut Vec<InvokeCountinuationStyle<T>>,
+) -> Option<(Type<T>, Option<Type<T>>)> {
+    while let Some(cont) = cont_stack.pop() {
+        match cont {
+            InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::CPS(_) => {}
+            InvokeCountinuationStyle::HPS(cont) => {
+                let last_cont = find_last_continuation(cont_stack);
+                return Some((cont, last_cont.cloned()));
+            }
+            InvokeCountinuationStyle::CHPS(cont, cont2) => {
+                return Some((cont2, Some(cont)));
             }
         }
     }

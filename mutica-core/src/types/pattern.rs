@@ -150,7 +150,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             if other
-                .is(self.expr.as_ref_dispatcher(), &mut inner_ctx)?
+                .fullfill(self.expr.as_ref_dispatcher(), &mut inner_ctx)?
                 .is_some()
             {
                 pattern_env.push((self.debruijn_index, other.clone_data()));

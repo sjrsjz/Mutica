@@ -153,11 +153,7 @@ pub enum BasicTypeAst {
     Apply {
         func: Box<WithLocation<BasicTypeAst>>,
         arg: Box<WithLocation<BasicTypeAst>>,
-    },
-    HandleWith {
-        closure: Box<WithLocation<BasicTypeAst>>,
-        init_val: Box<WithLocation<BasicTypeAst>>,
-        handler: Box<WithLocation<BasicTypeAst>>,
+        handler: Option<Box<WithLocation<BasicTypeAst>>>,
     },
     AtomicOpcode(AtomicOpcode),
     FixPoint {
@@ -206,8 +202,9 @@ pub struct LinearizeResult<'ast> {
     bindings: Vec<(
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+        Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         String,
-    )>, // (func, arg, tmpvar_name)
+    )>, // (func, arg, handler, tmpvar_name)
     tail_type: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
 }
 
@@ -223,6 +220,7 @@ impl<'ast> LinearizeResult<'ast> {
         bindings: Vec<(
             WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
             WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+            Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
             String,
         )>,
         ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
@@ -236,11 +234,17 @@ impl<'ast> LinearizeResult<'ast> {
     pub fn new_apply(
         func: LinearizeResult<'ast>,
         arg: LinearizeResult<'ast>,
+        handler: Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         allocated_tmpvar_name: String,
     ) -> Self {
         let mut bindings = func.bindings;
         bindings.extend(arg.bindings);
-        bindings.push((func.tail_type, arg.tail_type, allocated_tmpvar_name.clone()));
+        bindings.push((
+            func.tail_type,
+            arg.tail_type,
+            handler,
+            allocated_tmpvar_name.clone(),
+        ));
         Self {
             bindings,
             tail_type: LinearTypeAst::Variable(allocated_tmpvar_name).into(),
@@ -252,6 +256,7 @@ impl<'ast> LinearizeResult<'ast> {
     ) -> &Vec<(
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+        Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         String,
     )> {
         &self.bindings
@@ -263,7 +268,7 @@ impl<'ast> LinearizeResult<'ast> {
 
     pub fn finalize(self) -> WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
         let mut ty = self.tail_type;
-        for (f, a, tmpvar) in self.bindings.into_iter().rev() {
+        for (f, a, handler, tmpvar) in self.bindings.into_iter().rev() {
             ty = WithLocation::from(LinearTypeAst::Invoke {
                 func: Box::new(f),
                 arg: Box::new(a),
@@ -288,7 +293,7 @@ impl<'ast> LinearizeResult<'ast> {
                         )
                     }
                 },
-                perform_handler: None,
+                perform_handler: handler.map(|h| Box::new(h)),
             })
         }
         ty
@@ -432,24 +437,6 @@ impl BasicTypeAst {
                 }
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::HandleWith {
-                closure,
-                init_val,
-                handler,
-            } => {
-                let closure = closure.linearize(ctx, closure.location());
-                let init_val = init_val.linearize(ctx, init_val.location());
-                let handler = handler.linearize(ctx, handler.location());
-                let ty = LinearTypeAst::Invoke {
-                    func: closure.tail_type().clone().into(),
-                    arg: init_val.tail_type().clone().into(),
-                    continuation: None,
-                    perform_handler: Some(handler.tail_type().clone().into()),
-                };
-                let mut bindings = closure.bindings;
-                bindings.extend(handler.bindings);
-                LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
-            }
             BasicTypeAst::Closure {
                 pattern,
                 body,
@@ -476,11 +463,25 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Apply { func, arg } => {
+            BasicTypeAst::Apply { func, arg, handler } => {
                 let func = func.linearize(ctx, func.location());
                 let arg = arg.linearize(ctx, arg.location());
                 let allocated_tmpvar_name = ctx.allocate_tmpvar_name();
-                LinearizeResult::new_apply(func, arg, allocated_tmpvar_name)
+                match handler {
+                    Some(handler) => {
+                        let handler = handler.linearize(ctx, handler.location());
+                        let result = LinearizeResult::new_apply(
+                            func,
+                            arg,
+                            Some(handler.tail_type().clone()),
+                            allocated_tmpvar_name,
+                        );
+                        let mut bindings = result.bindings;
+                        bindings.extend(handler.bindings);
+                        LinearizeResult::new_with_binding(bindings, result.tail_type.clone())
+                    }
+                    None => LinearizeResult::new_apply(func, arg, None, allocated_tmpvar_name),
+                }
             }
             BasicTypeAst::AtomicOpcode(atomic_opcode) => LinearizeResult::new_simple(
                 WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc),
@@ -693,10 +694,12 @@ impl TypeAst {
                 init_val,
                 handler,
             } => WithLocation::new(
-                BasicTypeAst::HandleWith {
-                    closure: Box::new(closure.into_basic(multifile_builder, closure.location())),
-                    init_val: Box::new(init_val.into_basic(multifile_builder, init_val.location())),
-                    handler: Box::new(handler.into_basic(multifile_builder, handler.location())),
+                BasicTypeAst::Apply {
+                    func: Box::new(closure.into_basic(multifile_builder, closure.location())),
+                    arg: Box::new(init_val.into_basic(multifile_builder, init_val.location())),
+                    handler: Some(Box::new(
+                        handler.into_basic(multifile_builder, handler.location()),
+                    )),
                 },
                 loc,
             ),
@@ -725,6 +728,7 @@ impl TypeAst {
                                 pat.location(),
                             )),
                             arg: Box::new(ty.into_basic(multifile_builder, ty.location())),
+                            handler: None,
                         },
                         ty.location(),
                     ); // 应用的位置信息不重要
@@ -754,6 +758,7 @@ impl TypeAst {
                         arg: Box::new(WithLocation::from(BasicTypeAst::Variable(
                             "match#value".to_string(),
                         ))),
+                        handler: None,
                     })));
                 }
                 match value {
@@ -777,6 +782,7 @@ impl TypeAst {
                                 loc,
                             )),
                             arg: Box::new(value.into_basic(multifile_builder, value.location())),
+                            handler: None,
                         },
                         loc,
                     ),
@@ -814,6 +820,7 @@ impl TypeAst {
                 BasicTypeAst::Apply {
                     func: Box::new(func.into_basic(multifile_builder, func.location())),
                     arg: Box::new(arg.into_basic(multifile_builder, arg.location())),
+                    handler: None,
                 },
                 loc,
             ),
@@ -871,6 +878,7 @@ impl TypeAst {
                                                 ]),
                                                 loc,
                                             )),
+                                            handler: None,
                                         },
                                         loc,
                                     ),
@@ -897,6 +905,7 @@ impl TypeAst {
                                                 ]),
                                                 loc,
                                             )),
+                                            handler: None,
                                         },
                                         loc,
                                     ),
@@ -914,6 +923,7 @@ impl TypeAst {
                         ]),
                         loc,
                     )),
+                    handler: None,
                 },
                 loc,
             ),
@@ -946,6 +956,7 @@ impl TypeAst {
                     )
                     .into(),
                     arg: value.into_basic(multifile_builder, value.location()).into(),
+                    handler: None,
                 },
                 loc,
             ),

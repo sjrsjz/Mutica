@@ -132,7 +132,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 let value = ctx.closure_env.1.get(r)?;
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
-                other.is(value.as_ref_dispatcher(), &mut inner_ctx)
+                other.fullfill(value.as_ref_dispatcher(), &mut inner_ctx)
             }
         })
     }

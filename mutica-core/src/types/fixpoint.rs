@@ -272,7 +272,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match self.reference.upgrade() {
-                Some(inner) => other.is(
+                Some(inner) => other.fullfill(
                     inner
                         .as_ref()
                         .get_inner()

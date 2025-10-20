@@ -277,10 +277,14 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                 i,
                 match ty {
                     InvokeCountinuationStyle::TailCall => "TailCall".to_string(),
-                    InvokeCountinuationStyle::CPS(v) => v.display(&mut FastCycleDetector::new()),
-                    InvokeCountinuationStyle::HPS(v) => v.display(&mut FastCycleDetector::new()),
+                    InvokeCountinuationStyle::CPS(v) => format!("Continuation - {}", 
+                        v.display(&mut FastCycleDetector::new())
+                    ),
+                    InvokeCountinuationStyle::HPS(v) => format!("Handler - {}", 
+                        v.display(&mut FastCycleDetector::new())
+                    ),
                     InvokeCountinuationStyle::CHPS(a, b) => format!(
-                        "CRPS({}, {})",
+                        "Continuation & Handler - {}, {}",
                         a.display(&mut FastCycleDetector::new()),
                         b.display(&mut FastCycleDetector::new())
                     ),

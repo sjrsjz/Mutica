@@ -250,7 +250,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         }
     }
 
-    pub fn is(
+    pub fn fullfill(
         self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -299,10 +299,11 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     UnboundVariable(isize),
     AssertFailed(Box<(U, U)>),
     MissingContinuation(Box<U>),
-    MissingRaiseHandler(Box<U>),
+    MissingPerformHandler(Box<U>),
     RuntimeError(Arc<dyn Error + Send + Sync>),
     OtherError(String),
-    Exception(Box<U>),
+    Perform(Box<U>),
+    Break(Box<U>),
     #[doc(hidden)]
     Pandom(std::marker::PhantomData<V>),
 }
@@ -329,9 +330,10 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
                 write!(f, "Assert failed: {:?} </: {:?}", types.0, types.1)
             }
             TypeError::MissingContinuation(ty) => write!(f, "Missing continuation: {:?}", ty),
-            TypeError::MissingRaiseHandler(ty) => write!(f, "Missing raise handler: {:?}", ty),
+            TypeError::MissingPerformHandler(ty) => write!(f, "Missing perform handler: {:?}", ty),
             TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
-            TypeError::Exception(ty) => write!(f, "Exception raised: {:?}", ty),
+            TypeError::Perform(ty) => write!(f, "Perform raised: {:?}", ty),
+            TypeError::Break(ty) => write!(f, "Break raised: {:?}", ty),
             TypeError::OtherError(msg) => write!(f, "Other error: {}", msg),
             TypeError::Pandom(_) => write!(f, "Pandom error (hidden)"),
         }

@@ -181,7 +181,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
             for sub in self.types.iter() {
                 // 我们传入 false 是因为generalize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
-                if other.is(sub.as_ref_dispatcher(), &mut inner_ctx)?.is_some() {
+                if other.fullfill(sub.as_ref_dispatcher(), &mut inner_ctx)?.is_some() {
                     return Ok(Some(())); // 由于不需要匹配子模式,短路返回不会影响正确性
                 }
             }

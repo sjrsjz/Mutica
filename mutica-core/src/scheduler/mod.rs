@@ -4,16 +4,9 @@ use arc_gc::gc::GC;
 
 use crate::{
     types::{
-        CoinductiveType, GcAllocObject, InvokeContext, ReductionContext, Representable, Type,
-        TypeError, TypeRef,
-        character_value::CharacterValue,
-        closure::{ClosureEnv, ParamEnv},
-        invoke::{
-            Invoke, InvokeCountinuationStyle, find_last_continuation, find_last_perform_handler,
-        },
-        list::List,
-        opcode::Opcode,
-        tuple::Tuple,
+        character_value::CharacterValue, closure::{ClosureEnv, ParamEnv}, invoke::{
+            find_last_continuation, find_last_perform_handler, shrink_to_last_perform_handler, Invoke, InvokeCountinuationStyle
+        }, list::List, opcode::Opcode, tuple::Tuple, CoinductiveType, GcAllocObject, InvokeContext, ReductionContext, Representable, Type, TypeError, TypeRef
     },
     util::{collector::Collector, cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
@@ -90,7 +83,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         .collect::<Vec<_>>();
                     Ok(Some(List::new(chars)))
                 }
-                "perform" => Err(TypeError::Exception(arg.clone().into())),
+                "perform" => Err(TypeError::Perform(arg.clone().into())),
+                "break" => Err(TypeError::Break(arg.clone().into())),
                 _ => Ok(None),
             }
         })?
@@ -128,11 +122,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let io_result = Self::io(invoke.func(), invoke.arg());
                     let io_result = match io_result {
                         Ok(v) => v,
-                        Err(TypeError::Exception(v)) => {
+                        Err(TypeError::Perform(v)) => {
                             let raise_handler = match find_last_perform_handler(&self.cont_stack) {
                                 Some(handler) => handler,
                                 None => {
-                                    return Err(TypeError::MissingRaiseHandler(Box::new(
+                                    return Err(TypeError::MissingPerformHandler(Box::new(
                                         invoke.arg().clone(),
                                     )));
                                 }
@@ -141,9 +135,31 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 raise_handler,
                                 *v,
                                 invoke.continuation(),
-                                invoke.raise_handler(),
+                                invoke.perform_handler(),
                             );
                             return Ok((raise_invoke, true));
+                        }
+                        Err(TypeError::Break(v)) => {
+                            let (_, cont)  = match shrink_to_last_perform_handler(&mut self.cont_stack) {
+                                Some(cont) => cont,
+                                None => {
+                                    return Err(TypeError::MissingContinuation(Box::new(
+                                        invoke.arg().clone(),
+                                    )));
+                                }
+                            };
+                            if cont.is_none() {
+                                return Err(TypeError::MissingContinuation(Box::new(
+                                    invoke.arg().clone(),
+                                )));
+                            }
+                            let break_invoke = Invoke::new(
+                                cont.unwrap(),
+                                *v,
+                                invoke.continuation(),
+                                invoke.perform_handler(),
+                            );
+                            return Ok((break_invoke, true));
                         }
                         Err(e) => return Err(e),
                     };
