@@ -278,7 +278,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                         t.display(&mut FastCycleDetector::new())
                     ),
                     ContinuationOrHandler::PerformHandler(v) => format!(
-                        "WithPerformHandler - Perform Handler: {}",
+                        "Perform Handler - {}",
                         v.display(&mut FastCycleDetector::new())
                     ),
                 }

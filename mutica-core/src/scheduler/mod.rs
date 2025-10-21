@@ -159,15 +159,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let io_result = match io_result {
                         Ok(v) => v,
                         Err(TypeError::Perform(v)) => {
-                            let (perform_handler, index) =
-                                match find_last_perform_handler(self.cont_stack.view()) {
-                                    Some(handler) => handler,
-                                    None => {
-                                        return Err(TypeError::MissingPerformHandler(Box::new(
-                                            invoke.arg().clone(),
-                                        )));
-                                    }
-                                };
+                            let view = self.cont_stack.view();
+                            let (perform_handler, index) = match find_last_perform_handler(&view) {
+                                Some(handler) => handler,
+                                None => {
+                                    return Err(TypeError::MissingPerformHandler(Box::new(
+                                        invoke.arg().clone(),
+                                    )));
+                                }
+                            };
                             let perform_invoke =
                                 Invoke::new(perform_handler, *v, None::<Type<T>>, None::<Type<T>>);
                             match invoke.continuation_style() {
@@ -235,17 +235,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             return Ok((break_invoke, true));
                         }
                         Err(TypeError::Resume(v)) => {
-                            let continuation = match self.cont_stack.skip_frames(1) {
-                                Some(stack_view) => {
-                                    find_last_continuation(stack_view).map(|(v, _)| v.clone())
-                                }
-                                None => {
-                                    return Err(TypeError::MissingContinuation(Box::new(
-                                        invoke.arg().clone(),
-                                    )));
-                                }
-                            };
-
                             match invoke.continuation_style() {
                                 InvokeCountinuationStyle::TailCall => (),
                                 InvokeCountinuationStyle::CPS(v) => self
@@ -262,13 +251,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                         .push(ContinuationOrHandler::PerformHandler(b.clone()));
                                 }
                             }
-                            let resume_invoke = match continuation {
-                                Some(continuation) => {
-                                    Invoke::new(continuation, *v, None::<Type<T>>, None::<Type<T>>)
+                            let view = match self.cont_stack.skip_frames(1) {
+                                Some(view) => view,
+                                None => {
+                                    return Err(TypeError::RuntimeError(Arc::new(
+                                        std::io::Error::new(
+                                            std::io::ErrorKind::Other,
+                                            "No continuation to resume",
+                                        ),
+                                    )));
                                 }
-                                None => *v,
                             };
-                            return Ok((resume_invoke, true));
+                            let cont = find_last_continuation(&view).map(|(v, _)| v.clone());
+                            self.cont_stack.fork_frame(view.len(), view.frame_index());
+                            if let Some(v) = cont {
+                                self.cont_stack.push(ContinuationOrHandler::Continuation(v));
+                            }
+
+                            return Ok((*v, true));
                         }
                         Err(e) => return Err(e),
                     };
@@ -361,7 +361,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 }
 
 pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: StackView<'a, ContinuationOrHandler<T>>,
+    cont_stack: &'a StackView<'a, ContinuationOrHandler<T>>,
 ) -> Option<(&'a Type<T>, usize)> {
     for (index, cont) in cont_stack.iter().rev().enumerate() {
         match cont {
@@ -375,7 +375,7 @@ pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
 }
 
 pub fn find_last_continuation<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: StackView<'a, ContinuationOrHandler<T>>,
+    cont_stack: &'a StackView<'a, ContinuationOrHandler<T>>,
 ) -> Option<(&'a Type<T>, usize)> {
     for (index, cont) in cont_stack.iter().rev().enumerate() {
         match cont {

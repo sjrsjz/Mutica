@@ -2,14 +2,14 @@ use std::ops::Index;
 
 pub struct Stack<T> {
     stack: Vec<T>,
-    frames: Vec<(usize, usize)>,
+    frames: Vec<(usize, usize, usize)>, // (fork的上一逻辑栈帧的长度，当前逻辑栈帧新增的长度, 上一栈帧的索引)
 }
 
 impl<T> Stack<T> {
     pub fn new() -> Self {
         Self {
             stack: Vec::new(),
-            frames: vec![(0, 0)], // (fork的上一逻辑栈帧的长度，当前逻辑栈帧新增的长度)
+            frames: vec![(0, 0, 0)], // (fork的上一逻辑栈帧的长度，当前逻辑栈帧新增的长度)
         }
     }
 
@@ -39,10 +39,6 @@ impl<T> Stack<T> {
             return None;
         }
         self.frames.last_mut().unwrap().1 -= 1;
-        // pop元素后，再次删掉所有右端的空frame
-        while self.frames.len() > 1 && self.frames.last().unwrap().1 == 0 {
-            self.frames.pop();
-        }
         self.stack.pop()
     }
 
@@ -73,51 +69,70 @@ impl<T> Stack<T> {
             // 无法fork到比当前逻辑栈更深的地方
             return false;
         }
-        self.frames.push((base_len, 0));
+        self.frames.push((base_len, 0, self.frames.len() - 1));
+        true
+    }
+
+    pub fn fork_frame(&mut self, base_len: usize, frame_index: usize) -> bool {
+        if frame_index >= self.frames.len() {
+            return false;
+        }
+        // 无法fork到比指定逻辑栈更深的地方
+        if base_len > self.frames[frame_index].0 + self.frames[frame_index].1 {
+            return false;
+        }
+        self.frames.push((base_len, 0, frame_index));
         true
     }
 
     #[stacksafe::stacksafe]
-    fn __get(frames: &[(usize, usize)], index: usize) -> Option<usize> {
+    fn __get(frames: &[(usize, usize, usize)], frame_index: usize, index: usize) -> Option<usize> {
+        if frame_index >= frames.len() {
+            return None;
+        }
+
         // 我们需要从逻辑栈中获取元素
-        if index >= frames.last().unwrap().0 + frames.last().unwrap().1 {
+        if index >= frames[frame_index].0 + frames[frame_index].1 {
             // 超出逻辑栈范围
             return None;
         }
 
-        if index < frames.last().unwrap().0 {
+        if index < frames[frame_index].0 {
             // 如果index在逻辑栈的base范围内
             // 从前面的frame中获取
-            if frames.len() == 1 {
-                return Some(index); // 只有一个frame，直接返回index（物理栈索引）
+            if frame_index == 0 {
+                // 0号frame，物理栈帧
+                return Some(index); // 直接返回index（物理栈索引）
             }
-            Self::__get(&frames[..frames.len() - 1], index)
+            Self::__get(&frames, frames[frame_index].2, index)
         } else {
             // 从当前frame中获取
             // 我们可以计算出父栈帧总长度
             let mut acc = 0;
-            for i in 0..frames.len() - 1 {
+            for i in 0..frame_index {
                 acc += frames[i].1; // 累加前面frame的实际新增长度
             }
-            Some(acc + (index - frames.last().unwrap().0))
+            Some(acc + (index - frames[frame_index].0))
         }
     }
 
     pub fn get(&self, index: usize) -> Option<&T> {
-        Self::__get(&self.frames, index).and_then(|real_index| self.stack.get(real_index))
+        Self::__get(&self.frames, self.frames.len() - 1, index)
+            .and_then(|real_index| self.stack.get(real_index))
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
-        Self::__get(&self.frames, index).and_then(move |real_index| self.stack.get_mut(real_index))
+        Self::__get(&self.frames, self.frames.len() - 1, index)
+            .and_then(move |real_index| self.stack.get_mut(real_index))
     }
 
     pub fn clear(&mut self) {
         self.stack.clear();
         self.frames.clear();
-        self.frames.push((0, 0));
+        self.frames.push((0, 0, 0));
     }
 
-    pub fn frames(&self) -> &[(usize, usize)] {
+    pub fn frames(&self) -> &[(usize, usize, usize)] {
         &self.frames
     }
 
@@ -127,12 +142,13 @@ impl<T> Stack<T> {
         }
         Some(StackView::new(
             &self.stack,
-            &self.frames[..(self.frames.len() - n)],
+            &self.frames,
+            self.frames.len() - 1 - n,
         ))
     }
 
     pub fn view(&self) -> StackView<'_, T> {
-        StackView::new(&self.stack, &self.frames)
+        StackView::new(&self.stack, &self.frames, self.frames.len() - 1)
     }
 }
 
@@ -185,7 +201,7 @@ impl<T> Stack<T> {
     pub fn iter(&self) -> StackIter<'_, T> {
         let len = self.len();
         StackIter {
-            stack: StackView::new(&self.stack, &self.frames),
+            stack: StackView::new(&self.stack, &self.frames, self.frames.len() - 1),
             front_index: 0,
             back_index: len,
         }
@@ -194,7 +210,8 @@ impl<T> Stack<T> {
 
 pub struct StackView<'a, T> {
     stack: &'a [T],
-    frames: &'a [(usize, usize)],
+    frames: &'a [(usize, usize, usize)],
+    frame_index: usize,
 }
 
 impl<'a, T> Clone for StackView<'a, T> {
@@ -202,17 +219,35 @@ impl<'a, T> Clone for StackView<'a, T> {
         Self {
             stack: self.stack,
             frames: self.frames,
+            frame_index: self.frame_index,
         }
     }
 }
 
 impl<'a, T> StackView<'a, T> {
-    pub fn new(stack: &'a [T], frames: &'a [(usize, usize)]) -> Self {
-        Self { stack, frames }
+    pub fn new(stack: &'a [T], frames: &'a [(usize, usize, usize)], frame_index: usize) -> Self {
+        Self {
+            stack,
+            frames,
+            frame_index,
+        }
     }
 
     pub fn get(&self, index: usize) -> Option<&'a T> {
-        Stack::<T>::__get(self.frames, index).and_then(|real_index| self.stack.get(real_index))
+        Stack::<T>::__get(self.frames, self.frame_index, index)
+            .and_then(|real_index| self.stack.get(real_index))
+    }
+
+    pub fn frame_index(&self) -> usize {
+        self.frame_index
+    }
+
+    pub fn frames(&self) -> &'a [(usize, usize, usize)] {
+        self.frames
+    }
+
+    pub fn stack(&self) -> &'a [T] {
+        self.stack
     }
 }
 
@@ -226,10 +261,10 @@ impl<'a, T> Index<usize> for StackView<'a, T> {
 
 impl<'a, T> StackView<'a, T> {
     pub fn len(&self) -> usize {
-        if let Some((base, added)) = self.frames.last() {
+        if let Some((base, added, _)) = self.frames.get(self.frame_index) {
             base + added
         } else {
-            0
+            panic!("Frame index out of bounds");
         }
     }
 }
