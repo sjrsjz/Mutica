@@ -275,16 +275,15 @@ Apply: WithLocation<TypeAst> = {
         TokenColor::fill_colors(colors, dot_l..dot_r, TokenColor::Operator);
         TokenColor::fill_colors(colors, a_l..a_r, TokenColor::Attribute);
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Closure {
-                pattern: Box::new(WithLocation::new(TypeAst::Namespace {
+            func: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(WithLocation::new(TypeAst::Namespace {
                     tag: k,
                     expr: Box::new(WithLocation::new(TypeAst::Pattern {
                         name: "projection#obj".to_string(),
                         expr: Box::new(WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                body: Box::new(WithLocation::new(TypeAst::Variable("projection#obj".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                fail_branch: None,
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                WithLocation::new(TypeAst::Variable("projection#obj".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()))]
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(obj),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
@@ -320,25 +319,42 @@ IfElse: WithLocation<TypeAst> = {
         TokenColor::fill_colors(colors, l..l+2, TokenColor::Keyword);
         TokenColor::fill_colors(colors, then_l..then_r, TokenColor::Keyword);
         TokenColor::fill_colors(colors, else_l..else_r, TokenColor::Keyword);
-        WithLocation::new(TypeAst::Match {
-            value: cond.map(Box::new),
-            match_branch: vec![
-                (WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), else_branch), // since false <: true, check false first
-                (WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), then_branch),
-            ],
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        match cond {
+            Some(c) => WithLocation::new(TypeAst::Apply {
+                func: Box::new(WithLocation::new(TypeAst::Match {
+                    branches: vec![
+                        (WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), else_branch),
+                        (WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), then_branch),
+                    ],
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                arg: Box::new(c),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            None => WithLocation::new(TypeAst::Match {
+                branches: vec![
+                    (WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), else_branch),
+                    (WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), then_branch),
+                ],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),    
+        }
     },
 }
 
 Match: WithLocation<TypeAst> = {
-    <l:@L> "match" <value: Primary?> <branches: MatchBranch+> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
+    <l:@L> "match" <value: Primary?> <branches: MatchBranch*> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
         TokenColor::fill_colors(colors, l..l+5, TokenColor::Keyword);
         TokenColor::fill_colors(colors, v_l..v_r, TokenColor::Operator);
         TokenColor::fill_colors(colors, r-5..r, TokenColor::Keyword);
-        WithLocation::new(TypeAst::Match {
-            value: value.map(Box::new),
-            match_branch: branches,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        match value {
+            Some(v) => WithLocation::new(TypeAst::Apply {
+                func: Box::new(WithLocation::new(TypeAst::Match {
+                    branches: branches,
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                arg: Box::new(v),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            None => WithLocation::new(TypeAst::Match {
+                branches: branches,
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        }
     },
 }
 
@@ -351,21 +367,20 @@ MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
 }
 
 HandleWith: WithLocation<TypeAst> = {
-    <l:@L> "handle" <t: Primary> <catch_l:@L> "with" <catch_r:@R> <handlers: MatchBranch+> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
+    <l:@L> "handle" <t: Primary> <catch_l:@L> "with" <catch_r:@R> <handlers: MatchBranch*> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
         TokenColor::fill_colors(colors, l..l+6, TokenColor::Keyword);
         TokenColor::fill_colors(colors, catch_l..catch_r, TokenColor::Keyword);
         TokenColor::fill_colors(colors, v_l..v_r, TokenColor::Operator);
         TokenColor::fill_colors(colors, r-5..r, TokenColor::Keyword);
         WithLocation::new(TypeAst::HandleWith {
-            closure: Box::new(WithLocation::new(TypeAst::Closure {
-                pattern: Box::new(WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                body: Box::new(t),
-                fail_branch: None,
+            closure: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![
+                    (WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), t),
+                ],
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             init_val: Box::new(WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             handler: Box::new(WithLocation::new(TypeAst::Match {
-                value: None,
-                match_branch: handlers,
+                branches: handlers,
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
@@ -382,27 +397,13 @@ RecursiveGen: WithLocation<TypeAst> = {
     },
 }
 
-FailBranch: Box<WithLocation<TypeAst>> = {
-    "\\" <t: Primary> => Box::new(t),
-}
-
 Closure: WithLocation<TypeAst> = {
-    <l:@L> <pattern: Factor> <arrow_l:@L> "->" <arrow_r:@R> <body: Primary> <fail_branch: FailBranch> <r:@R> => {
+    <l:@L> <pattern: Factor> <arrow_l:@L> "->" <arrow_r:@R> <body: Primary> <r:@R> => {
         TokenColor::fill_colors(colors, arrow_l..arrow_r, TokenColor::Operator);
-        WithLocation::new(TypeAst::Closure {
-            pattern: Box::new(pattern),
-            body: Box::new(body),
-            fail_branch: Some(fail_branch),
+        WithLocation::new(TypeAst::Match {
+            branches: vec![(pattern, body)],
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> <pattern: Factor> <arrow_l:@L> "|->" <arrow_r:@R> <body: Primary> <r:@R> => {
-        TokenColor::fill_colors(colors, arrow_l..arrow_r, TokenColor::Operator);
-        WithLocation::new(TypeAst::Closure {
-            pattern: Box::new(pattern),
-            body: Box::new(body),
-            fail_branch: None,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    }
 }
 
 Tuple: WithLocation<TypeAst> = {
@@ -725,10 +726,8 @@ Loop: WithLocation<TypeAst> = {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::FixPoint {
                 param_name: rec_expr.0,
-                expr: Box::new(WithLocation::new(TypeAst::Closure {
-                    pattern: Box::new(rec_expr.1),
-                    body: Box::new(e),
-                    fail_branch: None,
+                expr: Box::new(WithLocation::new(TypeAst::Match {
+                    branches: vec![(rec_expr.1, e)],
                 }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(rec_expr.2),
@@ -740,10 +739,8 @@ Require: WithLocation<TypeAst> = {
     <l:@L> "require" <arg: Type> <con_l:@L> ";" <con_r:@R> <expr: Type> <r:@R> => {
         TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
         TokenColor::fill_colors(colors, con_l..con_r, TokenColor::Punctuation);
-        WithLocation::new(TypeAst::Closure {
-            pattern: Box::new(arg),
-            body: Box::new(expr),
-            fail_branch: None,
+        WithLocation::new(TypeAst::Match {
+            branches: vec![(arg, expr)],
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }

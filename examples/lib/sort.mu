@@ -2,7 +2,7 @@ let list_pkg: any = import "list.mu";
 let List: any = list_pkg.List;
 
 // 归并两个已排序的列表
-let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) |-> {
+let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) -> {
     loop go: t: any = (lst1, lst2);
     match t
         | ((), l2: any) => l2
@@ -14,7 +14,7 @@ let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) |-> {
 };
 
 // 将列表分为两半
-let split: any = lst: List(any) |-> {
+let split: any = lst: List(any) -> {
     let len: any = list_pkg.len lst;
     let mid: int = len / 2;
     let first_half: any = list_pkg.take lst mid;
@@ -23,7 +23,7 @@ let split: any = lst: List(any) |-> {
 };
 
 // 归并排序主函数
-let merge_sort: any = cmp: any |-> lst: List(any) |-> {
+let merge_sort: any = cmp: any -> lst: List(any) -> {
     loop go: t: any = lst;
     match t
         | () => ()

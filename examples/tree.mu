@@ -1,8 +1,8 @@
 // 二叉树示例
-let Leaf: any = value: any |-> Leaf::value;
-let Node: any = (left: any, right: any, value: any) |-> Node::(left, right, value);
+let Leaf: any = value: any -> Leaf::value;
+let Node: any = (left: any, right: any, value: any) -> Node::(left, right, value);
 let Empty: any = Empty::();
-let Tree: any = T: any |-> rec tree: (Empty::() | Leaf::T | Node::(tree, tree, T));
+let Tree: any = T: any -> rec tree: (Empty::() | Leaf::T | Node::(tree, tree, T));
 
 // 树的大小
 let tree_size: any = 

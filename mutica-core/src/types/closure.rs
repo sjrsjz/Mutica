@@ -159,41 +159,27 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
 }
 
 #[derive(Clone)]
-pub struct ClosureInner<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    env: ClosureEnv<U, V>,
+pub struct ClosureBranch<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pattern: U,
-    pattern_param_size: usize,
     expr: U,
-    fail_branch: Option<U>,
+    _pantom: PhantomData<V>,
 }
 
-impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for ClosureInner<U, V> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for ClosureBranch<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
-        self.env.collect(queue);
         self.pattern.collect(queue);
         self.expr.collect(queue);
-        if let Some(fb) = &self.fail_branch {
-            fb.collect(queue);
-        }
     }
 }
 
-impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for ClosureInner<U, V> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for ClosureBranch<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
-        self.env.upgrade(collected);
         self.pattern.upgrade(collected);
         self.expr.upgrade(collected);
-        if let Some(fb) = &self.fail_branch {
-            fb.upgrade(collected);
-        }
     }
 }
 
-impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureInner<U, V> {
-    pub fn env(&self) -> &ClosureEnv<U, V> {
-        &self.env
-    }
-
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureBranch<U, V> {
     pub fn expr(&self) -> &U {
         &self.expr
     }
@@ -201,18 +187,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureInner<U, V> {
     pub fn pattern(&self) -> &U {
         &self.pattern
     }
-
-    pub fn fail_branch(&self) -> Option<&U> {
-        self.fail_branch.as_ref()
-    }
-
-    pub fn pattern_param_size(&self) -> usize {
-        self.pattern_param_size
-    }
 }
 
 pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
-    inner: Arc<ClosureInner<Type<T>, T>>,
+    inner: Arc<(Vec<ClosureBranch<Type<T>, T>>, ClosureEnv<Type<T>, T>)>,
     is_nf: bool,
 }
 
@@ -231,13 +209,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Closure<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        self.inner.collect(queue);
+        for inner in self.inner.0.iter() {
+            inner.collect(queue);
+        }
+        self.inner.1.collect(queue);
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Closure<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        self.inner.upgrade(collected);
+        for inner in self.inner.0.iter() {
+            inner.upgrade(collected);
+        }
+        self.inner.1.upgrade(collected);
     }
 }
 
@@ -274,62 +258,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
                 TypeRef::Closure(v) => {
-                    // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
-                    // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
-                    // 因此所有的pattern_env都应当被禁用
-
-                    // 创建用于模式比较的上下文
-                    let mut pattern_env_disabled = Collector::new_disabled();
-                    let mut pattern_ctx = TypeCheckContext::new(
-                        ctx.assumptions,
-                        (ctx.closure_env.1, ctx.closure_env.0), // 反转，因为模式在类型检查时是逆向的
-                        &mut pattern_env_disabled,
-                    );
-
-                    let pattern_match = v
-                        .inner
-                        .pattern
-                        .fulfill(self.inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
-                        .is_some();
-
-                    if !pattern_match {
+                    if self.inner.0.len() != v.inner.0.len() {
                         return Ok(None);
                     }
 
-                    // 创建用于表达式比较的上下文(不同的闭包环境)
-                    let mut expr_ctx = TypeCheckContext::new(
-                        ctx.assumptions,
-                        (&self.inner.env, &v.inner.env),
-                        &mut pattern_env_disabled,
-                    );
+                    for (self_inner, other_inner) in self.inner.0.iter().zip(v.inner.0.iter()) {
+                        // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
+                        // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
+                        // 因此所有的pattern_env都应当被禁用
 
-                    let expr_match = self
-                        .inner
-                        .expr
-                        .fulfill(v.inner.expr.as_ref_dispatcher(), &mut expr_ctx)?
-                        .is_some();
+                        // 创建用于表达式比较的上下文
+                        let mut pattern_env_disabled = Collector::new_disabled();
+                        let mut pattern_ctx = TypeCheckContext::new(
+                            ctx.assumptions,
+                            (&self.inner.1, &v.inner.1),
+                            &mut pattern_env_disabled,
+                        );
 
-                    if !expr_match {
-                        return Ok(None);
-                    }
-
-                    let fail_branch_match = match (&self.inner.fail_branch, &v.inner.fail_branch) {
-                        (Some(a), Some(b)) => {
-                            let mut fb_ctx = TypeCheckContext::new(
-                                ctx.assumptions,
-                                ctx.closure_env,
-                                &mut pattern_env_disabled,
-                            );
-                            a.fulfill(b.as_ref_dispatcher(), &mut fb_ctx)?.is_some()
+                        if self_inner
+                            .expr
+                            .fulfill(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
+                            .is_none()
+                        {
+                            return Ok(None);
                         }
-                        (None, None) => true,
-                        _ => false,
-                    };
 
-                    if !fail_branch_match {
-                        return Ok(None);
+                        // 创建用于模式比较的上下文
+                        let mut pattern_env_disabled = Collector::new_disabled();
+                        let mut pattern_ctx = TypeCheckContext::new(
+                            ctx.assumptions,
+                            (ctx.closure_env.1, ctx.closure_env.0), // 逆变
+                            &mut pattern_env_disabled,
+                        );
+
+                        if other_inner
+                            .pattern
+                            .fulfill(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
+                            .is_none()
+                        {
+                            return Ok(None);
+                        }
                     }
-
                     Ok(Some(()))
                 }
                 _ => Ok(None),
@@ -341,23 +310,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        // 先把闭包环境中的类型都化简
-        let env = self
-            .inner
-            .env
-            .0
-            .iter()
-            .map(|ty| ty.clone().reduce(ctx))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self::new(
-            self.inner.pattern_param_size,
-            self.inner.pattern.clone().reduce(ctx)?,
-            self.inner.expr.clone(), // expr 是惰性求值的,不应当在这里化简
-            match &self.inner.fail_branch {
-                Some(fb) => Some(fb.clone().reduce(ctx)?),
-                None => None,
-            },
-            ClosureEnv::<Type<T>, T>::new(env), // 不能拆开成中间变量否则会导致临时变量被drop后fixpoint失效（极其罕见）
+        // 化简env
+        let reduced_env = ClosureEnv::new(
+            self.env()
+                .iter()
+                .map(|ty| ty.clone().reduce(ctx))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        let mut reduced_branches = Vec::with_capacity(self.inner.0.len());
+
+        for inner in self.inner.0.iter() {
+            let reduced_pattern = inner.pattern.clone().reduce(ctx)?;
+            reduced_branches.push((reduced_pattern, inner.expr.clone())); // expr 是惰性的,不需要立即化简
+        }
+        Ok(Closure::new::<Type<T>, Type<T>, Type<T>>(
+            reduced_branches,
+            reduced_env,
         ))
     }
 
@@ -365,55 +333,38 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         &self,
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        let mut matched_pattern = Collector::new();
+        let empty_closure_env = ClosureEnv::new(Vec::<Type<T>>::new());
+        for inner in self.inner.0.iter() {
+            let mut matched_pattern = Collector::new();
 
-        // 创建用于模式匹配的类型检查上下文
-        let mut assumptions_temp = smallvec::smallvec![];
-        let mut pattern_check_ctx = TypeCheckContext::new(
-            &mut assumptions_temp,
-            (ctx.closure_env, ctx.closure_env),
-            &mut matched_pattern,
-        );
-
-        if ctx
-            .arg
-            .fulfill(
-                self.inner.pattern.as_ref_dispatcher(),
-                &mut pattern_check_ctx,
-            )?
-            .is_some()
-            && let Some(param_env) = ParamEnv::from_collector(matched_pattern)?
-        {
-            // 一旦模式匹配成功,就可以用 matched_pattern 来替换 expr 中的模式变量
-            let mut reduce_ctx = ReductionContext::new(
-                self.inner.env(),
-                &param_env,
-                ctx.rec_assumptions,
-                ctx.gc,
-                ctx.roots,
+            // 创建用于模式匹配的类型检查上下文
+            let mut assumptions_temp = smallvec::smallvec![];
+            let mut pattern_check_ctx = TypeCheckContext::new(
+                &mut assumptions_temp,
+                (ctx.closure_env, &empty_closure_env), // 模式自身不应当访问闭包环境
+                &mut matched_pattern,
             );
-            self.inner.expr.clone().reduce(&mut reduce_ctx)
-        } else {
-            if self.inner.fail_branch.is_none() {
-                return Err(TypeError::AssertFailed(
-                    (ctx.arg.clone(), self.inner.pattern.clone()).into(),
-                ));
+
+            if ctx
+                .arg
+                .fulfill(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
+                .is_some()
+                && let Some(param_env) = ParamEnv::from_collector(matched_pattern)?
+            {
+                // 模式匹配成功，构造用于表达式求值的上下文
+                let mut reduce_ctx = ReductionContext::new(
+                    self.env(),
+                    &param_env,
+                    ctx.rec_assumptions,
+                    ctx.gc,
+                    ctx.roots,
+                );
+                return inner.expr.clone().reduce(&mut reduce_ctx);
             }
-            // 模式匹配失败,返回 fail_branch
-            let mut reduce_ctx = ReductionContext::new(
-                ctx.closure_env,
-                ctx.param_env,
-                ctx.rec_assumptions,
-                ctx.gc,
-                ctx.roots,
-            );
-            self.inner
-                .fail_branch
-                .as_ref()
-                .unwrap()
-                .clone()
-                .reduce(&mut reduce_ctx)
         }
+        Err(TypeError::AssertFailed(
+            (self.clone().dispatch(), ctx.arg.clone()).into(),
+        ))
     }
 
     fn is_normal_form(&self) -> bool {
@@ -423,65 +374,59 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
     fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
-        let mut repr = if self.inner.env.0.is_empty() {
-            format!("<{}>", self.inner.pattern.represent(path))
-        } else {
-            format!(
-                "<{}> carry {}",
-                self.inner.pattern.represent(path),
-                self.inner.env.represent(path)
-            )
-        };
-        repr.push_str(" -> ");
-        repr.push_str(&self.inner.expr.represent(path));
-        if let Some(fail_branch) = &self.inner.fail_branch {
-            repr.push_str(" \\ ");
-            repr.push_str(&fail_branch.represent(path));
+        let mut repr = String::from("match");
+        if !self.inner.1.is_empty() {
+            repr.push_str(" capture<");
+            repr.push_str(&self.inner.1.represent(path));
+            repr.push_str(">");
         }
+        for inner in self.inner.0.iter() {
+            repr.push_str(" | ");
+            repr.push_str(&inner.pattern.represent(path));
+            repr.push_str(" => ");
+            repr.push_str(&inner.expr.represent(path));
+        }
+        repr.push_str(" | panic");
         repr
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
-    pub fn new<U, V, W>(
-        pattern_param_size: usize,
-        pattern: U,
-        expr: V,
-        fail_branch: Option<W>,
-        env: ClosureEnv<Type<T>, T>,
-    ) -> Type<T>
+    pub fn new<U, V, W>(branches: Vec<(U, V)>, closure_env: ClosureEnv<Type<T>, T>) -> Type<T>
     where
         U: AsDispatcher<Type<T>, T>,
         V: AsDispatcher<Type<T>, T>,
         W: AsDispatcher<Type<T>, T>,
     {
-        let pattern = pattern.into_dispatcher();
-        let expr = expr.into_dispatcher();
-        let fail_branch = fail_branch.map(|fb| fb.into_dispatcher());
-
-        // 由于闭包的reduce不会去尝试reduce expr,因此is_nf的计算无需考虑expr（它是惰性求值的）
-        let all_nf = env.all_nf()
-            && pattern.is_normal_form()
-            && fail_branch.as_ref().map_or(true, |fb| fb.is_normal_form());
-
-        Self {
-            inner: Arc::new(ClosureInner {
-                env,
-                pattern,
-                pattern_param_size,
-                expr,
-                fail_branch: fail_branch.map(|fb| fb.into_dispatcher()),
-            }),
-            is_nf: all_nf,
-        }
-        .dispatch()
+        let mut is_nf = true;
+        let inner = Arc::from((
+            branches
+                .into_iter()
+                .map(|(pattern, expr)| {
+                    let pattern_ty = pattern.into_dispatcher();
+                    let expr_ty = expr.into_dispatcher();
+                    is_nf &= pattern_ty.is_normal_form();
+                    // expr_ty 是惰性的, 不影响 is_nf
+                    ClosureBranch {
+                        pattern: pattern_ty,
+                        expr: expr_ty,
+                        _pantom: PhantomData,
+                    }
+                })
+                .collect::<Vec<_>>(),
+            {
+                is_nf &= closure_env.all_nf();
+                closure_env
+            },
+        ));
+        Type::Closure(Closure { inner, is_nf })
     }
 
     pub fn env(&self) -> &ClosureEnv<Type<T>, T> {
-        &self.inner.env
+        &self.inner.1
     }
 
-    pub fn expr(&self) -> &Type<T> {
-        &self.inner.expr
+    pub fn branches(&self) -> &Vec<ClosureBranch<Type<T>, T>> {
+        &self.inner.0
     }
 }

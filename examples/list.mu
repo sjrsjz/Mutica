@@ -1,5 +1,5 @@
-let List: any = (T: any) |-> rec list: (() | (T, list));
-let append: any = rec append: (list1: List(int), list2: List(int)) |->
+let List: any = (T: any) -> rec list: (() | (T, list));
+let append: any = rec append: (list1: List(int), list2: List(int)) ->
     match list1
         | () => list2
         | (head: int, tail: any) => (head, append(tail, list2))

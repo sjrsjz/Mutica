@@ -2,7 +2,7 @@
 
 // 普通递归阶乘
 let factorial: any = 
-    rec fact: n: int |->
+    rec fact: n: int ->
         match n
             | 0 => 1
             | 1 => 1
@@ -10,8 +10,8 @@ let factorial: any =
             | panic;
 
 // 尾递归阶乘
-let factorial_tail: any = n: int |-> [
-        let helper: any = rec h: acc: int |-> n: int |->
+let factorial_tail: any = n: int -> [
+        let helper: any = rec h: acc: int -> n: int ->
             match n
                 | 0 => acc
                 | 1 => acc
@@ -22,7 +22,7 @@ let factorial_tail: any = n: int |-> [
 
 // 斐波那契数列
 let fibonacci: any = 
-    rec fib: n: int |->
+    rec fib: n: int ->
         match n
             | 0 => 0
             | 1 => 1
@@ -30,8 +30,8 @@ let fibonacci: any =
             | panic;
 
 // 尾递归斐波那契
-let fibonacci_tail: any = n: int |-> [
-    let helper: any = rec helper: a: int |-> b: int |-> n: int |->
+let fibonacci_tail: any = n: int -> [
+    let helper: any = rec helper: a: int -> b: int -> n: int ->
         match n
             | 0 => a
             | _ => helper(b)(a + b)(n - 1)

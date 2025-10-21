@@ -1,7 +1,7 @@
 let maybe_pkg: any = import "maybe.mu";
-let List: any = T: any |-> rec list: (() | (T, list));
+let List: any = T: any -> rec list: (() | (T, list));
 let Nil: any = ();
-let cons: any = (head: any, tail: any) |-> (head, tail);
+let cons: any = (head: any, tail: any) -> (head, tail);
 let head: any = match
     | (h: any, _) => h
     | panic;
@@ -12,7 +12,7 @@ let is_nil: any = match
     | () => true
     | _ => false
     | panic;
-let iter: any = lst: List(any) |-> f: any |-> {
+let iter: any = lst: List(any) -> f: any -> {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -22,21 +22,21 @@ let iter: any = lst: List(any) |-> f: any |-> {
         }
         | panic
 };
-let map: any = lst: List(any) |-> f: any |-> {
+let map: any = lst: List(any) -> f: any -> {
     loop go: t: any = lst;
     match t
         | () => ()
         | (h: any, t: any) => cons(f(h), go(t))
         | panic
 };
-let len: any = lst: List(any) |-> {
+let len: any = lst: List(any) -> {
     loop go: t: any = lst;
     match t
         | () => 0
         | (_, t: any) => 1 + go(t)
         | panic
 };
-let filter: any = lst: List(any) |-> pred: any |-> {
+let filter: any = lst: List(any) -> pred: any -> {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -45,42 +45,42 @@ let filter: any = lst: List(any) |-> pred: any |-> {
             else go(t)
         | panic
 };
-let fold: any = lst: List(any) |-> acc: any |-> f: any |-> {
+let fold: any = lst: List(any) -> acc: any -> f: any -> {
     loop go: t: any = (lst, acc);
     match t
         | ((), a: any) => a
         | ((h: any, t: any), a: any) => go(t, f(a, h))
         | panic
 };
-let foldr: any = lst: List(any) |-> acc: any |-> f: any |-> {
+let foldr: any = lst: List(any) -> acc: any -> f: any -> {
     loop go: t: any = lst;
     match t
         | () => acc
         | (h: any, t: any) => f(h, go(t))
         | panic
 };
-let append: any = lst1: List(any) |-> lst2: List(any) |-> {
+let append: any = lst1: List(any) -> lst2: List(any) -> {
     loop go: t: any = lst1;
     match t
         | () => lst2
         | (h: any, t: any) => cons(h, go(t))
         | panic
 };
-let reverse: any = lst: List(any) |-> {
+let reverse: any = lst: List(any) -> {
     loop go: t: any = (lst, ());
     match t
         | ((), acc: any) => acc
         | ((h: any, t: any), acc: any) => go(t, cons(h, acc))
         | panic
 };
-let nth: any = lst: List(any) |-> n: int |-> {
+let nth: any = lst: List(any) -> n: int -> {
     loop go: (t: any, i: int) = (lst, n);
     match (t, i)
         | ((h: any, _), 0) => h
         | ((_, t: any), i: int) => go(t, i - 1)
         | panic
 };
-let take: any = lst: List(any) |-> n: int |-> {
+let take: any = lst: List(any) -> n: int -> {
     loop go: (t: any, i: int) = (lst, n);
     match (t, i)
         | ((), _) => ()
@@ -88,7 +88,7 @@ let take: any = lst: List(any) |-> n: int |-> {
         | ((h: any, t: any), i: int) => cons(h, go(t, i - 1))
         | panic
 };
-let drop: any = lst: List(any) |-> n: int |-> {
+let drop: any = lst: List(any) -> n: int -> {
     loop go: (t: any, i: int) = (lst, n);
     match (t, i)
         | ((), _) => ()
@@ -96,7 +96,7 @@ let drop: any = lst: List(any) |-> n: int |-> {
         | ((_, t: any), i: int) => go(t, i - 1)
         | panic
 };
-let find: any = lst: List(any) |-> pred: any |-> {
+let find: any = lst: List(any) -> pred: any -> {
     let go: any = rec go: match
         | () => maybe_pkg.Nothing
         | (h: any, t: any) => if pred(h)
@@ -105,7 +105,7 @@ let find: any = lst: List(any) |-> pred: any |-> {
         | panic;
     go(lst)
 };
-let list_all: any = lst: List(any) |-> pred: any |-> {
+let list_all: any = lst: List(any) -> pred: any -> {
     let go: any = rec go: match
         | () => true
         | (h: any, t: any) => if pred(h)
@@ -114,7 +114,7 @@ let list_all: any = lst: List(any) |-> pred: any |-> {
         | panic;
     go(lst)
 };
-let list_any: any = lst: List(any) |-> pred: any |-> {
+let list_any: any = lst: List(any) -> pred: any -> {
     let go: any = rec go: match
         | () => false
         | (h: any, t: any) => if pred(h)

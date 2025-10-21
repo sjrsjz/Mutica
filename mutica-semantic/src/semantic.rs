@@ -69,16 +69,10 @@ impl<'ast> SourceMapping<'ast> {
                     Self::build_mapping(item, mapping, source_file);
                 }
             }
-            LinearTypeAst::Closure {
-                pattern,
-                body,
-                fail_branch,
-                ..
-            } => {
-                Self::build_mapping(pattern, mapping, source_file);
-                Self::build_mapping(body, mapping, source_file);
-                if let Some(fail_branch) = fail_branch {
-                    Self::build_mapping(fail_branch, mapping, source_file);
+            LinearTypeAst::Match { branches, .. } => {
+                for (pattern, expr) in branches {
+                    Self::build_mapping(pattern, mapping, source_file);
+                    Self::build_mapping(expr, mapping, source_file);
                 }
             }
             LinearTypeAst::Invoke {

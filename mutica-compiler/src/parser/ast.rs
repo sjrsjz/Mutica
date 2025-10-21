@@ -82,13 +82,7 @@ pub enum TypeAst {
         body: Box<WithLocation<TypeAst>>,
     },
     Match {
-        value: Option<Box<WithLocation<TypeAst>>>,
-        match_branch: Vec<(WithLocation<TypeAst>, WithLocation<TypeAst>)>,
-    },
-    Closure {
-        pattern: Box<WithLocation<TypeAst>>,
-        body: Box<WithLocation<TypeAst>>,
-        fail_branch: Option<Box<WithLocation<TypeAst>>>,
+        branches: Vec<(WithLocation<TypeAst>, WithLocation<TypeAst>)>, // pattern, expr
     },
     Apply {
         func: Box<WithLocation<TypeAst>>,
@@ -145,10 +139,8 @@ pub enum BasicTypeAst {
         continuation: Option<Box<WithLocation<BasicTypeAst>>>,
         perform_handler: Option<Box<WithLocation<BasicTypeAst>>>,
     },
-    Closure {
-        pattern: Box<WithLocation<BasicTypeAst>>,
-        body: Box<WithLocation<BasicTypeAst>>,
-        fail_branch: Option<Box<WithLocation<BasicTypeAst>>>,
+    Match {
+        branches: Vec<(WithLocation<BasicTypeAst>, WithLocation<BasicTypeAst>)>, // pattern, expr
     },
     Apply {
         func: Box<WithLocation<BasicTypeAst>>,
@@ -279,15 +271,15 @@ impl<'ast> LinearizeResult<'ast> {
                         None // TCO（尾调用优化）
                     } else {
                         Some(
-                            WithLocation::from(LinearTypeAst::Closure {
-                                pattern: WithLocation::from(LinearTypeAst::Pattern {
-                                    name: tmpvar,
-                                    expr: Box::new(WithLocation::from(LinearTypeAst::Top)),
-                                })
-                                .into(),
+                            WithLocation::from(LinearTypeAst::Match {
                                 auto_captures: HashMap::new(),
-                                body: Box::new(ty),
-                                fail_branch: None,
+                                branches: vec![(
+                                    WithLocation::from(LinearTypeAst::Pattern {
+                                        name: tmpvar,
+                                        expr: Box::new(WithLocation::from(LinearTypeAst::Top)),
+                                    }),
+                                    ty.clone(),
+                                )],
                             })
                             .into(),
                         )
@@ -437,29 +429,38 @@ impl BasicTypeAst {
                 }
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Closure {
-                pattern,
-                body,
-                fail_branch,
-            } => {
+            BasicTypeAst::Match { branches } => {
+                // let mut bindings = Vec::new();
+                // let pattern = pattern.linearize(ctx, pattern.location());
+                // bindings.extend(pattern.bindings.clone());
+                // // fail_branch 是严格独立上下文的，因此直接线性化不参与CPS
+                // let fail_branch = match fail_branch {
+                //     Some(fail_branch) => Some(Box::new(
+                //         fail_branch
+                //             .linearize(ctx, fail_branch.location())
+                //             .finalize(),
+                //     )),
+                //     None => None,
+                // };
+                // let ty = LinearTypeAst::Closure {
+                //     pattern: Box::new(pattern.tail_type().clone()),
+                //     auto_captures: HashMap::new(),
+                //     // body 也是严格独立上下文的，因此直接线性化不参与CPS
+                //     body: Box::new(body.linearize(ctx, body.location()).finalize()),
+                //     fail_branch,
+                // };
+                // LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
+                let mut linearized_branches = Vec::new();
                 let mut bindings = Vec::new();
-                let pattern = pattern.linearize(ctx, pattern.location());
-                bindings.extend(pattern.bindings.clone());
-                // fail_branch 是严格独立上下文的，因此直接线性化不参与CPS
-                let fail_branch = match fail_branch {
-                    Some(fail_branch) => Some(Box::new(
-                        fail_branch
-                            .linearize(ctx, fail_branch.location())
-                            .finalize(),
-                    )),
-                    None => None,
-                };
-                let ty = LinearTypeAst::Closure {
-                    pattern: Box::new(pattern.tail_type().clone()),
+                for (pat, expr) in branches {
+                    let pat = pat.linearize(ctx, pat.location());
+                    bindings.extend(pat.bindings.clone());
+                    let expr = expr.linearize(ctx, expr.location()).finalize(); // expr 是严格独立上下文的，因此直接线性化不参与CPS
+                    linearized_branches.push((pat.tail_type().clone(), expr));
+                }
+                let ty = LinearTypeAst::Match {
                     auto_captures: HashMap::new(),
-                    // body 也是严格独立上下文的，因此直接线性化不参与CPS
-                    body: Box::new(body.linearize(ctx, body.location()).finalize()),
-                    fail_branch,
+                    branches: linearized_branches,
                 };
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
@@ -579,11 +580,12 @@ pub enum LinearTypeAst<'ast> {
     List(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     Generalize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     Specialize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
-    Closure {
-        pattern: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+    Match {
         auto_captures: HashMap<String, WithLocation<()>>,
-        body: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
-        fail_branch: Option<Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
+        branches: Vec<(
+            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+        )>, // pattern, expr
     },
     Invoke {
         func: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
@@ -718,12 +720,11 @@ impl TypeAst {
                     expr = WithLocation::new(
                         BasicTypeAst::Apply {
                             func: Box::new(WithLocation::new(
-                                BasicTypeAst::Closure {
-                                    pattern: Box::new(
+                                BasicTypeAst::Match {
+                                    branches: vec![(
                                         pat.into_basic(multifile_builder, pat.location()),
-                                    ),
-                                    body: Box::new(expr),
-                                    fail_branch: None,
+                                        expr,
+                                    )],
                                 },
                                 pat.location(),
                             )),
@@ -735,84 +736,17 @@ impl TypeAst {
                 }
                 expr
             }
-            TypeAst::Match {
-                value,
-                match_branch,
-            } => {
-                let mut branches = Vec::new();
-                for (pat, expr) in match_branch {
-                    branches.push((
-                        pat.into_basic(multifile_builder, pat.location()),
-                        expr.into_basic(multifile_builder, expr.location()),
-                    ));
-                }
-                // 把match转换为一系列的Apply和Closure
-                let mut expr = None;
-                for (pat, branch_expr) in branches.into_iter().rev() {
-                    expr = Some(Box::new(WithLocation::from(BasicTypeAst::Apply {
-                        func: Box::new(WithLocation::from(BasicTypeAst::Closure {
-                            pattern: Box::new(pat.clone()),
-                            body: branch_expr.into(),
-                            fail_branch: expr,
-                        })),
-                        arg: Box::new(WithLocation::from(BasicTypeAst::Variable(
-                            "match#value".to_string(),
-                        ))),
-                        handler: None,
-                    })));
-                }
-                match value {
-                    Some(value) => WithLocation::new(
-                        BasicTypeAst::Apply {
-                            func: Box::new(WithLocation::new(
-                                BasicTypeAst::Closure {
-                                    pattern: Box::new(WithLocation::new(
-                                        BasicTypeAst::Pattern {
-                                            name: "match#value".to_string(),
-                                            expr: Box::new(WithLocation::new(
-                                                BasicTypeAst::Top,
-                                                loc,
-                                            )),
-                                        },
-                                        loc,
-                                    )),
-                                    body: expr.expect("There should be at least one branch").into(),
-                                    fail_branch: None,
-                                },
-                                loc,
-                            )),
-                            arg: Box::new(value.into_basic(multifile_builder, value.location())),
-                            handler: None,
-                        },
-                        loc,
-                    ),
-                    None => WithLocation::new(
-                        BasicTypeAst::Closure {
-                            pattern: Box::new(WithLocation::new(
-                                BasicTypeAst::Pattern {
-                                    name: "match#value".to_string(),
-                                    expr: Box::new(WithLocation::new(BasicTypeAst::Top, loc)),
-                                },
-                                loc,
-                            )),
-                            body: expr.expect("There should be at least one branch").into(),
-                            fail_branch: None,
-                        },
-                        loc,
-                    ),
-                }
-            }
-            TypeAst::Closure {
-                pattern,
-                body,
-                fail_branch,
-            } => WithLocation::new(
-                BasicTypeAst::Closure {
-                    pattern: Box::new(pattern.into_basic(multifile_builder, pattern.location())),
-                    body: Box::new(body.into_basic(multifile_builder, body.location())),
-                    fail_branch: fail_branch
-                        .as_ref()
-                        .map(|b| Box::new(b.into_basic(multifile_builder, b.location()))),
+            TypeAst::Match { branches } => WithLocation::new(
+                BasicTypeAst::Match {
+                    branches: branches
+                        .into_iter()
+                        .map(|(pat, expr)| {
+                            (
+                                pat.into_basic(multifile_builder, pat.location()),
+                                expr.into_basic(multifile_builder, expr.location()),
+                            )
+                        })
+                        .collect(),
                 },
                 loc,
             ),
@@ -827,92 +761,93 @@ impl TypeAst {
             TypeAst::Eq { left, right } => WithLocation::new(
                 BasicTypeAst::Apply {
                     func: Box::new(WithLocation::new(
-                        BasicTypeAst::Closure {
-                            pattern: Box::new(WithLocation::new(
-                                BasicTypeAst::Tuple(vec![
-                                    WithLocation::new(
-                                        BasicTypeAst::Pattern {
-                                            name: "eq#left".to_string(),
-                                            expr: Box::new(WithLocation::new(
-                                                BasicTypeAst::Top,
-                                                loc,
-                                            )),
-                                        },
-                                        loc,
-                                    ),
-                                    WithLocation::new(
-                                        BasicTypeAst::Pattern {
-                                            name: "eq#right".to_string(),
-                                            expr: Box::new(WithLocation::new(
-                                                BasicTypeAst::Top,
-                                                loc,
-                                            )),
-                                        },
-                                        loc,
-                                    ),
-                                ]),
-                                loc,
-                            )),
-                            body: Box::new(WithLocation::new(
-                                BasicTypeAst::Specialize(vec![
-                                    WithLocation::new(
-                                        BasicTypeAst::Apply {
-                                            func: Box::new(WithLocation::new(
-                                                BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
-                                                loc,
-                                            )),
-                                            arg: Box::new(WithLocation::new(
-                                                BasicTypeAst::Tuple(vec![
-                                                    WithLocation::new(
-                                                        BasicTypeAst::Variable(
-                                                            "eq#left".to_string(),
+                        BasicTypeAst::Match {
+                            branches: vec![(
+                                WithLocation::new(
+                                    BasicTypeAst::Tuple(vec![
+                                        WithLocation::new(
+                                            BasicTypeAst::Pattern {
+                                                name: "eq#left".to_string(),
+                                                expr: Box::new(WithLocation::new(
+                                                    BasicTypeAst::Top,
+                                                    loc,
+                                                )),
+                                            },
+                                            loc,
+                                        ),
+                                        WithLocation::new(
+                                            BasicTypeAst::Pattern {
+                                                name: "eq#right".to_string(),
+                                                expr: Box::new(WithLocation::new(
+                                                    BasicTypeAst::Top,
+                                                    loc,
+                                                )),
+                                            },
+                                            loc,
+                                        ),
+                                    ]),
+                                    loc,
+                                ),
+                                WithLocation::new(
+                                    BasicTypeAst::Specialize(vec![
+                                        WithLocation::new(
+                                            BasicTypeAst::Apply {
+                                                func: Box::new(WithLocation::new(
+                                                    BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
+                                                    loc,
+                                                )),
+                                                arg: Box::new(WithLocation::new(
+                                                    BasicTypeAst::Tuple(vec![
+                                                        WithLocation::new(
+                                                            BasicTypeAst::Variable(
+                                                                "eq#left".to_string(),
+                                                            ),
+                                                            loc,
                                                         ),
-                                                        loc,
-                                                    ),
-                                                    WithLocation::new(
-                                                        BasicTypeAst::Variable(
-                                                            "eq#right".to_string(),
+                                                        WithLocation::new(
+                                                            BasicTypeAst::Variable(
+                                                                "eq#right".to_string(),
+                                                            ),
+                                                            loc,
                                                         ),
-                                                        loc,
-                                                    ),
-                                                ]),
-                                                loc,
-                                            )),
-                                            handler: None,
-                                        },
-                                        loc,
-                                    ),
-                                    WithLocation::new(
-                                        BasicTypeAst::Apply {
-                                            func: Box::new(WithLocation::new(
-                                                BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
-                                                loc,
-                                            )),
-                                            arg: Box::new(WithLocation::new(
-                                                BasicTypeAst::Tuple(vec![
-                                                    WithLocation::new(
-                                                        BasicTypeAst::Variable(
-                                                            "eq#right".to_string(),
+                                                    ]),
+                                                    loc,
+                                                )),
+                                                handler: None,
+                                            },
+                                            loc,
+                                        ),
+                                        WithLocation::new(
+                                            BasicTypeAst::Apply {
+                                                func: Box::new(WithLocation::new(
+                                                    BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
+                                                    loc,
+                                                )),
+                                                arg: Box::new(WithLocation::new(
+                                                    BasicTypeAst::Tuple(vec![
+                                                        WithLocation::new(
+                                                            BasicTypeAst::Variable(
+                                                                "eq#right".to_string(),
+                                                            ),
+                                                            loc,
                                                         ),
-                                                        loc,
-                                                    ),
-                                                    WithLocation::new(
-                                                        BasicTypeAst::Variable(
-                                                            "eq#left".to_string(),
+                                                        WithLocation::new(
+                                                            BasicTypeAst::Variable(
+                                                                "eq#left".to_string(),
+                                                            ),
+                                                            loc,
                                                         ),
-                                                        loc,
-                                                    ),
-                                                ]),
-                                                loc,
-                                            )),
-                                            handler: None,
-                                        },
-                                        loc,
-                                    ),
-                                ]),
-                                loc,
-                            )),
-                            fail_branch: None,
+                                                    ]),
+                                                    loc,
+                                                )),
+                                                handler: None,
+                                            },
+                                            loc,
+                                        ),
+                                    ]),
+                                    loc,
+                                ),
+                            )],
                         },
                         loc,
                     )),
@@ -947,10 +882,17 @@ impl TypeAst {
             TypeAst::Not { value } => WithLocation::new(
                 BasicTypeAst::Apply {
                     func: WithLocation::new(
-                        BasicTypeAst::Closure {
-                            pattern: WithLocation::new(BasicTypeAst::Bottom, loc).into(),
-                            body: WithLocation::new(BasicTypeAst::Top, loc).into(),
-                            fail_branch: Some(WithLocation::new(BasicTypeAst::Bottom, loc).into()),
+                        BasicTypeAst::Match {
+                            branches: vec![
+                                (
+                                    WithLocation::new(BasicTypeAst::Bottom, loc),
+                                    WithLocation::new(BasicTypeAst::Top, loc),
+                                ),
+                                (
+                                    WithLocation::new(BasicTypeAst::Top, loc),
+                                    WithLocation::new(BasicTypeAst::Bottom, loc),
+                                ),
+                            ],
                         },
                         loc,
                     )
@@ -1079,27 +1021,10 @@ impl TypeAst {
                 }
                 body.collect_errors(errors);
             }
-            TypeAst::Match {
-                value,
-                match_branch,
-            } => {
-                if let Some(value) = value {
-                    value.collect_errors(errors);
-                }
-                for (pat, expr) in match_branch {
+            TypeAst::Match { branches } => {
+                for (pat, expr) in branches {
                     pat.collect_errors(errors);
                     expr.collect_errors(errors);
-                }
-            }
-            TypeAst::Closure {
-                pattern,
-                body,
-                fail_branch,
-            } => {
-                pattern.collect_errors(errors);
-                body.collect_errors(errors);
-                if let Some(fail_branch) = fail_branch {
-                    fail_branch.collect_errors(errors);
                 }
             }
             TypeAst::Apply { func, arg } => {
@@ -1187,24 +1112,11 @@ impl TypeAst {
                 binding_types: binding_types.into_iter().map(Self::sanitize).collect(),
                 body: Box::new(Self::sanitize(*body)),
             },
-            TypeAst::Match {
-                value,
-                match_branch,
-            } => TypeAst::Match {
-                value: value.map(|v| Box::new(Self::sanitize(*v))),
-                match_branch: match_branch
+            TypeAst::Match { branches } => TypeAst::Match {
+                branches: branches
                     .into_iter()
                     .map(|(p, e)| (Self::sanitize(p), Self::sanitize(e)))
                     .collect(),
-            },
-            TypeAst::Closure {
-                pattern,
-                body,
-                fail_branch,
-            } => TypeAst::Closure {
-                pattern: Box::new(Self::sanitize(*pattern)),
-                body: Box::new(Self::sanitize(*body)),
-                fail_branch: fail_branch.map(|b| Box::new(Self::sanitize(*b))),
             },
             TypeAst::Apply { func, arg } => TypeAst::Apply {
                 func: Box::new(Self::sanitize(*func)),
@@ -1664,59 +1576,123 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::Closure {
-                pattern,
+            LinearTypeAst::Match {
                 auto_captures,
-                body,
-                fail_branch,
+                branches,
             } => {
-                // 模式允许捕获环境变量，因此传入当前的ctx
-                let mut pattern_errors = Vec::new();
-                ctx.enter_scope();
-                let pattern_res = pattern.flow(ctx, true, pattern.location(), &mut pattern_errors);
-                match ctx.exit_scope() {
-                    Ok(_) => {}
-                    Err(ContextError::EmptyContext) => {
-                        panic!("Internal error: Context should not be empty when exiting a scope");
-                    }
-                    Err(ContextError::NotDeclared(_)) => unreachable!(),
-                    Err(ContextError::NotUsed(v)) => {
-                        pattern_errors.push(WithLocation::new(
-                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
-                            loc,
-                        ));
-                    }
-                }
-                // 将pattern的错误合并到总错误列表
-                errors.extend(pattern_errors);
+                // // 模式允许捕获环境变量，因此传入当前的ctx
+                // let mut pattern_errors = Vec::new();
+                // ctx.enter_scope();
+                // let pattern_res = pattern.flow(ctx, true, pattern.location(), &mut pattern_errors);
+                // match ctx.exit_scope() {
+                //     Ok(_) => {}
+                //     Err(ContextError::EmptyContext) => {
+                //         panic!("Internal error: Context should not be empty when exiting a scope");
+                //     }
+                //     Err(ContextError::NotDeclared(_)) => unreachable!(),
+                //     Err(ContextError::NotUsed(v)) => {
+                //         pattern_errors.push(WithLocation::new(
+                //             ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                //             loc,
+                //         ));
+                //     }
+                // }
+                // // 将pattern的错误合并到总错误列表
+                // errors.extend(pattern_errors);
 
-                ctx.enter_scope();
-                for (var, var_loc) in auto_captures {
-                    match ctx.declare_variable(var.clone(), var_loc.location()) {
+                // ctx.enter_scope();
+                // for (var, var_loc) in auto_captures {
+                //     match ctx.declare_variable(var.clone(), var_loc.location()) {
+                //         Ok(_) => {}
+                //         Err(ContextError::EmptyContext) => {
+                //             panic!(
+                //                 "Internal error: Context should not be empty when declaring a variable"
+                //             );
+                //         }
+                //         Err(ContextError::NotDeclared(_)) => unreachable!(),
+                //         Err(ContextError::NotUsed(v)) => {
+                //             errors.push(WithLocation::new(
+                //                 ParseError::UnusedVariable(
+                //                     WithLocation::new(self.clone(), var_loc.location()),
+                //                     v,
+                //                 ),
+                //                 loc,
+                //             ));
+                //         }
+                //     }
+                // }
+                // for (var, var_loc) in pattern_res.patterns.iter() {
+                //     match ctx.declare_variable(var.clone(), var_loc.location()) {
+                //         Ok(_) => {}
+                //         Err(ContextError::EmptyContext) => {
+                //             panic!(
+                //                 "Internal error: Context should not be empty when declaring a variable"
+                //             );
+                //         }
+                //         Err(ContextError::NotDeclared(_)) => unreachable!(),
+                //         Err(ContextError::NotUsed(v)) => {
+                //             errors.push(WithLocation::new(
+                //                 ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                //                 loc,
+                //             ));
+                //         }
+                //     }
+                // }
+                // let body_res = body.flow(ctx, false, body.location(), errors); // 闭包体不允许出现模式变量
+                // match ctx.exit_scope() {
+                //     Ok(_) => {}
+                //     Err(ContextError::EmptyContext) => {
+                //         panic!("Internal error: Context should not be empty when exiting a scope");
+                //     }
+                //     Err(ContextError::NotDeclared(_)) => unreachable!(),
+                //     Err(ContextError::NotUsed(v)) => {
+                //         errors.push(WithLocation::new(
+                //             ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                //             loc,
+                //         ));
+                //     }
+                // }
+                // let mut body_captures = body_res.captures;
+                // // 移除掉模式变量，因为它们是闭包的参数，不应当被视为捕获的自由变量
+                // for (var, _) in pattern_res.patterns.iter() {
+                //     body_captures.remove(var);
+                // }
+                // let fail_branch = if let Some(fb) = fail_branch {
+                //     let fb_res = fb.flow(ctx, false, fb.location(), errors); // 失败分支不允许出现模式变量
+                //     body_captures.extend(fb_res.captures);
+                //     Some(fb_res.ty)
+                // } else {
+                //     None
+                // };
+                // let mut expr_captures = body_captures.clone(); // 构建闭包表达式本身所需要的捕获变量
+                // expr_captures.extend(pattern_res.captures);
+                // FlowResult::complex(
+                //     WithLocation::new(
+                //         LinearTypeAst::Match {
+                //             pattern: Box::new(pattern_res.ty),
+                //             auto_captures: body_captures.clone(),
+                //             body: Box::new(body_res.ty),
+                //             fail_branch: fail_branch.map(Box::new),
+                //         },
+                //         loc,
+                //     ),
+                //     expr_captures,
+                //     PatternEnv::new(), // 闭包类型本身不应当把模式变量泄露出去
+                // )
+                // .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+
+                let mut new_branches = Vec::new();
+                let mut all_captures = HashMap::new();
+                let mut all_body_captures = HashMap::new();
+                for (pattern, body) in branches {
+                    // 处理模式
+                    ctx.enter_scope();
+                    let pattern_res = pattern.flow(ctx, true, pattern.location(), errors);
+                    match ctx.exit_scope() {
                         Ok(_) => {}
                         Err(ContextError::EmptyContext) => {
                             panic!(
-                                "Internal error: Context should not be empty when declaring a variable"
-                            );
-                        }
-                        Err(ContextError::NotDeclared(_)) => unreachable!(),
-                        Err(ContextError::NotUsed(v)) => {
-                            errors.push(WithLocation::new(
-                                ParseError::UnusedVariable(
-                                    WithLocation::new(self.clone(), var_loc.location()),
-                                    v,
-                                ),
-                                loc,
-                            ));
-                        }
-                    }
-                }
-                for (var, var_loc) in pattern_res.patterns.iter() {
-                    match ctx.declare_variable(var.clone(), var_loc.location()) {
-                        Ok(_) => {}
-                        Err(ContextError::EmptyContext) => {
-                            panic!(
-                                "Internal error: Context should not be empty when declaring a variable"
+                                "Internal error: Context should not be empty when exiting a scope"
                             );
                         }
                         Err(ContextError::NotDeclared(_)) => unreachable!(),
@@ -1727,49 +1703,87 @@ impl<'ast> LinearTypeAst<'ast> {
                             ));
                         }
                     }
-                }
-                let body_res = body.flow(ctx, false, body.location(), errors); // 闭包体不允许出现模式变量
-                match ctx.exit_scope() {
-                    Ok(_) => {}
-                    Err(ContextError::EmptyContext) => {
-                        panic!("Internal error: Context should not be empty when exiting a scope");
+
+                    // 处理分支体
+                    ctx.enter_scope();
+                    for (var, var_loc) in auto_captures {
+                        match ctx.declare_variable(var.clone(), var_loc.location()) {
+                            Ok(_) => {}
+                            Err(ContextError::EmptyContext) => {
+                                panic!(
+                                    "Internal error: Context should not be empty when declaring a variable"
+                                );
+                            }
+                            Err(ContextError::NotDeclared(_)) => unreachable!(),
+                            Err(ContextError::NotUsed(v)) => {
+                                errors.push(WithLocation::new(
+                                    ParseError::UnusedVariable(
+                                        WithLocation::new(self.clone(), var_loc.location()),
+                                        v,
+                                    ),
+                                    loc,
+                                ));
+                            }
+                        }
                     }
-                    Err(ContextError::NotDeclared(_)) => unreachable!(),
-                    Err(ContextError::NotUsed(v)) => {
-                        errors.push(WithLocation::new(
-                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
-                            loc,
-                        ));
+                    for (var, var_loc) in pattern_res.patterns.iter() {
+                        match ctx.declare_variable(var.clone(), var_loc.location()) {
+                            Ok(_) => {}
+                            Err(ContextError::EmptyContext) => {
+                                panic!(
+                                    "Internal error: Context should not be empty when declaring a variable"
+                                );
+                            }
+                            Err(ContextError::NotDeclared(_)) => unreachable!(),
+                            Err(ContextError::NotUsed(v)) => {
+                                errors.push(WithLocation::new(
+                                    ParseError::UnusedVariable(
+                                        WithLocation::new(self.clone(), loc),
+                                        v,
+                                    ),
+                                    loc,
+                                ));
+                            }
+                        }
                     }
+                    let body_res = body.flow(ctx, false, body.location(), errors); // 分支体不允许出现模式变量
+                    match ctx.exit_scope() {
+                        Ok(_) => {}
+                        Err(ContextError::EmptyContext) => {
+                            panic!(
+                                "Internal error: Context should not be empty when exiting a scope"
+                            );
+                        }
+                        Err(ContextError::NotDeclared(_)) => unreachable!(),
+                        Err(ContextError::NotUsed(v)) => {
+                            errors.push(WithLocation::new(
+                                ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                                loc,
+                            ));
+                        }
+                    }
+                    let mut body_captures = body_res.captures;
+                    // 移除掉模式变量，因为它们是分支的参数，不应当被视为捕获的自由变量
+                    for (var, _) in pattern_res.patterns.iter() {
+                        body_captures.remove(var);
+                    }
+
+                    new_branches.push((pattern_res.ty, body_res.ty));
+                    all_captures.extend(pattern_res.captures);
+                    all_captures.extend(body_captures.clone());
+                    all_body_captures.extend(body_captures);
                 }
-                let mut body_captures = body_res.captures;
-                // 移除掉模式变量，因为它们是闭包的参数，不应当被视为捕获的自由变量
-                for (var, _) in pattern_res.patterns.iter() {
-                    body_captures.remove(var);
-                }
-                let fail_branch = if let Some(fb) = fail_branch {
-                    let fb_res = fb.flow(ctx, false, fb.location(), errors); // 失败分支不允许出现模式变量
-                    body_captures.extend(fb_res.captures);
-                    Some(fb_res.ty)
-                } else {
-                    None
-                };
-                let mut expr_captures = body_captures.clone(); // 构建闭包表达式本身所需要的捕获变量
-                expr_captures.extend(pattern_res.captures);
                 FlowResult::complex(
                     WithLocation::new(
-                        LinearTypeAst::Closure {
-                            pattern: Box::new(pattern_res.ty),
-                            auto_captures: body_captures.clone(),
-                            body: Box::new(body_res.ty),
-                            fail_branch: fail_branch.map(Box::new),
+                        LinearTypeAst::Match {
+                            auto_captures: all_body_captures,
+                            branches: new_branches,
                         },
                         loc,
                     ),
-                    expr_captures,
-                    PatternEnv::new(), // 闭包类型本身不应当把模式变量泄露出去
+                    all_captures,
+                    PatternEnv::new(), // match类型本身不应当把模式变量泄露出去
                 )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Literal(inner) => {
                 let inner_res = inner.flow(ctx, pattern_mode, inner.location(), errors);
@@ -2001,11 +2015,9 @@ impl<'ast> LinearTypeAst<'ast> {
                     patterns,
                 ))
             }
-            LinearTypeAst::Closure {
-                pattern,
+            LinearTypeAst::Match {
                 auto_captures,
-                body,
-                fail_branch,
+                branches,
             } => {
                 let auto_captures = auto_captures
                     .iter()
@@ -2027,57 +2039,96 @@ impl<'ast> LinearTypeAst<'ast> {
                 }
                 let closure_env = ClosureEnv::new(closure_env);
 
-                let pattern_type: BuildResult<T> = pattern.to_type(
-                    ctx,
-                    &mut PatternCounter::new(), // 进入模式定义，重新计数
-                    true,
-                    gc,
-                    roots,
-                    pattern.location(),
-                )?; // 模式现在允许捕获环境变量
+                // let pattern_type: BuildResult<T> = pattern.to_type(
+                //     ctx,
+                //     &mut PatternCounter::new(), // 进入模式定义，重新计数
+                //     true,
+                //     gc,
+                //     roots,
+                //     pattern.location(),
+                // )?; // 模式现在允许捕获环境变量
 
-                ctx.enter_layer();
-                for (var, var_loc) in auto_captures {
-                    if ctx.current_layer_mut().push_captured(var.clone()).is_none() {
-                        return Err(Err(ParseError::RedeclaredCaptureValue(
-                            WithLocation::new(self.clone(), loc),
-                            var_loc.map(|_| var),
-                        )));
-                    }
-                }
-                // 把模式变量加入到当前作用域
-                // 我们仅仅按照顺序加入模式变量，如果有重名的模式变量，直接跳过即可
-                for var in pattern_type.patterns.iter() {
-                    let _ = ctx.current_layer_mut().push_pattern(var.value().clone());
-                }
-                let body_type = body.to_type(
-                    ctx,
-                    &mut PatternCounter::new(), // 进入闭包体，闭包体不允许出现模式变量，安全起见传入一个新的计数器
-                    false,
-                    gc,
-                    roots,
-                    body.location(),
-                )?;
-                ctx.exit_layer();
-                let fail_branch_type = if let Some(fb) = fail_branch {
-                    Some(fb.to_type(
+                // ctx.enter_layer();
+                // for (var, var_loc) in auto_captures {
+                //     if ctx.current_layer_mut().push_captured(var.clone()).is_none() {
+                //         return Err(Err(ParseError::RedeclaredCaptureValue(
+                //             WithLocation::new(self.clone(), loc),
+                //             var_loc.map(|_| var),
+                //         )));
+                //     }
+                // }
+                // // 把模式变量加入到当前作用域
+                // // 我们仅仅按照顺序加入模式变量，如果有重名的模式变量，直接跳过即可
+                // for var in pattern_type.patterns.iter() {
+                //     let _ = ctx.current_layer_mut().push_pattern(var.value().clone());
+                // }
+                // let body_type = body.to_type(
+                //     ctx,
+                //     &mut PatternCounter::new(), // 进入闭包体，闭包体不允许出现模式变量，安全起见传入一个新的计数器
+                //     false,
+                //     gc,
+                //     roots,
+                //     body.location(),
+                // )?;
+                // ctx.exit_layer();
+                // let fail_branch_type = if let Some(fb) = fail_branch {
+                //     Some(fb.to_type(
+                //         ctx,
+                //         &mut PatternCounter::new(), // 进入失败分支，失败分支不允许出现模式变量，安全起见传入一个新的计数器
+                //         false,
+                //         gc,
+                //         roots,
+                //         fb.location(),
+                //     )?)
+                // } else {
+                //     None
+                // };
+                // Ok(BuildResult::simple(Closure::new(
+                //     pattern_type.patterns.len(),
+                //     pattern_type.ty,
+                //     body_type.ty,
+                //     fail_branch_type.map(|fbt| fbt.ty),
+                //     closure_env,
+                // )))
+                let mut new_branches = Vec::new();
+                for (pattern, body) in branches {
+                    let pattern_type: BuildResult<T> = pattern.to_type(
                         ctx,
-                        &mut PatternCounter::new(), // 进入失败分支，失败分支不允许出现模式变量，安全起见传入一个新的计数器
+                        &mut PatternCounter::new(), // 进入模式定义，重新计数
+                        true,
+                        gc,
+                        roots,
+                        pattern.location(),
+                    )?; // 模式现在允许捕获环境变量
+
+                    ctx.enter_layer();
+                    for (var, var_loc) in &auto_captures {
+                        if ctx.current_layer_mut().push_captured(var.clone()).is_none() {
+                            return Err(Err(ParseError::RedeclaredCaptureValue(
+                                WithLocation::new(self.clone(), loc),
+                                var_loc.clone().map(|_| var.clone()),
+                            )));
+                        }
+                    }
+                    // 把模式变量加入到当前作用域
+                    // 我们仅仅按照顺序加入模式变量，如果有重名的模式变量，直接跳过即可
+                    for var in pattern_type.patterns.iter() {
+                        let _ = ctx.current_layer_mut().push_pattern(var.value().clone());
+                    }
+                    let body_type = body.to_type(
+                        ctx,
+                        &mut PatternCounter::new(), // 进入闭包体，闭包体不允许出现模式变量，安全起见传入一个新的计数器
                         false,
                         gc,
                         roots,
-                        fb.location(),
-                    )?)
-                } else {
-                    None
-                };
-                Ok(BuildResult::simple(Closure::new(
-                    pattern_type.patterns.len(),
-                    pattern_type.ty,
-                    body_type.ty,
-                    fail_branch_type.map(|fbt| fbt.ty),
-                    closure_env,
-                )))
+                        body.location(),
+                    )?;
+                    ctx.exit_layer();
+                    new_branches.push((pattern_type.ty, body_type.ty));
+                }
+                Ok(BuildResult::simple(
+                    Closure::new::<Type<T>, Type<T>, Type<T>>(new_branches, closure_env),
+                ))
             }
             LinearTypeAst::AtomicOpcode(atomic_opcode) => {
                 Ok(BuildResult::simple(Opcode::new(match atomic_opcode {
