@@ -5,7 +5,7 @@ use std::{io::Write, sync::Arc};
 use arc_gc::gc::GC;
 
 use crate::{
-    scheduler::stack::Stack,
+    scheduler::stack::{Stack, StackView},
     types::{
         CoinductiveType, GcAllocObject, InvokeContext, ReductionContext, Representable, Type,
         TypeError, TypeRef,
@@ -120,6 +120,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 }
                 "perform" => Err(TypeError::Perform(arg.clone().into())),
                 "break" => Err(TypeError::Break(arg.clone().into())),
+                "resume" => Err(TypeError::Resume(arg.clone().into())),
                 _ => Ok(None),
             }
         })?
@@ -159,7 +160,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         Ok(v) => v,
                         Err(TypeError::Perform(v)) => {
                             let (perform_handler, index) =
-                                match find_last_perform_handler(&self.cont_stack) {
+                                match find_last_perform_handler(self.cont_stack.view()) {
                                     Some(handler) => handler,
                                     None => {
                                         return Err(TypeError::MissingPerformHandler(Box::new(
@@ -167,37 +168,107 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                         )));
                                     }
                                 };
-                            let perform_invoke = Invoke::new(
-                                perform_handler,
-                                *v,
-                                invoke.continuation(),
-                                invoke.perform_handler(),
-                            );
+                            let perform_invoke =
+                                Invoke::new(perform_handler, *v, None::<Type<T>>, None::<Type<T>>);
+                            match invoke.continuation_style() {
+                                InvokeCountinuationStyle::TailCall => (),
+                                InvokeCountinuationStyle::CPS(v) => self
+                                    .cont_stack
+                                    .push(ContinuationOrHandler::Continuation(v.clone())),
+                                InvokeCountinuationStyle::HPS(v) => {
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::PerformHandler(v.clone()));
+                                }
+                                InvokeCountinuationStyle::CHPS(a, b) => {
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::Continuation(a.clone()));
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::PerformHandler(b.clone()));
+                                }
+                            }
                             self.cont_stack.fork(index); // 踢掉perform handler及其上面的frame
                             return Ok((perform_invoke, true));
                         }
                         Err(TypeError::Break(v)) => {
-                            let (_, cont) =
-                                match shrink_to_last_perform_handler(&mut self.cont_stack) {
-                                    Some(cont) => cont,
+                            // 找到最近的Perform Handler并删除它以及其上面的所有continuation
+                            loop {
+                                match self.cont_stack.pop_and_auto_defork() {
+                                    Some(ContinuationOrHandler::Continuation(_)) => continue,
+                                    Some(ContinuationOrHandler::PerformHandler(_)) => break,
                                     None => {
-                                        return Err(TypeError::MissingContinuation(Box::new(
+                                        return Err(TypeError::MissingPerformHandler(Box::new(
                                             invoke.arg().clone(),
                                         )));
                                     }
-                                };
-                            if cont.is_none() {
-                                return Err(TypeError::MissingContinuation(Box::new(
-                                    invoke.arg().clone(),
-                                )));
+                                }
                             }
-                            let break_invoke = Invoke::new(
-                                cont.unwrap(),
-                                *v,
-                                invoke.continuation(),
-                                invoke.perform_handler(),
-                            );
+                            // 然后找到最近的Continuation
+                            let continuation = loop {
+                                match self.cont_stack.pop_and_auto_defork() {
+                                    Some(ContinuationOrHandler::Continuation(v)) => break Some(v),
+                                    Some(ContinuationOrHandler::PerformHandler(_)) => continue,
+                                    None => break None,
+                                }
+                            };
+                            match invoke.continuation_style() {
+                                InvokeCountinuationStyle::TailCall => (),
+                                InvokeCountinuationStyle::CPS(v) => self
+                                    .cont_stack
+                                    .push(ContinuationOrHandler::Continuation(v.clone())),
+                                InvokeCountinuationStyle::HPS(v) => {
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::PerformHandler(v.clone()));
+                                }
+                                InvokeCountinuationStyle::CHPS(a, b) => {
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::Continuation(a.clone()));
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::PerformHandler(b.clone()));
+                                }
+                            }
+                            let break_invoke = match continuation {
+                                Some(continuation) => {
+                                    Invoke::new(continuation, *v, None::<Type<T>>, None::<Type<T>>)
+                                }
+                                None => *v,
+                            };
                             return Ok((break_invoke, true));
+                        }
+                        Err(TypeError::Resume(v)) => {
+                            let continuation = match self.cont_stack.skip_frames(1) {
+                                Some(stack_view) => {
+                                    find_last_continuation(stack_view).map(|(v, _)| v.clone())
+                                }
+                                None => {
+                                    return Err(TypeError::MissingContinuation(Box::new(
+                                        invoke.arg().clone(),
+                                    )));
+                                }
+                            };
+
+                            match invoke.continuation_style() {
+                                InvokeCountinuationStyle::TailCall => (),
+                                InvokeCountinuationStyle::CPS(v) => self
+                                    .cont_stack
+                                    .push(ContinuationOrHandler::Continuation(v.clone())),
+                                InvokeCountinuationStyle::HPS(v) => {
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::PerformHandler(v.clone()));
+                                }
+                                InvokeCountinuationStyle::CHPS(a, b) => {
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::Continuation(a.clone()));
+                                    self.cont_stack
+                                        .push(ContinuationOrHandler::PerformHandler(b.clone()));
+                                }
+                            }
+                            let resume_invoke = match continuation {
+                                Some(continuation) => {
+                                    Invoke::new(continuation, *v, None::<Type<T>>, None::<Type<T>>)
+                                }
+                                None => *v,
+                            };
+                            return Ok((resume_invoke, true));
                         }
                         Err(e) => return Err(e),
                     };
@@ -266,6 +337,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         //     }
         // }
         // println!("\n");
+        // println!("Stack length: {}", self.cont_stack.len());
         Ok(updated)
     }
 
@@ -289,11 +361,25 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 }
 
 pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
-    cont_stack: &'a Stack<ContinuationOrHandler<T>>,
+    cont_stack: StackView<'a, ContinuationOrHandler<T>>,
 ) -> Option<(&'a Type<T>, usize)> {
     for (index, cont) in cont_stack.iter().rev().enumerate() {
         match cont {
             ContinuationOrHandler::PerformHandler(v) => {
+                return Some((v, cont_stack.len() - 1 - index));
+            }
+            _ => continue,
+        }
+    }
+    None
+}
+
+pub fn find_last_continuation<'a, T: GcAllocObject<T, Inner = Type<T>>>(
+    cont_stack: StackView<'a, ContinuationOrHandler<T>>,
+) -> Option<(&'a Type<T>, usize)> {
+    for (index, cont) in cont_stack.iter().rev().enumerate() {
+        match cont {
+            ContinuationOrHandler::Continuation(v) => {
                 return Some((v, cont_stack.len() - 1 - index));
             }
             _ => continue,

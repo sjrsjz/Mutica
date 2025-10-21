@@ -304,6 +304,7 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     OtherError(String),
     Perform(Box<U>),
     Break(Box<U>),
+    Resume(Box<U>),
     #[doc(hidden)]
     Pandom(std::marker::PhantomData<V>),
 }
@@ -334,6 +335,7 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
             TypeError::Perform(ty) => write!(f, "Perform raised: {:?}", ty),
             TypeError::Break(ty) => write!(f, "Break raised: {:?}", ty),
+            TypeError::Resume(ty) => write!(f, "Resume raised: {:?}", ty),
             TypeError::OtherError(msg) => write!(f, "Other error: {}", msg),
             TypeError::Pandom(_) => write!(f, "Pandom error (hidden)"),
         }

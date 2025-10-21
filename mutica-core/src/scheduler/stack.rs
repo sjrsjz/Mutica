@@ -120,6 +120,20 @@ impl<T> Stack<T> {
     pub fn frames(&self) -> &[(usize, usize)] {
         &self.frames
     }
+
+    pub fn skip_frames<'a>(&'a self, n: usize) -> Option<StackView<'a, T>> {
+        if n >= self.frames.len() {
+            return None;
+        }
+        Some(StackView::new(
+            &self.stack,
+            &self.frames[..(self.frames.len() - n)],
+        ))
+    }
+
+    pub fn view(&self) -> StackView<'_, T> {
+        StackView::new(&self.stack, &self.frames)
+    }
 }
 
 impl<T> Index<usize> for Stack<T> {
@@ -131,7 +145,7 @@ impl<T> Index<usize> for Stack<T> {
 }
 
 pub struct StackIter<'a, T> {
-    stack: &'a Stack<T>,
+    stack: StackView<'a, T>,
     front_index: usize, // 从头开始的索引
     back_index: usize,  // 从尾开始的索引
 }
@@ -171,7 +185,60 @@ impl<T> Stack<T> {
     pub fn iter(&self) -> StackIter<'_, T> {
         let len = self.len();
         StackIter {
-            stack: self,
+            stack: StackView::new(&self.stack, &self.frames),
+            front_index: 0,
+            back_index: len,
+        }
+    }
+}
+
+pub struct StackView<'a, T> {
+    stack: &'a [T],
+    frames: &'a [(usize, usize)],
+}
+
+impl<'a, T> Clone for StackView<'a, T> {
+    fn clone(&self) -> Self {
+        Self {
+            stack: self.stack,
+            frames: self.frames,
+        }
+    }
+}
+
+impl<'a, T> StackView<'a, T> {
+    pub fn new(stack: &'a [T], frames: &'a [(usize, usize)]) -> Self {
+        Self { stack, frames }
+    }
+
+    pub fn get(&self, index: usize) -> Option<&'a T> {
+        Stack::<T>::__get(self.frames, index).and_then(|real_index| self.stack.get(real_index))
+    }
+}
+
+impl<'a, T> Index<usize> for StackView<'a, T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).expect("Index out of bounds")
+    }
+}
+
+impl<'a, T> StackView<'a, T> {
+    pub fn len(&self) -> usize {
+        if let Some((base, added)) = self.frames.last() {
+            base + added
+        } else {
+            0
+        }
+    }
+}
+
+impl<'a, T> StackView<'a, T> {
+    pub fn iter(&self) -> StackIter<'a, T> {
+        let len = self.len();
+        StackIter {
+            stack: self.clone(),
             front_index: 0,
             back_index: len,
         }
