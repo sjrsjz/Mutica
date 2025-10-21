@@ -13,19 +13,23 @@ use crate::{
 
 pub enum InvokeCountinuationStyle<T: GcAllocObject<T, Inner = Type<T>>> {
     TailCall,
-    CPS(Type<T>),           // 指定普通续体
-    HPS(Type<T>),           // 指定Perform续体Handler
-    CHPS(Type<T>, Type<T>), // 指定Perform续体和普通续体
+    WithContinuation(Type<T>),   // 指定普通续体
+    WithPerformHandler(Type<T>), // 指定Perform续体Handler
+    WithBoth(Type<T>, Type<T>),  // 指定Perform续体和普通续体
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for InvokeCountinuationStyle<T> {
     fn clone(&self) -> Self {
         match self {
             InvokeCountinuationStyle::TailCall => InvokeCountinuationStyle::TailCall,
-            InvokeCountinuationStyle::CPS(cont) => InvokeCountinuationStyle::CPS(cont.clone()),
-            InvokeCountinuationStyle::HPS(cont) => InvokeCountinuationStyle::HPS(cont.clone()),
-            InvokeCountinuationStyle::CHPS(cont1, cont2) => {
-                InvokeCountinuationStyle::CHPS(cont1.clone(), cont2.clone())
+            InvokeCountinuationStyle::WithContinuation(cont) => {
+                InvokeCountinuationStyle::WithContinuation(cont.clone())
+            }
+            InvokeCountinuationStyle::WithPerformHandler(cont) => {
+                InvokeCountinuationStyle::WithPerformHandler(cont.clone())
+            }
+            InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
+                InvokeCountinuationStyle::WithBoth(cont1.clone(), cont2.clone())
             }
         }
     }
@@ -54,10 +58,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Invoke<T> {
         self.inner.1.collect(queue);
         match self.inner.2 {
             InvokeCountinuationStyle::TailCall => {}
-            InvokeCountinuationStyle::CPS(ref cont) | InvokeCountinuationStyle::HPS(ref cont) => {
+            InvokeCountinuationStyle::WithContinuation(ref cont)
+            | InvokeCountinuationStyle::WithPerformHandler(ref cont) => {
                 cont.collect(queue);
             }
-            InvokeCountinuationStyle::CHPS(ref cont1, ref cont2) => {
+            InvokeCountinuationStyle::WithBoth(ref cont1, ref cont2) => {
                 cont1.collect(queue);
                 cont2.collect(queue);
             }
@@ -75,10 +80,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Invoke<T> {
         self.inner.1.upgrade(collected);
         match self.inner.2 {
             InvokeCountinuationStyle::TailCall => {}
-            InvokeCountinuationStyle::CPS(ref cont) | InvokeCountinuationStyle::HPS(ref cont) => {
+            InvokeCountinuationStyle::WithContinuation(ref cont)
+            | InvokeCountinuationStyle::WithPerformHandler(ref cont) => {
                 cont.upgrade(collected);
             }
-            InvokeCountinuationStyle::CHPS(ref cont1, ref cont2) => {
+            InvokeCountinuationStyle::WithBoth(ref cont1, ref cont2) => {
                 cont1.upgrade(collected);
                 cont2.upgrade(collected);
             }
@@ -138,15 +144,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                             InvokeCountinuationStyle::TailCall,
                             InvokeCountinuationStyle::TailCall,
                         ) => Some(()),
-                        (InvokeCountinuationStyle::CPS(c1), InvokeCountinuationStyle::CPS(c2)) => {
-                            c1.fulfill(c2.as_ref_dispatcher(), &mut inner_ctx)?
-                        }
-                        (InvokeCountinuationStyle::HPS(c1), InvokeCountinuationStyle::HPS(c2)) => {
-                            c1.fulfill(c2.as_ref_dispatcher(), &mut inner_ctx)?
-                        }
                         (
-                            InvokeCountinuationStyle::CHPS(c1a, c1b),
-                            InvokeCountinuationStyle::CHPS(c2a, c2b),
+                            InvokeCountinuationStyle::WithContinuation(c1),
+                            InvokeCountinuationStyle::WithContinuation(c2),
+                        ) => c1.fulfill(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                        (
+                            InvokeCountinuationStyle::WithPerformHandler(c1),
+                            InvokeCountinuationStyle::WithPerformHandler(c2),
+                        ) => c1.fulfill(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                        (
+                            InvokeCountinuationStyle::WithBoth(c1a, c1b),
+                            InvokeCountinuationStyle::WithBoth(c2a, c2b),
                         ) => {
                             let res_a = c1a.fulfill(c2a.as_ref_dispatcher(), &mut inner_ctx)?;
                             if res_a.is_none() {
@@ -204,10 +212,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
         let arg_repr = self.inner.1.represent(path);
         let cont_repr = match &self.inner.2 {
             InvokeCountinuationStyle::TailCall => "tail".to_string(),
-            InvokeCountinuationStyle::CPS(cont) => format!("cps({})", cont.represent(path)),
-            InvokeCountinuationStyle::HPS(cont) => format!("rps({})", cont.represent(path)),
-            InvokeCountinuationStyle::CHPS(cont1, cont2) => {
-                format!("crps({}, {})", cont1.represent(path), cont2.represent(path))
+            InvokeCountinuationStyle::WithContinuation(cont) => {
+                format!("cps({})", cont.represent(path))
+            }
+            InvokeCountinuationStyle::WithPerformHandler(cont) => {
+                format!("hps({})", cont.represent(path))
+            }
+            InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
+                format!("chps({}, {})", cont1.represent(path), cont2.represent(path))
             }
         };
         format!(
@@ -241,9 +253,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
 
         let continuation_style = match (continuation, raise_continuation) {
             (None, None) => InvokeCountinuationStyle::TailCall,
-            (Some(cont), None) => InvokeCountinuationStyle::CPS(cont),
-            (None, Some(cont)) => InvokeCountinuationStyle::HPS(cont),
-            (Some(cont1), Some(cont2)) => InvokeCountinuationStyle::CHPS(cont1, cont2),
+            (Some(cont), None) => InvokeCountinuationStyle::WithContinuation(cont),
+            (None, Some(cont)) => InvokeCountinuationStyle::WithPerformHandler(cont),
+            (Some(cont1), Some(cont2)) => InvokeCountinuationStyle::WithBoth(cont1, cont2),
         };
 
         let inner = Arc::new((func, arg, continuation_style));
@@ -264,17 +276,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
 
     pub fn continuation(&self) -> Option<&Type<T>> {
         match &self.inner.2 {
-            InvokeCountinuationStyle::TailCall => None,
-            InvokeCountinuationStyle::CPS(cont) | InvokeCountinuationStyle::HPS(cont) => Some(cont),
-            InvokeCountinuationStyle::CHPS(cont1, _) => Some(cont1),
+            InvokeCountinuationStyle::TailCall
+            | InvokeCountinuationStyle::WithPerformHandler(_) => None,
+            InvokeCountinuationStyle::WithBoth(cont, _)
+            | InvokeCountinuationStyle::WithContinuation(cont) => Some(cont),
         }
     }
 
     pub fn perform_handler(&self) -> Option<&Type<T>> {
         match &self.inner.2 {
-            InvokeCountinuationStyle::TailCall => None,
-            InvokeCountinuationStyle::CPS(_) | InvokeCountinuationStyle::HPS(_) => None,
-            InvokeCountinuationStyle::CHPS(_, cont2) => Some(cont2),
+            InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::WithContinuation(_) => {
+                None
+            }
+            InvokeCountinuationStyle::WithBoth(_, cont)
+            | InvokeCountinuationStyle::WithPerformHandler(cont) => Some(cont),
         }
     }
 

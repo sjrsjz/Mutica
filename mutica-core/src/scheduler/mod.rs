@@ -172,14 +172,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 Invoke::new(perform_handler, *v, None::<Type<T>>, None::<Type<T>>);
                             match invoke.continuation_style() {
                                 InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::CPS(v) => self
+                                InvokeCountinuationStyle::WithContinuation(v) => self
                                     .cont_stack
                                     .push(ContinuationOrHandler::Continuation(v.clone())),
-                                InvokeCountinuationStyle::HPS(v) => {
+                                InvokeCountinuationStyle::WithPerformHandler(v) => {
                                     self.cont_stack
                                         .push(ContinuationOrHandler::PerformHandler(v.clone()));
                                 }
-                                InvokeCountinuationStyle::CHPS(a, b) => {
+                                InvokeCountinuationStyle::WithBoth(a, b) => {
                                     self.cont_stack
                                         .push(ContinuationOrHandler::Continuation(a.clone()));
                                     self.cont_stack
@@ -212,14 +212,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             };
                             match invoke.continuation_style() {
                                 InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::CPS(v) => self
+                                InvokeCountinuationStyle::WithContinuation(v) => self
                                     .cont_stack
                                     .push(ContinuationOrHandler::Continuation(v.clone())),
-                                InvokeCountinuationStyle::HPS(v) => {
+                                InvokeCountinuationStyle::WithPerformHandler(v) => {
                                     self.cont_stack
                                         .push(ContinuationOrHandler::PerformHandler(v.clone()));
                                 }
-                                InvokeCountinuationStyle::CHPS(a, b) => {
+                                InvokeCountinuationStyle::WithBoth(a, b) => {
                                     self.cont_stack
                                         .push(ContinuationOrHandler::Continuation(a.clone()));
                                     self.cont_stack
@@ -237,14 +237,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         Err(TypeError::Resume(v)) => {
                             match invoke.continuation_style() {
                                 InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::CPS(v) => self
+                                InvokeCountinuationStyle::WithContinuation(v) => self
                                     .cont_stack
                                     .push(ContinuationOrHandler::Continuation(v.clone())),
-                                InvokeCountinuationStyle::HPS(v) => {
+                                InvokeCountinuationStyle::WithPerformHandler(v) => {
                                     self.cont_stack
                                         .push(ContinuationOrHandler::PerformHandler(v.clone()));
                                 }
-                                InvokeCountinuationStyle::CHPS(a, b) => {
+                                InvokeCountinuationStyle::WithBoth(a, b) => {
                                     self.cont_stack
                                         .push(ContinuationOrHandler::Continuation(a.clone()));
                                     self.cont_stack
@@ -279,14 +279,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 
                     match invoke.continuation_style() {
                         InvokeCountinuationStyle::TailCall => (),
-                        InvokeCountinuationStyle::CPS(v) => self
+                        InvokeCountinuationStyle::WithContinuation(v) => self
                             .cont_stack
                             .push(ContinuationOrHandler::Continuation(v.clone())),
-                        InvokeCountinuationStyle::HPS(v) => {
+                        InvokeCountinuationStyle::WithPerformHandler(v) => {
                             self.cont_stack
                                 .push(ContinuationOrHandler::PerformHandler(v.clone()));
                         }
-                        InvokeCountinuationStyle::CHPS(a, b) => {
+                        InvokeCountinuationStyle::WithBoth(a, b) => {
                             self.cont_stack
                                 .push(ContinuationOrHandler::Continuation(a.clone()));
                             self.cont_stack

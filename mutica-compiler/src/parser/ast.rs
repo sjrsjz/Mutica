@@ -1580,107 +1580,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 auto_captures,
                 branches,
             } => {
-                // // 模式允许捕获环境变量，因此传入当前的ctx
-                // let mut pattern_errors = Vec::new();
-                // ctx.enter_scope();
-                // let pattern_res = pattern.flow(ctx, true, pattern.location(), &mut pattern_errors);
-                // match ctx.exit_scope() {
-                //     Ok(_) => {}
-                //     Err(ContextError::EmptyContext) => {
-                //         panic!("Internal error: Context should not be empty when exiting a scope");
-                //     }
-                //     Err(ContextError::NotDeclared(_)) => unreachable!(),
-                //     Err(ContextError::NotUsed(v)) => {
-                //         pattern_errors.push(WithLocation::new(
-                //             ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
-                //             loc,
-                //         ));
-                //     }
-                // }
-                // // 将pattern的错误合并到总错误列表
-                // errors.extend(pattern_errors);
-
-                // ctx.enter_scope();
-                // for (var, var_loc) in auto_captures {
-                //     match ctx.declare_variable(var.clone(), var_loc.location()) {
-                //         Ok(_) => {}
-                //         Err(ContextError::EmptyContext) => {
-                //             panic!(
-                //                 "Internal error: Context should not be empty when declaring a variable"
-                //             );
-                //         }
-                //         Err(ContextError::NotDeclared(_)) => unreachable!(),
-                //         Err(ContextError::NotUsed(v)) => {
-                //             errors.push(WithLocation::new(
-                //                 ParseError::UnusedVariable(
-                //                     WithLocation::new(self.clone(), var_loc.location()),
-                //                     v,
-                //                 ),
-                //                 loc,
-                //             ));
-                //         }
-                //     }
-                // }
-                // for (var, var_loc) in pattern_res.patterns.iter() {
-                //     match ctx.declare_variable(var.clone(), var_loc.location()) {
-                //         Ok(_) => {}
-                //         Err(ContextError::EmptyContext) => {
-                //             panic!(
-                //                 "Internal error: Context should not be empty when declaring a variable"
-                //             );
-                //         }
-                //         Err(ContextError::NotDeclared(_)) => unreachable!(),
-                //         Err(ContextError::NotUsed(v)) => {
-                //             errors.push(WithLocation::new(
-                //                 ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
-                //                 loc,
-                //             ));
-                //         }
-                //     }
-                // }
-                // let body_res = body.flow(ctx, false, body.location(), errors); // 闭包体不允许出现模式变量
-                // match ctx.exit_scope() {
-                //     Ok(_) => {}
-                //     Err(ContextError::EmptyContext) => {
-                //         panic!("Internal error: Context should not be empty when exiting a scope");
-                //     }
-                //     Err(ContextError::NotDeclared(_)) => unreachable!(),
-                //     Err(ContextError::NotUsed(v)) => {
-                //         errors.push(WithLocation::new(
-                //             ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
-                //             loc,
-                //         ));
-                //     }
-                // }
-                // let mut body_captures = body_res.captures;
-                // // 移除掉模式变量，因为它们是闭包的参数，不应当被视为捕获的自由变量
-                // for (var, _) in pattern_res.patterns.iter() {
-                //     body_captures.remove(var);
-                // }
-                // let fail_branch = if let Some(fb) = fail_branch {
-                //     let fb_res = fb.flow(ctx, false, fb.location(), errors); // 失败分支不允许出现模式变量
-                //     body_captures.extend(fb_res.captures);
-                //     Some(fb_res.ty)
-                // } else {
-                //     None
-                // };
-                // let mut expr_captures = body_captures.clone(); // 构建闭包表达式本身所需要的捕获变量
-                // expr_captures.extend(pattern_res.captures);
-                // FlowResult::complex(
-                //     WithLocation::new(
-                //         LinearTypeAst::Match {
-                //             pattern: Box::new(pattern_res.ty),
-                //             auto_captures: body_captures.clone(),
-                //             body: Box::new(body_res.ty),
-                //             fail_branch: fail_branch.map(Box::new),
-                //         },
-                //         loc,
-                //     ),
-                //     expr_captures,
-                //     PatternEnv::new(), // 闭包类型本身不应当把模式变量泄露出去
-                // )
-                // .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
-
                 let mut new_branches = Vec::new();
                 let mut all_captures = HashMap::new();
                 let mut all_body_captures = HashMap::new();
@@ -1784,6 +1683,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     all_captures,
                     PatternEnv::new(), // match类型本身不应当把模式变量泄露出去
                 )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Literal(inner) => {
                 let inner_res = inner.flow(ctx, pattern_mode, inner.location(), errors);
@@ -2038,58 +1938,6 @@ impl<'ast> LinearTypeAst<'ast> {
                     }
                 }
                 let closure_env = ClosureEnv::new(closure_env);
-
-                // let pattern_type: BuildResult<T> = pattern.to_type(
-                //     ctx,
-                //     &mut PatternCounter::new(), // 进入模式定义，重新计数
-                //     true,
-                //     gc,
-                //     roots,
-                //     pattern.location(),
-                // )?; // 模式现在允许捕获环境变量
-
-                // ctx.enter_layer();
-                // for (var, var_loc) in auto_captures {
-                //     if ctx.current_layer_mut().push_captured(var.clone()).is_none() {
-                //         return Err(Err(ParseError::RedeclaredCaptureValue(
-                //             WithLocation::new(self.clone(), loc),
-                //             var_loc.map(|_| var),
-                //         )));
-                //     }
-                // }
-                // // 把模式变量加入到当前作用域
-                // // 我们仅仅按照顺序加入模式变量，如果有重名的模式变量，直接跳过即可
-                // for var in pattern_type.patterns.iter() {
-                //     let _ = ctx.current_layer_mut().push_pattern(var.value().clone());
-                // }
-                // let body_type = body.to_type(
-                //     ctx,
-                //     &mut PatternCounter::new(), // 进入闭包体，闭包体不允许出现模式变量，安全起见传入一个新的计数器
-                //     false,
-                //     gc,
-                //     roots,
-                //     body.location(),
-                // )?;
-                // ctx.exit_layer();
-                // let fail_branch_type = if let Some(fb) = fail_branch {
-                //     Some(fb.to_type(
-                //         ctx,
-                //         &mut PatternCounter::new(), // 进入失败分支，失败分支不允许出现模式变量，安全起见传入一个新的计数器
-                //         false,
-                //         gc,
-                //         roots,
-                //         fb.location(),
-                //     )?)
-                // } else {
-                //     None
-                // };
-                // Ok(BuildResult::simple(Closure::new(
-                //     pattern_type.patterns.len(),
-                //     pattern_type.ty,
-                //     body_type.ty,
-                //     fail_branch_type.map(|fbt| fbt.ty),
-                //     closure_env,
-                // )))
                 let mut new_branches = Vec::new();
                 for (pattern, body) in branches {
                     let pattern_type: BuildResult<T> = pattern.to_type(
