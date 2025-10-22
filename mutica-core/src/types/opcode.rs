@@ -120,70 +120,73 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
         &self,
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self {
-            Opcode::Opcode => Err(TypeError::NonApplicableType(self.clone().dispatch().into())),
-            Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Unhandled IO operation: {}", v),
-                ),
-            ))),
-            Opcode::Neg => {
-                if let Type::IntegerValue(n) = ctx.arg {
-                    Ok(IntegerValue::new(-n.value()))
-                } else if let Type::FloatValue(n) = ctx.arg {
-                    Ok(FloatValue::new(-n.value()))
-                } else {
-                    Err(TypeError::TypeMismatch(
-                        (ctx.arg.clone(), "IntegerValue | FloatValue".into()).into(),
-                    ))
+        ctx.arg
+            .map(&mut FastCycleDetector::new(), |_, arg| match self {
+                Opcode::Opcode => Err(TypeError::NonApplicableType(self.clone().dispatch().into())),
+                Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Unhandled IO operation: {}", v),
+                    ),
+                ))),
+                Opcode::Neg => {
+                    if let TypeRef::IntegerValue(n) = arg {
+                        Ok(IntegerValue::new(-n.value()))
+                    } else if let TypeRef::FloatValue(n) = arg {
+                        Ok(FloatValue::new(-n.value()))
+                    } else {
+                        Err(TypeError::TypeMismatch(
+                            (ctx.arg.clone(), "IntegerValue | FloatValue".into()).into(),
+                        ))
+                    }
                 }
-            }
-            Opcode::Is => {
-                if let Type::Tuple(tuple) = ctx.arg {
-                    if tuple.len() == 2 {
-                        let left = &tuple.types()[0];
-                        let right = &tuple.types()[1];
-                        let empty_closure = ClosureEnv::new(Vec::<Type<T>>::new());
-                        let mut assumptions = smallvec::SmallVec::new();
-                        let mut pattern_env = Collector::new_disabled();
-                        let mut type_check_ctx = TypeCheckContext::new(
-                            &mut assumptions,
-                            (&empty_closure, &empty_closure),
-                            &mut pattern_env,
-                        );
-                        match left.fulfill(right.as_ref_dispatcher(), &mut type_check_ctx) {
-                            Ok(res) => Ok(if res.is_some() {
-                                TypeBound::top()
-                            } else {
-                                TypeBound::bottom()
-                            }),
-                            Err(e) => Err(e),
+                Opcode::Is => {
+                    if let TypeRef::Tuple(tuple) = arg {
+                        if tuple.len() == 2 {
+                            let left = &tuple.types()[0];
+                            let right = &tuple.types()[1];
+                            let empty_closure = ClosureEnv::new(Vec::<Type<T>>::new());
+                            let mut assumptions = smallvec::SmallVec::new();
+                            let mut pattern_env = Collector::new_disabled();
+                            let mut type_check_ctx = TypeCheckContext::new(
+                                &mut assumptions,
+                                (&empty_closure, &empty_closure),
+                                &mut pattern_env,
+                            );
+                            match left.fulfill(right.as_ref_dispatcher(), &mut type_check_ctx) {
+                                Ok(res) => Ok(if res.is_some() {
+                                    TypeBound::top()
+                                } else {
+                                    TypeBound::bottom()
+                                }),
+                                Err(e) => Err(e),
+                            }
+                        } else {
+                            Err(TypeError::TypeMismatch(
+                                (ctx.arg.clone(), "(Any, Any)".into()).into(),
+                            ))
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            (ctx.arg.clone(), "(Any, Any)".into()).into(),
+                            (ctx.arg.clone(), "Tuple".into()).into(),
                         ))
                     }
-                } else {
-                    Err(TypeError::TypeMismatch(
-                        (ctx.arg.clone(), "Tuple".into()).into(),
-                    ))
                 }
-            }
-            Opcode::Add
-            | Opcode::Sub
-            | Opcode::Mul
-            | Opcode::Div
-            | Opcode::Mod
-            | Opcode::Less
-            | Opcode::Greater => {
-                if let Type::Tuple(tuple) = ctx.arg {
-                    if tuple.len() == 2 {
-                        let left = &tuple.types()[0];
-                        let right = &tuple.types()[1];
-                        match (left, right) {
-                            (Type::IntegerValue(l), Type::IntegerValue(r)) => match self {
+                Opcode::Add
+                | Opcode::Sub
+                | Opcode::Mul
+                | Opcode::Div
+                | Opcode::Mod
+                | Opcode::Less
+                | Opcode::Greater => {
+                    if let TypeRef::Tuple(tuple) = arg {
+                        if tuple.len() == 2 {
+                            let left = &tuple.types()[0];
+                            let right = &tuple.types()[1];
+                            left.map(&mut FastCycleDetector::new(), |_, left| {
+                                right.map(&mut FastCycleDetector::new(), |_, right| {
+                                    match (left, right) {
+                            (TypeRef::IntegerValue(l), TypeRef::IntegerValue(r)) => match self {
                                 Opcode::Add => Ok(IntegerValue::new(l.value() + r.value())),
                                 Opcode::Sub => Ok(IntegerValue::new(l.value() - r.value())),
                                 Opcode::Mul => Ok(IntegerValue::new(l.value() * r.value())),
@@ -217,7 +220,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 }),
                                 _ => unreachable!(),
                             },
-                            (Type::FloatValue(l), Type::FloatValue(r)) => match self {
+                            (TypeRef::FloatValue(l), TypeRef::FloatValue(r)) => match self {
                                 Opcode::Add => Ok(FloatValue::new(l.value() + r.value())),
                                 Opcode::Sub => Ok(FloatValue::new(l.value() - r.value())),
                                 Opcode::Mul => Ok(FloatValue::new(l.value() * r.value())),
@@ -251,32 +254,40 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 }),
                                 _ => unreachable!(),
                             },
-                            // (Type::Tuple(l), Type::Tuple(r)) => {
-
-                            // }
+                            (TypeRef::Closure(l), TypeRef::Closure(r)) => match self {
+                                Opcode::Add => Ok(l.impls(r)),
+                                _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                                    std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        "Only 'Add' operation is supported for Closure types",
+                                    ),
+                                ))),
+                            },
                             _ => Err(TypeError::TypeMismatch(
                                 (
                                     ctx.arg.clone(),
-                                    "(IntegerValue | FloatValue, IntegerValue | FloatValue)".into(),
+                                    "(IntegerValue, IntegerValue) | (FloatValue, FloatValue) | (Closure, Closure)".into(),
                                 )
                                     .into(),
                             )),
+                        }
+                                })
+                            })??
+                        } else {
+                            Err(TypeError::TypeMismatch(
+                                (ctx.arg.clone(), "Tuple".into()).into(),
+                            ))
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
                             (ctx.arg.clone(), "Tuple".into()).into(),
                         ))
                     }
-                } else {
-                    Err(TypeError::TypeMismatch(
-                        (ctx.arg.clone(), "Tuple".into()).into(),
-                    ))
                 }
-            }
-            Opcode::Pandom(_) => {
-                unreachable!()
-            }
-        }
+                Opcode::Pandom(_) => {
+                    unreachable!()
+                }
+            })?
     }
 
     fn is_normal_form(&self) -> bool {

@@ -491,6 +491,7 @@ impl ParseContext {
                 })
                 .collect();
             if !unused_vars.is_empty() {
+                self.declared_variables.pop();
                 return Err(ContextError::NotUsed(unused_vars));
             }
         } else {
@@ -511,9 +512,9 @@ impl ParseContext {
                 && !name.starts_with("_")
             // 允许以 _ 开头的变量不被使用
             {
-                return Err(ContextError::NotUsed(vec![
-                    current_scope[&name].1.clone().map(|_| name),
-                ]));
+                let unused_vars = vec![current_scope[&name].1.clone().map(|_| name.clone())];
+                current_scope.insert(name, (Self::NOT_USED, WithLocation::new((), loc)));
+                return Err(ContextError::NotUsed(unused_vars));
             }
             current_scope.insert(name, (Self::NOT_USED, WithLocation::new((), loc)));
             return Ok(());

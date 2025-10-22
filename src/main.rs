@@ -235,11 +235,11 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
             return;
         }
     };
-    #[cfg(debug_assertions)]
-    println!(
-        "Built type: {}\n",
-        built_type.ty().display(&mut FastCycleDetector::new())
-    );
+    // #[cfg(debug_assertions)]
+    // println!(
+    //     "Built type: {}\n",
+    //     built_type.ty().display(&mut FastCycleDetector::new())
+    // );
 
     let mut linear_scheduler =
         roots.context(|_| scheduler::LinearScheduler::new(built_type.ty().clone())); // 确保 roots 直到 linear_scheduler 被创建完成才丢弃

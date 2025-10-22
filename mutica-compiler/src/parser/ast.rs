@@ -430,26 +430,6 @@ impl BasicTypeAst {
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Match { branches } => {
-                // let mut bindings = Vec::new();
-                // let pattern = pattern.linearize(ctx, pattern.location());
-                // bindings.extend(pattern.bindings.clone());
-                // // fail_branch 是严格独立上下文的，因此直接线性化不参与CPS
-                // let fail_branch = match fail_branch {
-                //     Some(fail_branch) => Some(Box::new(
-                //         fail_branch
-                //             .linearize(ctx, fail_branch.location())
-                //             .finalize(),
-                //     )),
-                //     None => None,
-                // };
-                // let ty = LinearTypeAst::Closure {
-                //     pattern: Box::new(pattern.tail_type().clone()),
-                //     auto_captures: HashMap::new(),
-                //     // body 也是严格独立上下文的，因此直接线性化不参与CPS
-                //     body: Box::new(body.linearize(ctx, body.location()).finalize()),
-                //     fail_branch,
-                // };
-                // LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
                 let mut linearized_branches = Vec::new();
                 let mut bindings = Vec::new();
                 for (pat, expr) in branches {
@@ -762,92 +742,40 @@ impl TypeAst {
                 BasicTypeAst::Apply {
                     func: Box::new(WithLocation::new(
                         BasicTypeAst::Match {
-                            branches: vec![(
-                                WithLocation::new(
-                                    BasicTypeAst::Tuple(vec![
-                                        WithLocation::new(
-                                            BasicTypeAst::Pattern {
-                                                name: "eq#left".to_string(),
-                                                expr: Box::new(WithLocation::new(
-                                                    BasicTypeAst::Top,
-                                                    loc,
-                                                )),
-                                            },
-                                            loc,
-                                        ),
-                                        WithLocation::new(
-                                            BasicTypeAst::Pattern {
-                                                name: "eq#right".to_string(),
-                                                expr: Box::new(WithLocation::new(
-                                                    BasicTypeAst::Top,
-                                                    loc,
-                                                )),
-                                            },
-                                            loc,
-                                        ),
-                                    ]),
-                                    loc,
+                            branches: vec![
+                                (
+                                    WithLocation::new(
+                                        BasicTypeAst::Tuple(vec![
+                                            WithLocation::new(
+                                                BasicTypeAst::Pattern {
+                                                    name: "_eq#x".to_string(),
+                                                    expr: Box::new(WithLocation::new(
+                                                        BasicTypeAst::Top,
+                                                        loc,
+                                                    )),
+                                                },
+                                                loc,
+                                            ),
+                                            WithLocation::new(
+                                                BasicTypeAst::Pattern {
+                                                    name: "_eq#x".to_string(),
+                                                    expr: Box::new(WithLocation::new(
+                                                        BasicTypeAst::Top,
+                                                        loc,
+                                                    )),
+                                                },
+                                                loc,
+                                            ),
+                                        ]),
+                                        loc,
+                                    ),
+                                    WithLocation::new(BasicTypeAst::Top, loc),
                                 ),
-                                WithLocation::new(
-                                    BasicTypeAst::Specialize(vec![
-                                        WithLocation::new(
-                                            BasicTypeAst::Apply {
-                                                func: Box::new(WithLocation::new(
-                                                    BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
-                                                    loc,
-                                                )),
-                                                arg: Box::new(WithLocation::new(
-                                                    BasicTypeAst::Tuple(vec![
-                                                        WithLocation::new(
-                                                            BasicTypeAst::Variable(
-                                                                "eq#left".to_string(),
-                                                            ),
-                                                            loc,
-                                                        ),
-                                                        WithLocation::new(
-                                                            BasicTypeAst::Variable(
-                                                                "eq#right".to_string(),
-                                                            ),
-                                                            loc,
-                                                        ),
-                                                    ]),
-                                                    loc,
-                                                )),
-                                                handler: None,
-                                            },
-                                            loc,
-                                        ),
-                                        WithLocation::new(
-                                            BasicTypeAst::Apply {
-                                                func: Box::new(WithLocation::new(
-                                                    BasicTypeAst::AtomicOpcode(AtomicOpcode::Is),
-                                                    loc,
-                                                )),
-                                                arg: Box::new(WithLocation::new(
-                                                    BasicTypeAst::Tuple(vec![
-                                                        WithLocation::new(
-                                                            BasicTypeAst::Variable(
-                                                                "eq#right".to_string(),
-                                                            ),
-                                                            loc,
-                                                        ),
-                                                        WithLocation::new(
-                                                            BasicTypeAst::Variable(
-                                                                "eq#left".to_string(),
-                                                            ),
-                                                            loc,
-                                                        ),
-                                                    ]),
-                                                    loc,
-                                                )),
-                                                handler: None,
-                                            },
-                                            loc,
-                                        ),
-                                    ]),
-                                    loc,
+                                (
+                                    WithLocation::new(BasicTypeAst::Top, loc),
+                                    WithLocation::new(BasicTypeAst::Bottom, loc),
                                 ),
-                            )],
+                            ],
                         },
                         loc,
                     )),
@@ -862,23 +790,58 @@ impl TypeAst {
                 },
                 loc,
             ),
-            TypeAst::Neq { left, right } => {
-                // a != b  ===  !(a == b)
-                WithLocation::<_, ()>::new(
-                    TypeAst::Not {
-                        value: WithLocation::new(
-                            TypeAst::Eq {
-                                left: left.clone(),
-                                right: right.clone(),
-                            },
-                            loc,
-                        )
-                        .into(),
-                    },
-                    loc,
-                )
-                .into_basic(multifile_builder, loc)
-            }
+            TypeAst::Neq { left, right } => WithLocation::new(
+                BasicTypeAst::Apply {
+                    func: Box::new(WithLocation::new(
+                        BasicTypeAst::Match {
+                            branches: vec![
+                                (
+                                    WithLocation::new(
+                                        BasicTypeAst::Tuple(vec![
+                                            WithLocation::new(
+                                                BasicTypeAst::Pattern {
+                                                    name: "_neq#x".to_string(),
+                                                    expr: Box::new(WithLocation::new(
+                                                        BasicTypeAst::Top,
+                                                        loc,
+                                                    )),
+                                                },
+                                                loc,
+                                            ),
+                                            WithLocation::new(
+                                                BasicTypeAst::Pattern {
+                                                    name: "_neq#x".to_string(),
+                                                    expr: Box::new(WithLocation::new(
+                                                        BasicTypeAst::Top,
+                                                        loc,
+                                                    )),
+                                                },
+                                                loc,
+                                            ),
+                                        ]),
+                                        loc,
+                                    ),
+                                    WithLocation::new(BasicTypeAst::Bottom, loc),
+                                ),
+                                (
+                                    WithLocation::new(BasicTypeAst::Top, loc),
+                                    WithLocation::new(BasicTypeAst::Top, loc),
+                                ),
+                            ],
+                        },
+                        loc,
+                    )),
+                    arg: Box::new(WithLocation::new(
+                        BasicTypeAst::Tuple(vec![
+                            left.into_basic(multifile_builder, left.location()),
+                            right.into_basic(multifile_builder, right.location()),
+                        ]),
+                        loc,
+                    )),
+                    handler: None,
+                },
+                loc,
+            ),
             TypeAst::Not { value } => WithLocation::new(
                 BasicTypeAst::Apply {
                     func: WithLocation::new(
@@ -1972,10 +1935,10 @@ impl<'ast> LinearTypeAst<'ast> {
                         body.location(),
                     )?;
                     ctx.exit_layer();
-                    new_branches.push((pattern_type.ty, body_type.ty));
+                    new_branches.push((pattern_type.ty, body_type.ty, 0));
                 }
                 Ok(BuildResult::simple(
-                    Closure::new::<Type<T>, Type<T>, Type<T>>(new_branches, closure_env),
+                    Closure::new::<Type<T>, Type<T>, Type<T>>(new_branches, vec![closure_env]),
                 ))
             }
             LinearTypeAst::AtomicOpcode(atomic_opcode) => {

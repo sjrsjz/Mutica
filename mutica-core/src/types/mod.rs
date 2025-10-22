@@ -812,3 +812,17 @@ pub trait Representable {
         self.represent(path)
     }
 }
+
+impl<T: Representable> Representable for Vec<T> {
+    fn represent(&self, path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>) -> String {
+        let mut repr = String::from("[");
+        for (i, item) in self.iter().enumerate() {
+            if i != 0 {
+                repr.push_str(", ");
+            }
+            repr.push_str(&item.represent(path));
+        }
+        repr.push(']');
+        repr
+    }
+}

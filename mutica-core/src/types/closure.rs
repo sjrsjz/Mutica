@@ -158,11 +158,20 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
     }
 }
 
-#[derive(Clone)]
 pub struct ClosureBranch<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pattern: U,
     expr: U,
     _pantom: PhantomData<V>,
+}
+
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for ClosureBranch<U, V> {
+    fn clone(&self) -> Self {
+        Self {
+            pattern: self.pattern.clone(),
+            expr: self.expr.clone(),
+            _pantom: PhantomData,
+        }
+    }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for ClosureBranch<U, V> {
@@ -190,7 +199,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureBranch<U, V> {
 }
 
 pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
-    inner: Arc<(Vec<ClosureBranch<Type<T>, T>>, ClosureEnv<Type<T>, T>)>,
+    inner: Arc<(
+        Vec<(ClosureBranch<Type<T>, T>, usize)>, // usize 用于记录分支指向的环境索引
+        Vec<ClosureEnv<Type<T>, T>>,             // 环境列表
+    )>,
     is_nf: bool,
 }
 
@@ -209,19 +221,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Closure<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        for inner in self.inner.0.iter() {
+        for (inner, _) in self.inner.0.iter() {
             inner.collect(queue);
         }
-        self.inner.1.collect(queue);
+        for env in self.inner.1.iter() {
+            env.collect(queue);
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Closure<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        for inner in self.inner.0.iter() {
+        for (inner, _) in self.inner.0.iter() {
             inner.upgrade(collected);
         }
-        self.inner.1.upgrade(collected);
+        for env in self.inner.1.iter() {
+            env.upgrade(collected);
+        }
     }
 }
 
@@ -262,16 +278,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                         return Ok(None);
                     }
 
-                    for (self_inner, other_inner) in self.inner.0.iter().zip(v.inner.0.iter()) {
+                    for ((self_inner, self_idx), (other_inner, other_idx)) in
+                        self.inner.0.iter().zip(v.inner.0.iter())
+                    {
                         // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                         // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
                         // 因此所有的pattern_env都应当被禁用
 
                         // 创建用于表达式比较的上下文
+                        if *self_idx >= self.inner.1.len() || *other_idx >= v.inner.1.len() {
+                            panic!("CRITICAL: Closure branch environment index out of bounds");
+                        }
                         let mut pattern_env_disabled = Collector::new_disabled();
                         let mut pattern_ctx = TypeCheckContext::new(
                             ctx.assumptions,
-                            (&self.inner.1, &v.inner.1),
+                            (&self.inner.1[*self_idx], &v.inner.1[*other_idx]),
                             &mut pattern_env_disabled,
                         );
 
@@ -311,17 +332,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // 化简env
-        let reduced_env = ClosureEnv::new(
-            self.env()
-                .iter()
-                .map(|ty| ty.clone().reduce(ctx))
-                .collect::<Result<Vec<_>, _>>()?,
-        );
+        let reduced_env = self
+            .env()
+            .iter()
+            .map(|env| {
+                env.iter()
+                    .map(|ty| ty.clone().reduce(ctx))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(ClosureEnv::new)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut reduced_branches = Vec::with_capacity(self.inner.0.len());
 
-        for inner in self.inner.0.iter() {
+        for (inner, closure_idx) in self.inner.0.iter() {
             let reduced_pattern = inner.pattern.clone().reduce(ctx)?;
-            reduced_branches.push((reduced_pattern, inner.expr.clone())); // expr 是惰性的,不需要立即化简
+            reduced_branches.push((reduced_pattern, inner.expr.clone(), *closure_idx)); // expr 是惰性的,不需要立即化简
         }
         Ok(Closure::new::<Type<T>, Type<T>, Type<T>>(
             reduced_branches,
@@ -334,7 +359,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let empty_closure_env = ClosureEnv::new(Vec::<Type<T>>::new());
-        for inner in self.inner.0.iter() {
+        for (inner, closure_idx) in self.inner.0.iter() {
             let mut matched_pattern = Collector::new();
 
             // 创建用于模式匹配的类型检查上下文
@@ -352,8 +377,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 && let Some(param_env) = ParamEnv::from_collector(matched_pattern)?
             {
                 // 模式匹配成功，构造用于表达式求值的上下文
+                if *closure_idx >= self.inner.1.len() {
+                    panic!("CRITICAL: Closure branch environment index out of bounds");
+                }
                 let mut reduce_ctx = ReductionContext::new(
-                    self.env(),
+                    &self.env()[*closure_idx],
                     &param_env,
                     ctx.rec_assumptions,
                     ctx.gc,
@@ -380,8 +408,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
             repr.push_str(&self.inner.1.represent(path));
             repr.push_str(">");
         }
-        for inner in self.inner.0.iter() {
-            repr.push_str(" | ");
+        for (inner, closure_idx) in self.inner.0.iter() {
+            repr.push_str(&format!(" | c.{} ", closure_idx));
             repr.push_str(&inner.pattern.represent(path));
             repr.push_str(" => ");
             repr.push_str(&inner.expr.represent(path));
@@ -392,7 +420,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
-    pub fn new<U, V, W>(branches: Vec<(U, V)>, closure_env: ClosureEnv<Type<T>, T>) -> Type<T>
+    pub fn new<U, V, W>(
+        branches: Vec<(U, V, usize)>,
+        closure_env: Vec<ClosureEnv<Type<T>, T>>,
+    ) -> Type<T>
     where
         U: AsDispatcher<Type<T>, T>,
         V: AsDispatcher<Type<T>, T>,
@@ -402,31 +433,51 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         let inner = Arc::from((
             branches
                 .into_iter()
-                .map(|(pattern, expr)| {
+                .map(|(pattern, expr, closure_idx)| {
                     let pattern_ty = pattern.into_dispatcher();
                     let expr_ty = expr.into_dispatcher();
                     is_nf &= pattern_ty.is_normal_form();
                     // expr_ty 是惰性的, 不影响 is_nf
-                    ClosureBranch {
-                        pattern: pattern_ty,
-                        expr: expr_ty,
-                        _pantom: PhantomData,
-                    }
+                    (
+                        ClosureBranch {
+                            pattern: pattern_ty,
+                            expr: expr_ty,
+                            _pantom: PhantomData,
+                        },
+                        closure_idx,
+                    )
                 })
                 .collect::<Vec<_>>(),
             {
-                is_nf &= closure_env.all_nf();
+                is_nf &= closure_env.iter().all(|env| env.all_nf());
                 closure_env
             },
         ));
         Type::Closure(Closure { inner, is_nf })
     }
 
-    pub fn env(&self) -> &ClosureEnv<Type<T>, T> {
+    pub fn env(&self) -> &[ClosureEnv<Type<T>, T>] {
         &self.inner.1
     }
 
-    pub fn branches(&self) -> &Vec<ClosureBranch<Type<T>, T>> {
+    pub fn branches(&self) -> &[(ClosureBranch<Type<T>, T>, usize)] {
         &self.inner.0
+    }
+
+    pub fn impls(&self, other: &Self) -> Type<T> {
+        let mut new_closure_env = self.env().to_vec();
+        new_closure_env.extend_from_slice(other.env());
+        let mut new_branches = self.branches().to_vec();
+        new_branches.extend_from_slice(other.branches());
+        // 修正环境索引
+        let offset = self.env().len();
+        for (_, closure_idx) in new_branches.iter_mut().skip(self.branches().len()) {
+            *closure_idx += offset;
+        }
+        Closure {
+            inner: Arc::new((new_branches, new_closure_env)),
+            is_nf: self.is_normal_form() && other.is_normal_form(),
+        }
+        .into_dispatcher()
     }
 }
