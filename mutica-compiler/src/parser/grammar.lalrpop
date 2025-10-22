@@ -366,25 +366,6 @@ MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     },
 }
 
-HandleWith: WithLocation<TypeAst> = {
-    <l:@L> "handle" <t: Primary> <catch_l:@L> "with" <catch_r:@R> <handlers: MatchBranch*> <v_l:@L> "|" <v_r:@R> "panic" <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+6, TokenColor::Keyword);
-        TokenColor::fill_colors(colors, catch_l..catch_r, TokenColor::Keyword);
-        TokenColor::fill_colors(colors, v_l..v_r, TokenColor::Operator);
-        TokenColor::fill_colors(colors, r-5..r, TokenColor::Keyword);
-        WithLocation::new(TypeAst::HandleWith {
-            closure: Box::new(WithLocation::new(TypeAst::Match {
-                branches: vec![
-                    (WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), t),
-                ],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            init_val: Box::new(WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            handler: Box::new(WithLocation::new(TypeAst::Match {
-                branches: handlers,
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-}
 
 RecursiveGen: WithLocation<TypeAst> = {
     <l:@L> "rec" <id: Ident> <c_l: @L> ":" <c_r:@R> <t: Primary> <r:@R> => {
@@ -443,7 +424,6 @@ Primary: WithLocation<TypeAst> = {
     <l: List> => l,
     <r: RecursiveGen> => r,
     <c: Closure> => c,
-    <h: HandleWith> => h,
     <m: Match> => m,
     <i: IfElse> => i,
     <c: Calculate> => c,
@@ -745,8 +725,25 @@ Require: WithLocation<TypeAst> = {
     },
 }
 
+HandleWith: WithLocation<TypeAst> = {
+    <l:@L> "handle" <id: Primary> <a_l:@L> "=" <a_r:@R> <value: Type> <with_l:@L> "with" <with_r:@R> <handler: Type> <con_l:@L> ";" <con_r:@R> <expr: Type> <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+6, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, a_l..a_r, TokenColor::Operator);
+        TokenColor::fill_colors(colors, with_l..with_r, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, con_l..con_r, TokenColor::Punctuation);
+        WithLocation::new(TypeAst::HandleWith {
+            closure: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(id, expr)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            init_val: Box::new(value),
+            handler: Box::new(handler),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
 
 pub Type: WithLocation<TypeAst> = {
+    <h: HandleWith> => h,
     <r: Require> => r,
     <l: Loop> => l,
     <e: Expression> => e,
