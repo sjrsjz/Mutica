@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -13,7 +14,7 @@ use crate::{
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
 // 但是为了实现的简洁性，这里就先分开了
 pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
-    is_nf: ThreeValuedLogic,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
     debruijn_index: usize,
     expr: Arc<Type<T>>,
 }
@@ -21,7 +22,7 @@ pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Pattern<T> {
     fn clone(&self) -> Self {
         Self {
-            is_nf: self.is_nf,
+            is_nf: self.is_nf.clone(),
             debruijn_index: self.debruijn_index,
             expr: self.expr.clone(),
         }
@@ -43,7 +44,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Pattern<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
     fn represent(
         &self,
-        path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
+        path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
         format!("λ.{} : {}", self.debruijn_index, self.expr.represent(path))
     }
@@ -128,7 +129,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        self.expr.recalculate_normal_form(cycle_detector);
+        let new_nf = self.expr.is_normal_form();
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
@@ -167,7 +179,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<T> {
         let expr = expr.into_dispatcher();
         let is_nf = expr.is_normal_form();
         Self {
-            is_nf,
+            is_nf: Arc::new(RwLock::new(is_nf)),
             debruijn_index,
             expr: Arc::new(expr),
         }

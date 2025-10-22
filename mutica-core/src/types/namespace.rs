@@ -1,26 +1,26 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        type_bound::TypeBound,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Namespace<T: GcAllocObject<T, Inner = Type<T>>> {
-    is_nf: ThreeValuedLogic,
-    tag: Arc<String>,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
+    tag: Arc<str>,
     expr: Arc<Type<T>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Namespace<T> {
     fn clone(&self) -> Self {
         Self {
-            is_nf: self.is_nf,
+            is_nf: self.is_nf.clone(),
             tag: self.tag.clone(),
             expr: self.expr.clone(),
         }
@@ -44,7 +44,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Namespace<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Namespace<T> {
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         format!("{}::{}", self.tag, self.expr.represent(path))
     }
 }
@@ -110,16 +110,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        self.expr.recalculate_normal_form(cycle_detector);
+        let new_nf = self.expr.is_normal_form();
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Namespace<T> {
-    pub fn new<I: AsDispatcher<Type<T>, T>, S: Into<Arc<String>>>(tag: S, expr: I) -> Type<T> {
+    pub fn new<I: AsDispatcher<Type<T>, T>, S: Into<Arc<str>>>(tag: S, expr: I) -> Type<T> {
         let expr = expr.into_dispatcher();
         let is_nf = expr.is_normal_form();
         Self {
-            is_nf,
+            is_nf: Arc::new(RwLock::new(is_nf)),
             tag: tag.into(),
             expr: Arc::new(expr),
         }

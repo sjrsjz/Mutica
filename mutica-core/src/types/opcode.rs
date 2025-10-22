@@ -2,9 +2,15 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        closure::ClosureEnv, float_value::FloatValue, integer_value::IntegerValue, type_bound::TypeBound, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, closure::ClosureEnv, float_value::FloatValue, integer_value::IntegerValue,
+        type_bound::TypeBound,
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{
+        collector::Collector, cycle_detector::FastCycleDetector,
+        three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub enum Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -290,10 +296,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     fn is_normal_form(&self) -> ThreeValuedLogic {
         ThreeValuedLogic::True
     }
+
+    fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
-    fn represent(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         match self {
             Opcode::Opcode => "Opcode".to_string(),
             Opcode::Add => "Add".to_string(),

@@ -1,3 +1,5 @@
+use std::sync::{Arc, RwLock};
+
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
     gc::GC,
@@ -8,7 +10,8 @@ use crate::{
     as_type,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, rootstack::RootStack,
@@ -37,7 +40,7 @@ use crate::{
 
 pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
     reference: GCArcWeak<T>,
-    is_nf: ThreeValuedLogic,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
@@ -70,12 +73,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for FixPoint<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     pub fn map<F, R>(
         &self,
-        path: &mut FastCycleDetector<*const ()>,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
     ) -> Result<R, TypeError<<T as GcAllocObject<T>>::Inner, T>>
     where
         F: FnOnce(
-            &mut FastCycleDetector<*const ()>,
+            &mut FastCycleDetector<TaggedPtr<()>>,
             <T::Inner as AsDispatcher<T::Inner, T>>::RefDispatcher<'_>,
         ) -> R,
     {
@@ -102,7 +105,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         let pointer = gc.create(T::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
-            is_nf: ThreeValuedLogic::Unknown,
+            is_nf: Arc::new(RwLock::new(ThreeValuedLogic::Unknown)),
         };
         roots.push(pointer);
         Type::FixPoint(fix_point)
@@ -119,8 +122,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     pub fn set<V: AsDispatcher<Type<T>, T>>(&self, t: V) -> Result<(), TypeError<Type<T>, T>> {
         if let Some(inner) = self.reference.upgrade() {
             let t = t.into_dispatcher();
-
+            // 我们先乐观假设推导出的Unknown可以被填充为True
+            let is_nf = match t.is_normal_form() {
+                ThreeValuedLogic::Unknown | ThreeValuedLogic::True => ThreeValuedLogic::True,
+                ThreeValuedLogic::False => ThreeValuedLogic::False,
+            };
             inner.as_ref().set_inner(t)?;
+            // 更新 is_nf
+            if let Ok(mut nf_lock) = self.is_nf.write() {
+                *nf_lock = is_nf;
+            }
+            // 重新计算所有相关类型的归约状态
+            self.recalculate_normal_form(&mut FastCycleDetector::new());
+            // 如果验证失败，则类型不能在一次重计算中确定它自己是否是归约形式，直接报错不能收敛
+            if self.is_normal_form() != is_nf {
+                return Err(TypeError::TypeNotConverged(Box::new(
+                    self.clone().dispatch().into(),
+                )));
+            }
             Ok(())
         } else {
             Err(TypeError::UnresolvableType) // reference is dead
@@ -247,8 +266,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self.reference.upgrade() {
-            Some(_) => self.is_nf,
+            Some(_) => self
+                .is_nf
+                .read()
+                .map_or(ThreeValuedLogic::False, |v| v.clone()),
             None => ThreeValuedLogic::False, // reference is dead
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        let is_nf = match self.reference.upgrade() {
+            Some(inner) => {
+                match inner.as_ref().get_inner() {
+                    Some(t) => {
+                        match cycle_detector.with_guard(t.tagged_ptr(), |cycle_detector| {
+                            t.recalculate_normal_form(cycle_detector);
+                            t.is_normal_form()
+                        }) {
+                            Some(v) => v,
+                            None => self.is_normal_form(),
+                        }
+                    }
+                    None => ThreeValuedLogic::Unknown, // 未初始化
+                }
+            }
+            None => ThreeValuedLogic::False, // reference is dead
+        };
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = is_nf;
         }
     }
 }
@@ -287,15 +332,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<T> {
     /// - `内容` 是类型的展开形式（如果没有循环）
     ///
     /// 对于循环引用，只显示地址以避免无限递归打印。
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         match self.reference.upgrade() {
             Some(inner) => match inner.as_ref().get_inner() {
-                Some(t) => {
-                    match path.with_guard(t as *const _ as *const (), |path| t.represent(path)) {
-                        Some(s) => format!("μ.{:?} {}", t as *const _ as *const (), s),
-                        None => format!("{:?}", t as *const _ as *const ()),
-                    }
-                }
+                Some(t) => match path.with_guard(t.tagged_ptr(), |path| t.represent(path)) {
+                    Some(s) => format!("μ.{:?} {}", t as *const _ as *const (), s),
+                    None => format!("{:?}", t as *const _ as *const ()),
+                },
                 None => "!UninitializedFixPoint".to_string(), // 未初始化
             },
             None => "!InvalidFixPoint".to_string(), // reference is dead

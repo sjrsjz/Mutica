@@ -2,7 +2,9 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        integer_value::IntegerValue, type_bound::TypeBound, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, integer_value::IntegerValue, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -85,10 +87,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Integ
     fn is_normal_form(&self) -> ThreeValuedLogic {
         ThreeValuedLogic::True
     }
+
+    fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Integer<T> {
-    fn represent(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         "Integer".to_string()
     }
 }

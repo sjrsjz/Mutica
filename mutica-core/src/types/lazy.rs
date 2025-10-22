@@ -1,25 +1,25 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
+        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
     },
-    util::three_valued_logic::ThreeValuedLogic,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Lazy<T: GcAllocObject<T, Inner = Type<T>>> {
     value: Arc<Type<T>>,
-    is_nf: ThreeValuedLogic,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
-            is_nf: self.is_nf,
+            is_nf: self.is_nf.clone(),
         }
     }
 }
@@ -43,7 +43,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Lazy<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lazy<T> {
     fn represent(
         &self,
-        path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
+        path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
         format!("Lazy<{}>", self.value.represent(path))
     }
@@ -106,7 +106,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        self.value.recalculate_normal_form(cycle_detector);
+        let new_nf = self.value.is_normal_form();
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
@@ -116,7 +127,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<T> {
         let is_nf = value.is_normal_form();
         Self {
             value: Arc::new(value),
-            is_nf,
+            is_nf: Arc::new(RwLock::new(is_nf)),
         }
         .dispatch()
     }

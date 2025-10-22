@@ -1,26 +1,26 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        type_bound::TypeBound,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Tuple<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
-    is_nf: ThreeValuedLogic,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Tuple<T> {
     fn clone(&self) -> Self {
         Self {
             types: self.types.clone(),
-            is_nf: self.is_nf,
+            is_nf: self.is_nf.clone(),
         }
     }
 }
@@ -146,7 +146,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        let mut new_nf = ThreeValuedLogic::True;
+        for ty in self.types.iter() {
+            ty.recalculate_normal_form(cycle_detector);
+            new_nf &= ty.is_normal_form();
+        }
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
@@ -161,7 +175,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Tuple<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Tuple<T> {
     fn represent(
         &self,
-        path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
+        path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
         let mut result = String::new();
         result.push('(');
@@ -190,7 +204,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         for ty in types.iter() {
             is_nf &= ty.is_normal_form();
         }
-        Self { types, is_nf }.dispatch()
+        Self {
+            types,
+            is_nf: Arc::new(RwLock::new(is_nf)),
+        }
+        .dispatch()
     }
 
     pub fn types(&self) -> &[Type<T>] {

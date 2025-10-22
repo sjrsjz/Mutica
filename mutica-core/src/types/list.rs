@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -8,23 +8,23 @@ use crate::{
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
         TypeRef, type_bound::TypeBound,
     },
-    util::three_valued_logic::ThreeValuedLogic,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 // 抽象链表类型，实际实现为 Vec<T>
 // 逻辑等价为 (T_1, (T_2, (T_3, ...)))
 pub struct List<T: GcAllocObject<T, Inner = Type<T>>> {
     elements: Arc<Vec<Type<T>>>,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
     head: usize,
-    is_nf: ThreeValuedLogic,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for List<T> {
     fn clone(&self) -> Self {
         Self {
             elements: self.elements.clone(),
+            is_nf: self.is_nf.clone(),
             head: self.head,
-            is_nf: self.is_nf,
         }
     }
 }
@@ -32,7 +32,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for List<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for List<T> {
     fn represent(
         &self,
-        path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
+        path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
         let mut repr = String::from("@(");
         for (i, element) in self.iter().enumerate() {
@@ -178,7 +178,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for List<
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        let mut new_nf = ThreeValuedLogic::True;
+        for element in self.iter() {
+            element.recalculate_normal_form(cycle_detector);
+            new_nf &= element.is_normal_form();
+        }
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
@@ -211,7 +225,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
         Self {
             elements: Arc::from(elements),
             head: 0,
-            is_nf,
+            is_nf: Arc::new(RwLock::new(is_nf)),
         }
         .dispatch()
     }
@@ -227,7 +241,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
         Self {
             elements: self.elements.clone(),
             head: self.head + start,
-            is_nf,
+            is_nf: Arc::new(RwLock::new(is_nf)),
         }
         .dispatch()
     }

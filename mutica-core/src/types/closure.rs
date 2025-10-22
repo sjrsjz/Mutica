@@ -1,12 +1,16 @@
-use std::{marker::PhantomData, ops::Deref, sync::Arc};
+use std::{
+    marker::PhantomData,
+    ops::Deref,
+    sync::{Arc, RwLock},
+};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        type_bound::TypeBound,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, type_bound::TypeBound,
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector,
@@ -53,7 +57,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Default for ClosureEnv<U, V>
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Representable for ClosureEnv<U, V> {
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         let mut repr = String::from("(");
         for (i, v) in self.0.iter().enumerate().rev() {
             if i != self.0.len() - 1 {
@@ -205,14 +209,14 @@ pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
         Vec<(ClosureBranch<Type<T>, T>, usize)>, // usize 用于记录分支指向的环境索引
         Vec<ClosureEnv<Type<T>, T>>,             // 环境列表
     )>,
-    is_nf: ThreeValuedLogic,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Closure<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: Arc::clone(&self.inner),
-            is_nf: self.is_nf,
+            inner: self.inner.clone(),
+            is_nf: self.is_nf.clone(),
         }
     }
 }
@@ -398,12 +402,38 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        for (inner, _) in self.inner.0.iter() {
+            inner.pattern.recalculate_normal_form(cycle_detector);
+            inner.expr.recalculate_normal_form(cycle_detector);
+        }
+        for env in self.inner.1.iter() {
+            for ty in env.iter() {
+                ty.recalculate_normal_form(cycle_detector);
+            }
+        }
+        let mut new_nf = ThreeValuedLogic::True;
+        for (inner, _) in self.inner.0.iter() {
+            new_nf &= inner.pattern.is_normal_form();
+            // expr_ty 是惰性的, 不影响 is_nf
+        }
+        for env in self.inner.1.iter() {
+            new_nf &= env.all_nf();
+        }
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         let mut repr = String::from("match");
         if !self.inner.1.is_empty() {
             repr.push_str(" capture<");
@@ -457,7 +487,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
                 closure_env
             },
         ));
-        Type::Closure(Closure { inner, is_nf })
+        Type::Closure(Closure {
+            inner,
+            is_nf: Arc::new(RwLock::new(is_nf)),
+        })
     }
 
     pub fn env(&self) -> &[ClosureEnv<Type<T>, T>] {
@@ -480,7 +513,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         }
         Closure {
             inner: Arc::new((new_branches, new_closure_env)),
-            is_nf: self.is_normal_form() & other.is_normal_form(),
+            is_nf: Arc::new(RwLock::new(self.is_normal_form() & other.is_normal_form())),
         }
         .into_dispatcher()
     }

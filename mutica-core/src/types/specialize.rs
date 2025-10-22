@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use smallvec::smallvec;
@@ -6,8 +6,8 @@ use smallvec::smallvec;
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        closure::ClosureEnv, type_bound::TypeBound,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, closure::ClosureEnv, type_bound::TypeBound,
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector,
@@ -66,14 +66,14 @@ use crate::{
 /// 3. **简化**：单个类型时直接返回该类型，空集时返回 `⊤`
 pub struct Specialize<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
-    is_nf: ThreeValuedLogic,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Specialize<T> {
     fn clone(&self) -> Self {
         Self {
             types: self.types.clone(),
-            is_nf: self.is_nf,
+            is_nf: self.is_nf.clone(),
         }
     }
 }
@@ -181,7 +181,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        let mut new_nf = ThreeValuedLogic::True;
+        for sub in self.types.iter() {
+            sub.recalculate_normal_form(cycle_detector);
+            new_nf &= sub.is_normal_form();
+        }
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
@@ -211,7 +225,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Specialize<T> {
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         let mut result = String::new();
         result.push_str("Min<");
         for (i, sub) in self.types.iter().enumerate() {
@@ -258,7 +272,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
     {
         fn collect<T: GcAllocObject<T, Inner = Type<T>>>(
             collected: &mut Vec<Type<T>>,
-            path: &mut FastCycleDetector<*const ()>,
+            path: &mut FastCycleDetector<TaggedPtr<()>>,
             t: Type<T>,
         ) -> Result<(), TypeError<Type<T>, T>> {
             let result =
@@ -333,7 +347,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
                     for sub in result.iter() {
                         is_nf &= sub.is_normal_form();
                     }
-                    is_nf
+                    Arc::new(RwLock::new(is_nf))
                 },
                 types: Arc::from(result),
             }
@@ -350,7 +364,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
     {
         let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         Self {
-            is_nf: ThreeValuedLogic::False,
+            is_nf: Arc::new(RwLock::new(ThreeValuedLogic::False)),
             types: Arc::from(collected),
         }
         .dispatch()

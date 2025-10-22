@@ -3,7 +3,8 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -95,17 +96,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
+
+    fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for TypeBound<T> {
-    fn represent(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         match self {
             TypeBound::Top => "⊤".to_string(),
             TypeBound::Bottom => "⊥".to_string(),
             TypeBound::PandomData(_) => "<?>".to_string(),
         }
     }
-    fn display(&self, _path: &mut FastCycleDetector<*const ()>) -> String {
+    fn display(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         match self {
             TypeBound::Top => "true".to_string(),
             TypeBound::Bottom => "false".to_string(),

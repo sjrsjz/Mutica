@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use smallvec::smallvec;
@@ -6,8 +6,8 @@ use smallvec::smallvec;
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        closure::ClosureEnv, type_bound::TypeBound,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, closure::ClosureEnv, type_bound::TypeBound,
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector,
@@ -66,14 +66,15 @@ use crate::{
 /// 3. **简化**：单个类型时直接返回该类型，空集时返回 `⊥`
 pub struct Generalize<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
-    is_nf: ThreeValuedLogic,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>, // 仅仅只是为了能可变的存储ThreeValuedLogic
+                                          // 也许存在更好的方法
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Generalize<T> {
     fn clone(&self) -> Self {
         Self {
             types: self.types.clone(),
-            is_nf: self.is_nf,
+            is_nf: self.is_nf.clone(),
         }
     }
 }
@@ -167,7 +168,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        let mut new_nf = ThreeValuedLogic::True;
+        for sub in self.types.iter() {
+            sub.recalculate_normal_form(cycle_detector);
+            new_nf &= sub.is_normal_form();
+        }
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
@@ -197,7 +212,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Generalize<T> {
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         let mut result = String::new();
         result.push_str("Max<");
         for (i, sub) in self.types.iter().enumerate() {
@@ -245,7 +260,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
     {
         fn collect<T: GcAllocObject<T, Inner = Type<T>>>(
             collected: &mut Vec<Type<T>>,
-            path: &mut FastCycleDetector<*const ()>,
+            path: &mut FastCycleDetector<TaggedPtr<()>>,
             x: Type<T>,
         ) -> Result<(), TypeError<Type<T>, T>> {
             if x.map_inner(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
@@ -317,7 +332,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
                     for sub in result.iter() {
                         is_nf &= sub.is_normal_form();
                     }
-                    is_nf
+                    Arc::new(RwLock::new(is_nf))
                 },
                 types: Arc::from(result),
             }
@@ -335,7 +350,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
         let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         Self {
             types: Arc::from(collected),
-            is_nf: ThreeValuedLogic::False,
+            is_nf: Arc::new(RwLock::new(ThreeValuedLogic::False)),
         }
         .dispatch()
     }

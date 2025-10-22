@@ -56,7 +56,8 @@ use crate::{
     util::{
         collector::Collector,
         cycle_detector::FastCycleDetector,
-        rootstack::{RootStack, Rootable}, three_valued_logic::ThreeValuedLogic,
+        rootstack::{RootStack, Rootable},
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -237,11 +238,11 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
 
     pub fn map_inner<F, R>(
         self,
-        path: &mut FastCycleDetector<*const ()>,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
     ) -> Result<R, TypeError<Type<T>, T>>
     where
-        F: FnOnce(&mut FastCycleDetector<*const ()>, TypeRef<T>) -> R,
+        F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, TypeRef<T>) -> R,
         T: GcAllocObject<T, Inner = Type<T>>,
     {
         match self {
@@ -293,6 +294,7 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     UnresolvableType,
     InfiniteRecursion,
     RedeclaredType,
+    TypeNotConverged(Box<U>),
     NonApplicableType(Box<U>),
     TupleIndexOutOfBounds(Box<(U, U)>),
     TypeMismatch(Box<(U, String)>),
@@ -318,6 +320,9 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::InfiniteRecursion => write!(f, "Infinite recursion"),
             TypeError::RedeclaredType => write!(f, "Type redeclared"),
             TypeError::NonApplicableType(ty) => write!(f, "Non-applicable type: {:?}", ty),
+            TypeError::TypeNotConverged(ty) => {
+                write!(f, "Type not converged: {:?}", ty)
+            }
             TypeError::TupleIndexOutOfBounds(types) => write!(
                 f,
                 "Tuple index out of bounds for types: {:?} and {:?}",
@@ -401,11 +406,11 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
 
     // pub fn map<F, R>(
     //     &self,
-    //     path: &mut FastCycleDetector<*const ()>,
+    //     path: &mut FastCycleDetector<TaggedPtr<()>>,
     //     f: F,
     // ) -> Result<R, TypeError<Type<T>, T>>
     // where
-    //     F: FnOnce(&mut FastCycleDetector<*const ()>, &Type<T>) -> R,
+    //     F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, &Type<T>) -> R,
     // {
     //     match self {
     //         Type::FixPoint(v) => v.map(path, f),
@@ -415,12 +420,12 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
 
     fn map_inner<F, R>(
         &self,
-        path: &mut FastCycleDetector<*const ()>,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
     ) -> Result<R, TypeError<Self::Inner, T>>
     where
         F: FnOnce(
-            &mut FastCycleDetector<*const ()>,
+            &mut FastCycleDetector<TaggedPtr<()>>,
             <Self::Inner as AsDispatcher<Self::Inner, T>>::RefDispatcher<'_>,
         ) -> R,
         T: GcAllocObject<T>,
@@ -512,16 +517,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Rot(v) => v.is_normal_form(),
         }
     }
+
+    #[stacksafe::stacksafe]
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        type_dispatch!(self, recalculate_normal_form, cycle_detector)
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Type<T> {
     #[stacksafe::stacksafe]
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         type_dispatch!(self, represent, path)
     }
 
     #[stacksafe::stacksafe]
-    fn display(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn display(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         type_dispatch!(self, display, path)
     }
 }
@@ -540,11 +550,11 @@ macro_rules! as_type {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Type<T> {
     pub fn map<F, R>(
         &self,
-        path: &mut FastCycleDetector<*const ()>,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
     ) -> Result<R, TypeError<Type<T>, T>>
     where
-        F: FnOnce(&mut FastCycleDetector<*const ()>, TypeRef<T>) -> R,
+        F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, TypeRef<T>) -> R,
     {
         match self {
             Type::FixPoint(v) => v.map(path, f),
@@ -795,6 +805,8 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     {
         <Self as AsDispatcher<U, V>>::as_ref_dispatcher(self)
     }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>);
 }
 
 pub trait CoinductiveTypeWithAny<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
@@ -808,8 +820,8 @@ pub trait CoinductiveTypeWithAny<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
 }
 
 pub trait Representable {
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String;
-    fn display(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String;
+    fn display(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         self.represent(path)
     }
 }
@@ -817,7 +829,7 @@ pub trait Representable {
 impl<T: Representable> Representable for Vec<T> {
     fn represent(
         &self,
-        path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
+        path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
         let mut repr = String::from("[");
         for (i, item) in self.iter().enumerate() {

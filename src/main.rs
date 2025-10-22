@@ -11,7 +11,10 @@ use mutica_compiler::{
 use mutica_core::{
     arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
     scheduler::{self, ContinuationOrHandler, stack::Stack},
-    types::{AsDispatcher, GcAllocObject, Representable, Type, TypeError, TypeRef},
+    types::{
+        AsDispatcher, CoinductiveType, GcAllocObject, Representable, TaggedPtr, Type, TypeError,
+        TypeRef,
+    },
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
@@ -38,18 +41,18 @@ impl GcAllocObject<TypeGcOnceLock> for TypeGcOnceLock {
 
     fn map_inner<F, R>(
         &self,
-        path: &mut FastCycleDetector<*const ()>,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
     ) -> Result<R, TypeError<Self::Inner, TypeGcOnceLock>>
     where
         F: FnOnce(
-            &mut FastCycleDetector<*const ()>,
+            &mut FastCycleDetector<TaggedPtr<()>>,
             <Self::Inner as AsDispatcher<Self::Inner, TypeGcOnceLock>>::RefDispatcher<'_>,
         ) -> R,
     {
         match self.inner.get() {
             Some(t) => path
-                .with_guard(t as *const _ as *const (), |path| t.map_inner(path, f))
+                .with_guard(t.tagged_ptr(), |path| t.map_inner(path, f))
                 .ok_or(TypeError::InfiniteRecursion)?,
             None => Err(TypeError::UnresolvableType),
         }

@@ -1,12 +1,12 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        type_bound::TypeBound,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -40,14 +40,14 @@ pub struct Invoke<T: GcAllocObject<T, Inner = Type<T>>> {
     // 1: argument
     // 2: continuation
     inner: Arc<(Type<T>, Type<T>, InvokeCountinuationStyle<T>)>,
-    is_nf: ThreeValuedLogic,
+    is_nf: Arc<RwLock<ThreeValuedLogic>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Invoke<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            is_nf: self.is_nf,
+            is_nf: self.is_nf.clone(),
         }
     }
 }
@@ -202,12 +202,44 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        self.is_nf
+        match self.is_nf.read() {
+            Ok(v) => v.clone(),
+            Err(_) => ThreeValuedLogic::False,
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        self.inner.0.recalculate_normal_form(cycle_detector);
+        self.inner.1.recalculate_normal_form(cycle_detector);
+        match &self.inner.2 {
+            InvokeCountinuationStyle::TailCall => {}
+            InvokeCountinuationStyle::WithContinuation(cont)
+            | InvokeCountinuationStyle::WithPerformHandler(cont) => {
+                cont.recalculate_normal_form(cycle_detector);
+            }
+            InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
+                cont1.recalculate_normal_form(cycle_detector);
+                cont2.recalculate_normal_form(cycle_detector);
+            }
+        }
+        let new_nf = self.inner.0.is_normal_form()
+            & self.inner.1.is_normal_form()
+            & match &self.inner.2 {
+                InvokeCountinuationStyle::TailCall => ThreeValuedLogic::True,
+                InvokeCountinuationStyle::WithContinuation(cont)
+                | InvokeCountinuationStyle::WithPerformHandler(cont) => cont.is_normal_form(),
+                InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
+                    cont1.is_normal_form() & cont2.is_normal_form()
+                }
+            };
+        if let Ok(mut nf_lock) = self.is_nf.write() {
+            *nf_lock = new_nf;
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
-    fn represent(&self, path: &mut FastCycleDetector<*const ()>) -> String {
+    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         let func_repr = self.inner.0.represent(path);
         let arg_repr = self.inner.1.represent(path);
         let cont_repr = match &self.inner.2 {
@@ -263,7 +295,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
         let inner = Arc::new((func, arg, continuation_style));
         Self {
             inner,
-            is_nf: all_nf,
+            is_nf: Arc::new(RwLock::new(all_nf)),
         }
         .dispatch()
     }
