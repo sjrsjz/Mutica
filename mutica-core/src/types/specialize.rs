@@ -9,7 +9,10 @@ use crate::{
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         closure::ClosureEnv, type_bound::TypeBound,
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    util::{
+        collector::Collector, cycle_detector::FastCycleDetector,
+        three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 /// # 类型特化运算符 (Type Specialization Operator)
@@ -63,7 +66,7 @@ use crate::{
 /// 3. **简化**：单个类型时直接返回该类型，空集时返回 `⊤`
 pub struct Specialize<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
-    is_nf: bool,
+    is_nf: ThreeValuedLogic,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Specialize<T> {
@@ -177,7 +180,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
         Self::new(&result, ctx.closure_env)
     }
 
-    fn is_normal_form(&self) -> bool {
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         self.is_nf
     }
 }
@@ -195,7 +198,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
             for sub in self.types.iter() {
                 // 我们传入 disabled 是因为specialize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
-                if other.fullfill(sub.as_ref_dispatcher(), &mut inner_ctx)?.is_none() {
+                if other
+                    .fullfill(sub.as_ref_dispatcher(), &mut inner_ctx)?
+                    .is_none()
+                {
                     return Ok(None);
                 }
             }
@@ -274,14 +280,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
         }
         let mut collected = Vec::new();
 
-        let mut all_nf = true;
-
         types
             .into_iter()
             .map(|t| {
-                let x = t.into_dispatcher();
-                all_nf &= x.is_normal_form();
-                collect(&mut collected, &mut FastCycleDetector::new(), x)
+                collect(
+                    &mut collected,
+                    &mut FastCycleDetector::new(),
+                    t.into_dispatcher(),
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut absorbed: smallvec::SmallVec<[bool; 8]> = smallvec![false; collected.len()];
@@ -322,7 +328,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
             0 => TypeBound::Top.dispatch(),
             1 => result.into_iter().next().unwrap(),
             _ => Specialize {
-                is_nf: all_nf,
+                is_nf: {
+                    let mut is_nf = ThreeValuedLogic::True;
+                    for sub in result.iter() {
+                        is_nf &= sub.is_normal_form();
+                    }
+                    is_nf
+                },
                 types: Arc::from(result),
             }
             .dispatch(),
@@ -338,7 +350,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
     {
         let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         Self {
-            is_nf: false,
+            is_nf: ThreeValuedLogic::False,
             types: Arc::from(collected),
         }
         .dispatch()

@@ -1,5 +1,3 @@
-use std::sync::{Arc, RwLock};
-
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
     gc::GC,
@@ -12,7 +10,10 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
     },
-    util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
+    util::{
+        cycle_detector::FastCycleDetector, rootstack::RootStack,
+        three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 /// # 不动点算子内部实现 (Fixed-Point Operator Inner Implementation)
@@ -36,8 +37,7 @@ use crate::{
 
 pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
     reference: GCArcWeak<T>,
-    is_nf: Arc<RwLock<bool>>, // 是否为范式
-                              // 由于递归类型需要set方法初始化,因此is_nf是共享的，它不能被简单的复制
+    is_nf: ThreeValuedLogic,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
@@ -102,7 +102,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         let pointer = gc.create(T::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
-            is_nf: Arc::new(RwLock::new(true)), // 协归纳假设初始为范式
+            is_nf: ThreeValuedLogic::Unknown,
         };
         roots.push(pointer);
         Type::FixPoint(fix_point)
@@ -119,10 +119,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     pub fn set<V: AsDispatcher<Type<T>, T>>(&self, t: V) -> Result<(), TypeError<Type<T>, T>> {
         if let Some(inner) = self.reference.upgrade() {
             let t = t.into_dispatcher();
-            *self
-                .is_nf
-                .write()
-                .map_err(|_| TypeError::UnresolvableType)? = t.is_normal_form(); // lock poisoned
+
             inner.as_ref().set_inner(t)?;
             Ok(())
         } else {
@@ -198,11 +195,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         })
     }
 
-    /// 递归类型的应用
-    ///
-    /// `(μX.T)[V] = T[μX.T/X][V]`
-    ///
-    /// 即：将递归类型应用到输入上，等价于将展开的类型应用到输入上。
     fn reduce(
         self,
         ctx: &mut ReductionContext<Type<T>, T>,
@@ -253,10 +245,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         }
     }
 
-    fn is_normal_form(&self) -> bool {
-        match self.is_nf.read() {
-            Ok(locked) => *locked,
-            Err(_) => false, // lock poisoned
+    fn is_normal_form(&self) -> ThreeValuedLogic {
+        match self.reference.upgrade() {
+            Some(_) => self.is_nf,
+            None => ThreeValuedLogic::False, // reference is dead
         }
     }
 }

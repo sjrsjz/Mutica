@@ -8,12 +8,12 @@ use crate::{
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         type_bound::TypeBound,
     },
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Tuple<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
-    is_nf: bool,
+    is_nf: ThreeValuedLogic,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Tuple<T> {
@@ -67,7 +67,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                
+
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
                 TypeRef::Tuple(other_types) => {
                     if self.types.len() != other_types.len() {
@@ -145,7 +145,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
             })?
     }
 
-    fn is_normal_form(&self) -> bool {
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         self.is_nf
     }
 }
@@ -186,7 +186,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
             .into_iter()
             .map(|t| t.into_dispatcher())
             .collect::<Arc<[Type<T>]>>();
-        let is_nf = types.iter().all(|t| t.is_normal_form());
+        let mut is_nf = ThreeValuedLogic::True;
+        for ty in types.iter() {
+            is_nf &= ty.is_normal_form();
+        }
         Self { types, is_nf }.dispatch()
     }
 

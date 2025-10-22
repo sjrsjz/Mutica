@@ -739,6 +739,23 @@ HandleWith: WithLocation<TypeAst> = {
             handler: Box::new(handler),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
+    <l:@L> "handle" <with_l:@L> "with" <with_r:@R> <handler: Type> <con_l:@L> ";" <con_r:@R> <expr: Type> <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+6, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, with_l..with_r, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, con_l..con_r, TokenColor::Punctuation);
+        WithLocation::new(TypeAst::HandleWith {
+            closure: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(
+                    WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), expr
+                )],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            init_val: Box::new(
+                WithLocation::new(TypeAst::DiscardPattern,
+                Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+            ),
+            handler: Box::new(handler),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
 }
 
 

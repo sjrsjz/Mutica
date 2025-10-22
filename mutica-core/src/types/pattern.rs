@@ -7,13 +7,13 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
     },
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
 // 但是为了实现的简洁性，这里就先分开了
 pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
-    is_nf: bool,
+    is_nf: ThreeValuedLogic,
     debruijn_index: usize,
     expr: Arc<Type<T>>,
 }
@@ -127,7 +127,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         super::TaggedPtr::new_unique(&self as *const _ as *const ())
     }
 
-    fn is_normal_form(&self) -> bool {
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         self.is_nf
     }
 }

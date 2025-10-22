@@ -8,7 +8,10 @@ use crate::{
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         type_bound::TypeBound,
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    util::{
+        collector::Collector, cycle_detector::FastCycleDetector,
+        three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub struct ClosureEnv<U: CoinductiveType<U, V>, V: GcAllocObject<V>>(Vec<U>, PhantomData<V>);
@@ -81,13 +84,12 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureEnv<U, V> {
             .ok_or_else(|| TypeError::UnboundVariable(-1 - index as isize))
     }
 
-    pub fn all_nf(&self) -> bool {
+    pub fn all_nf(&self) -> ThreeValuedLogic {
+        let mut result = ThreeValuedLogic::True;
         for ty in self.0.iter() {
-            if !ty.is_normal_form() {
-                return false;
-            }
+            result &= ty.is_normal_form();
         }
-        true
+        result
     }
 }
 
@@ -203,7 +205,7 @@ pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
         Vec<(ClosureBranch<Type<T>, T>, usize)>, // usize 用于记录分支指向的环境索引
         Vec<ClosureEnv<Type<T>, T>>,             // 环境列表
     )>,
-    is_nf: bool,
+    is_nf: ThreeValuedLogic,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Closure<T> {
@@ -395,7 +397,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         ))
     }
 
-    fn is_normal_form(&self) -> bool {
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         self.is_nf
     }
 }
@@ -429,7 +431,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         V: AsDispatcher<Type<T>, T>,
         W: AsDispatcher<Type<T>, T>,
     {
-        let mut is_nf = true;
+        let mut is_nf = ThreeValuedLogic::True;
         let inner = Arc::from((
             branches
                 .into_iter()
@@ -449,7 +451,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
                 })
                 .collect::<Vec<_>>(),
             {
-                is_nf &= closure_env.iter().all(|env| env.all_nf());
+                for env in closure_env.iter() {
+                    is_nf &= env.all_nf();
+                }
                 closure_env
             },
         ));
@@ -476,7 +480,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         }
         Closure {
             inner: Arc::new((new_branches, new_closure_env)),
-            is_nf: self.is_normal_form() && other.is_normal_form(),
+            is_nf: self.is_normal_form() & other.is_normal_form(),
         }
         .into_dispatcher()
     }

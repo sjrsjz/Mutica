@@ -2,11 +2,9 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        float_value::FloatValue, type_bound::TypeBound,
+        float_value::FloatValue, type_bound::TypeBound, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef
     },
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Float<T: GcAllocObject<T, Inner = Type<T>>>(std::marker::PhantomData<T>);
@@ -87,8 +85,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
             })?
     }
 
-    fn is_normal_form(&self) -> bool {
-        true
+    fn is_normal_form(&self) -> ThreeValuedLogic {
+        ThreeValuedLogic::True
     }
 }
 

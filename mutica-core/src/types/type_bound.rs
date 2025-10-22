@@ -5,7 +5,7 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
     },
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub enum TypeBound<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -78,8 +78,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
         })
     }
 
-    fn is_normal_form(&self) -> bool {
-        true
+    fn is_normal_form(&self) -> ThreeValuedLogic {
+        ThreeValuedLogic::True
     }
 
     fn reduce(

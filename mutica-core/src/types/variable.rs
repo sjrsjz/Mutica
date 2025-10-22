@@ -4,7 +4,7 @@ use crate::{
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         type_bound::TypeBound,
     },
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 use arc_gc::traceable::GCTraceable;
 
@@ -112,8 +112,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
-    fn is_normal_form(&self) -> bool {
-        false
+    fn is_normal_form(&self) -> ThreeValuedLogic {
+        ThreeValuedLogic::False
     }
 }
 

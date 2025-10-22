@@ -8,11 +8,11 @@ use crate::{
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         type_bound::TypeBound,
     },
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Namespace<T: GcAllocObject<T, Inner = Type<T>>> {
-    is_nf: bool,
+    is_nf: ThreeValuedLogic,
     tag: Arc<String>,
     expr: Arc<Type<T>>,
 }
@@ -83,7 +83,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
                 TypeRef::Namespace(v) => {
                     if self.tag == v.tag {
-                        self.expr.fulfill(v.expr.as_ref_dispatcher(), &mut inner_ctx)
+                        self.expr
+                            .fulfill(v.expr.as_ref_dispatcher(), &mut inner_ctx)
                     } else {
                         Ok(None)
                     }
@@ -108,7 +109,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
         self.expr.invoke(ctx)
     }
 
-    fn is_normal_form(&self) -> bool {
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         self.is_nf
     }
 }

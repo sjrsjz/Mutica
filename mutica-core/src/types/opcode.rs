@@ -2,12 +2,9 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
-        closure::ClosureEnv, float_value::FloatValue, integer_value::IntegerValue,
-        type_bound::TypeBound,
+        closure::ClosureEnv, float_value::FloatValue, integer_value::IntegerValue, type_bound::TypeBound, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef
     },
-    util::{collector::Collector, cycle_detector::FastCycleDetector},
+    util::{collector::Collector, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub enum Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -290,8 +287,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
             })?
     }
 
-    fn is_normal_form(&self) -> bool {
-        true
+    fn is_normal_form(&self) -> ThreeValuedLogic {
+        ThreeValuedLogic::True
     }
 }
 

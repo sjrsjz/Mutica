@@ -56,7 +56,7 @@ use crate::{
     util::{
         collector::Collector,
         cycle_detector::FastCycleDetector,
-        rootstack::{RootStack, Rootable},
+        rootstack::{RootStack, Rootable}, three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -473,7 +473,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // 如果已经是范式类型则直接返回
-        if self.is_normal_form() {
+        if self.is_normal_form() == ThreeValuedLogic::True {
             return Ok(self);
         }
         type_dispatch!(self, reduce, ctx)
@@ -487,7 +487,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
         type_dispatch!(self, invoke, ctx)
     }
 
-    fn is_normal_form(&self) -> bool {
+    #[stacksafe::stacksafe]
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         match self {
             Type::Bound(v) => v.is_normal_form(),
             Type::Integer(v) => v.is_normal_form(),
@@ -639,7 +640,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TaggedPtr<T> {
     ptr: *const T,
     tag: usize,
@@ -761,7 +762,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         TaggedPtr::new_unique(self as *const _ as *const ())
     }
 
-    fn is_normal_form(&self) -> bool;
+    fn is_normal_form(&self) -> ThreeValuedLogic;
 
     fn equals(
         &self,
@@ -814,7 +815,10 @@ pub trait Representable {
 }
 
 impl<T: Representable> Representable for Vec<T> {
-    fn represent(&self, path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>) -> String {
+    fn represent(
+        &self,
+        path: &mut crate::util::cycle_detector::FastCycleDetector<*const ()>,
+    ) -> String {
         let mut repr = String::from("[");
         for (i, item) in self.iter().enumerate() {
             if i != 0 {

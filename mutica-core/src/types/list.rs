@@ -2,10 +2,13 @@ use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
-use crate::types::{
-    AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-    ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-    TypeRef, type_bound::TypeBound,
+use crate::{
+    types::{
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
+        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef, type_bound::TypeBound,
+    },
+    util::three_valued_logic::ThreeValuedLogic,
 };
 
 // 抽象链表类型，实际实现为 Vec<T>
@@ -13,7 +16,7 @@ use crate::types::{
 pub struct List<T: GcAllocObject<T, Inner = Type<T>>> {
     elements: Arc<Vec<Type<T>>>,
     head: usize,
-    is_nf: bool,
+    is_nf: ThreeValuedLogic,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for List<T> {
@@ -174,7 +177,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for List<
         TaggedPtr::new(self.elements.as_ref().as_ptr() as *const (), self.head)
     }
 
-    fn is_normal_form(&self) -> bool {
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         self.is_nf
     }
 }
@@ -201,7 +204,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
         X: AsDispatcher<Type<T>, T>,
     {
         let elements: Vec<Type<T>> = types.into_iter().map(|t| t.into_dispatcher()).collect();
-        let is_nf = elements.iter().all(|t| t.is_normal_form());
+        let mut is_nf = ThreeValuedLogic::True;
+        for element in &elements {
+            is_nf &= element.is_normal_form();
+        }
         Self {
             elements: Arc::from(elements),
             head: 0,
@@ -214,7 +220,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
         if start > self.len() {
             panic!("List view start index out of bounds");
         }
-        let is_nf = self.is_nf || self.iter().skip(start).all(|e| e.is_normal_form());
+        let mut is_nf = ThreeValuedLogic::True;
+        for element in self.elements.iter().skip(self.head + start) {
+            is_nf &= element.is_normal_form();
+        }
         Self {
             elements: self.elements.clone(),
             head: self.head + start,

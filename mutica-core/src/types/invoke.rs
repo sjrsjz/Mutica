@@ -8,7 +8,7 @@ use crate::{
         ReductionContext, Representable, Rootable, Type, TypeCheckContext, TypeError, TypeRef,
         type_bound::TypeBound,
     },
-    util::cycle_detector::FastCycleDetector,
+    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 pub enum InvokeCountinuationStyle<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -40,7 +40,7 @@ pub struct Invoke<T: GcAllocObject<T, Inner = Type<T>>> {
     // 1: argument
     // 2: continuation
     inner: Arc<(Type<T>, Type<T>, InvokeCountinuationStyle<T>)>,
-    is_nf: bool,
+    is_nf: ThreeValuedLogic,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Invoke<T> {
@@ -201,7 +201,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
-    fn is_normal_form(&self) -> bool {
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         self.is_nf
     }
 }
@@ -245,11 +245,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
         let continuation = continuation.map(|c| c.into_dispatcher());
         let raise_continuation = perform_continuation.map(|c| c.into_dispatcher());
         let all_nf = func.is_normal_form()
-            && arg.is_normal_form()
-            && continuation.as_ref().map_or(true, |c| c.is_normal_form())
-            && raise_continuation
+            & arg.is_normal_form()
+            & continuation
                 .as_ref()
-                .map_or(true, |c| c.is_normal_form());
+                .map_or(ThreeValuedLogic::True, |c| c.is_normal_form())
+            & raise_continuation
+                .as_ref()
+                .map_or(ThreeValuedLogic::True, |c| c.is_normal_form());
 
         let continuation_style = match (continuation, raise_continuation) {
             (None, None) => InvokeCountinuationStyle::TailCall,

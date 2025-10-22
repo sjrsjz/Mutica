@@ -2,14 +2,13 @@ use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
-use crate::types::{
-    AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable, Rootable,
-    Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
-};
+use crate::{types::{
+    type_bound::TypeBound, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable, Rootable, Type, TypeCheckContext, TypeRef
+}, util::three_valued_logic::ThreeValuedLogic};
 
 pub struct Rotate<T: GcAllocObject<T, Inner = Type<T>>> {
     value: Arc<Type<T>>,
-    is_nf: bool,
+    is_nf: ThreeValuedLogic,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Rotate<T> {
@@ -115,7 +114,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
         ))
     }
 
-    fn is_normal_form(&self) -> bool {
+    fn is_normal_form(&self) -> ThreeValuedLogic {
         self.is_nf
     }
 }
