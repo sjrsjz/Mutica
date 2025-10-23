@@ -9,10 +9,14 @@ use mutica_compiler::{
     },
 };
 use mutica_core::{
-    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable}, scheduler::{self, stack::Stack, ContinuationOrHandler}, stacksafe::{set_minimum_stack_size, set_stack_allocation_size}, types::{
+    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
+    scheduler::{self, ContinuationOrHandler, stack::Stack},
+    stacksafe::{set_minimum_stack_size, set_stack_allocation_size},
+    types::{
         AsDispatcher, CoinductiveType, GcAllocObject, Representable, TaggedPtr, Type, TypeError,
         TypeRef,
-    }, util::{cycle_detector::FastCycleDetector, rootstack::RootStack}
+    },
+    util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
 // 定义一个用于GC堆分配的类型
@@ -85,6 +89,8 @@ enum Command {
         /// Code file path
         file: String,
     },
+    /// Show Mutica version
+    Version,
 }
 
 fn main() {
@@ -101,6 +107,9 @@ fn main() {
                 }
             };
             parse_and_reduce(&code, PathBuf::from(file));
+        }
+        Command::Version => {
+            println!("Mutica version {}", env!("CARGO_PKG_VERSION"));
         }
     }
 }
@@ -244,7 +253,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
     );
 
     let mut linear_scheduler =
-        roots.context(|_| scheduler::LinearScheduler::new(built_type.ty().clone())); // 确保 roots 直到 linear_scheduler 被创建完成才丢弃
+        roots.context(|_| scheduler::LinearScheduler::new(built_type.ty().clone(), None)); // 确保 roots 直到 linear_scheduler 被创建完成才丢弃
 
     let mut step_counter = 0;
     const SWEEP_INTERVAL: usize = 8192;

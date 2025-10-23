@@ -53,6 +53,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> ContinuationOrHandler<T> {
 }
 
 pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
+    outer_io_handler:
+        Option<Box<dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>>>,
     cont_stack: Stack<ContinuationOrHandler<T>>,
     current_type: Option<Type<T>>,
     allocated_types: IdAllocator<Type<T>>,
@@ -60,10 +62,16 @@ pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
-    pub fn new(initial_type: Type<T>) -> Self {
+    pub fn new(
+        initial_type: Type<T>,
+        outer_io_handler: Option<
+            Box<dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>>,
+        >,
+    ) -> Self {
         let mut roots = RootStack::new();
         roots.attach(&initial_type);
         Self {
+            outer_io_handler,
             cont_stack: Stack::new(),
             current_type: Some(initial_type),
             allocated_types: IdAllocator::new(),
@@ -72,6 +80,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     }
 
     fn io(&mut self, f: &Type<T>, arg: &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>> {
+        if let Some(outer_handler) = &self.outer_io_handler {
+            if let Some(result) = outer_handler(f, arg)? {
+                return Ok(Some(result));
+            }
+        }
         f.map(&mut FastCycleDetector::new(), |_, f| {
             if !matches!(f, TypeRef::Opcode(_)) {
                 return Ok(None);
