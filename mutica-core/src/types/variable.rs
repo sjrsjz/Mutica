@@ -9,13 +9,13 @@ use crate::{
 use arc_gc::traceable::GCTraceable;
 
 pub struct Variable<T: GcAllocObject<T, Inner = Type<T>>> {
-    index: isize,
+    debruijn_index: isize,
     _phantom: std::marker::PhantomData<T>,
 }
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Variable<T> {
     fn clone(&self) -> Self {
         Self {
-            index: self.index,
+            debruijn_index: self.debruijn_index,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -62,8 +62,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Variable(v) => {
-                    let self_idx = self.index;
-                    let v_idx = v.index;
+                    let self_idx = self.debruijn_index;
+                    let v_idx = v.debruijn_index;
                     if self_idx >= 0 || v_idx >= 0 {
                         return Ok(if self_idx == v_idx { Some(()) } else { None });
                     }
@@ -77,11 +77,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                     value_l.fulfill(value_r.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => {
-                    if self.index >= 0 {
+                    if self.debruijn_index >= 0 {
                         // 如果是正数,说明是全局变量,无法确定类型
                         return Ok(None);
                     }
-                    let r = (-1 - self.index) as usize;
+                    let r = (-1 - self.debruijn_index) as usize;
                     let value = ctx.closure_env.1.get(r)?;
                     value.fulfill(other, &mut inner_ctx)
                 }
@@ -93,7 +93,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        let idx = self.index;
+        let idx = self.debruijn_index;
         if idx >= 0 {
             Ok(ctx
                 .param_env
@@ -127,10 +127,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
-            if self.index >= 0 {
+            if self.debruijn_index >= 0 {
                 Ok(None)
             } else {
-                let r = (-1 - self.index) as usize;
+                let r = (-1 - self.debruijn_index) as usize;
                 let value = ctx.closure_env.1.get(r)?;
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
@@ -142,16 +142,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
     fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        format!("λ.{}", self.index)
+        format!("λ.{}", self.debruijn_index)
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
     pub fn new_debruijn(debruijn_index: isize) -> Type<T> {
         Variable {
-            index: debruijn_index,
+            debruijn_index,
             _phantom: std::marker::PhantomData,
         }
         .dispatch()
+    }
+
+    pub fn debruijn_index(&self) -> isize {
+        self.debruijn_index
     }
 }

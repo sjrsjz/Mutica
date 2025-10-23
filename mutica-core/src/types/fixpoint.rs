@@ -140,6 +140,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
             Err(TypeError::UnresolvableType) // reference is dead
         }
     }
+
+    pub fn reference(&self) -> &GCArcWeak<T> {
+        &self.reference
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for FixPoint<T> {
