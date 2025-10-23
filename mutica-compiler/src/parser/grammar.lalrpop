@@ -651,7 +651,7 @@ Recursive: (String, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
 
 Expression: WithLocation<TypeAst> = {
     <l:@L> "let" <arg: Type> <con_l:@L> ";" <con_r:@R> <expr: Type> <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, l..l+3, TokenColor::Keyword);
         TokenColor::fill_colors(colors, con_l..con_r, TokenColor::Punctuation);
         WithLocation::new(TypeAst::Match {
             branches: vec![(arg, expr)],
