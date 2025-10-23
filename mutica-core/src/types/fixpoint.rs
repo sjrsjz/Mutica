@@ -122,24 +122,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     pub fn set<V: AsDispatcher<Type<T>, T>>(&self, t: V) -> Result<(), TypeError<Type<T>, T>> {
         if let Some(inner) = self.reference.upgrade() {
             let t = t.into_dispatcher();
-            // 我们先乐观假设推导出的Unknown可以被填充为True
-            let is_nf = match t.is_normal_form() {
-                ThreeValuedLogic::Unknown | ThreeValuedLogic::True => ThreeValuedLogic::True,
-                ThreeValuedLogic::False => ThreeValuedLogic::False,
-            };
+            let is_nf = t.is_normal_form();
             inner.as_ref().set_inner(t)?;
-            // 更新 is_nf
-            if let Ok(mut nf_lock) = self.is_nf.write() {
-                *nf_lock = is_nf;
+            // 先预设置归约状态
+            match self.is_nf.write() {
+                Ok(mut nf_lock) => {
+                    *nf_lock = is_nf;
+                }
+                Err(_) => {
+                    return Err(TypeError::UnresolvableType);
+                }
             }
             // 重新计算所有相关类型的归约状态
             self.recalculate_normal_form(&mut FastCycleDetector::new());
-            // 如果验证失败，则类型不能在一次重计算中确定它自己是否是归约形式，直接报错不能收敛
-            if self.is_normal_form() != is_nf {
-                return Err(TypeError::TypeNotConverged(Box::new(
-                    self.clone().dispatch().into(),
-                )));
-            }
             Ok(())
         } else {
             Err(TypeError::UnresolvableType) // reference is dead
@@ -280,8 +275,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 match inner.as_ref().get_inner() {
                     Some(t) => {
                         match cycle_detector.with_guard(t.tagged_ptr(), |cycle_detector| {
-                            t.recalculate_normal_form(cycle_detector);
-                            t.is_normal_form()
+                            match self.is_nf.write() {
+                                Ok(mut nf_lock) => {
+                                    let is_nf: ThreeValuedLogic = nf_lock.clone();
+                                    if let ThreeValuedLogic::Unknown = is_nf {
+                                        // 先假设为真，后续会迭代到收敛
+                                        *nf_lock = ThreeValuedLogic::True
+                                    }
+                                }
+                                Err(_) => {}
+                            }
+                            let mut prev_nf = self.is_normal_form();
+                            loop {
+                                t.recalculate_normal_form(cycle_detector); // 迭代
+                                let is_nf = self.is_normal_form();
+                                if is_nf == prev_nf {
+                                    // 如果收敛了就停止
+                                    break is_nf;
+                                }
+                                prev_nf = is_nf;
+                            }
                         }) {
                             Some(v) => v,
                             None => self.is_normal_form(),

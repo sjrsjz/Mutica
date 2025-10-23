@@ -294,7 +294,6 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     UnresolvableType,
     InfiniteRecursion,
     RedeclaredType,
-    TypeNotConverged(Box<U>),
     NonApplicableType(Box<U>),
     TupleIndexOutOfBounds(Box<(U, U)>),
     TypeMismatch(Box<(U, String)>),
@@ -320,9 +319,6 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::InfiniteRecursion => write!(f, "Infinite recursion"),
             TypeError::RedeclaredType => write!(f, "Type redeclared"),
             TypeError::NonApplicableType(ty) => write!(f, "Non-applicable type: {:?}", ty),
-            TypeError::TypeNotConverged(ty) => {
-                write!(f, "Type not converged: {:?}", ty)
-            }
             TypeError::TupleIndexOutOfBounds(types) => write!(
                 f,
                 "Tuple index out of bounds for types: {:?} and {:?}",

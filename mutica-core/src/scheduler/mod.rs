@@ -53,8 +53,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> ContinuationOrHandler<T> {
 }
 
 pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
-    outer_io_handler:
-        Option<Box<dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>>>,
+    outer_io_handler: Option<
+        Box<
+            dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
+                + Send
+                + Sync,
+        >,
+    >,
     cont_stack: Stack<ContinuationOrHandler<T>>,
     current_type: Option<Type<T>>,
     allocated_types: IdAllocator<Type<T>>,
@@ -65,7 +70,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     pub fn new(
         initial_type: Type<T>,
         outer_io_handler: Option<
-            Box<dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>>,
+            Box<
+                dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
+                    + Send
+                    + Sync,
+            >,
         >,
     ) -> Self {
         let mut roots = RootStack::new();
