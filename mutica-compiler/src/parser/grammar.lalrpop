@@ -38,7 +38,6 @@ extern {
         "any" => LexerToken::Any,
         "none" => LexerToken::None,
         "import" => LexerToken::Import,
-        "require" => LexerToken::Require,
         "if" => LexerToken::If,
         "then" => LexerToken::Then,
         "else" => LexerToken::Else,
@@ -651,6 +650,13 @@ Recursive: (String, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
 }
 
 Expression: WithLocation<TypeAst> = {
+    <l:@L> "let" <arg: Type> <con_l:@L> ";" <con_r:@R> <expr: Type> <r:@R> => {
+        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
+        TokenColor::fill_colors(colors, con_l..con_r, TokenColor::Punctuation);
+        WithLocation::new(TypeAst::Match {
+            branches: vec![(arg, expr)],
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
     <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
         match e.value() {
             TypeAst::Expression {
@@ -715,16 +721,6 @@ Loop: WithLocation<TypeAst> = {
     },
 }
 
-Require: WithLocation<TypeAst> = {
-    <l:@L> "require" <arg: Type> <con_l:@L> ";" <con_r:@R> <expr: Type> <r:@R> => {
-        TokenColor::fill_colors(colors, l..l+7, TokenColor::Keyword);
-        TokenColor::fill_colors(colors, con_l..con_r, TokenColor::Punctuation);
-        WithLocation::new(TypeAst::Match {
-            branches: vec![(arg, expr)],
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-}
-
 HandleWith: WithLocation<TypeAst> = {
     <l:@L> "handle" <id: Primary> <a_l:@L> "=" <a_r:@R> <value: Type> <with_l:@L> "with" <with_r:@R> <handler: Type> <con_l:@L> ";" <con_r:@R> <expr: Type> <r:@R> => {
         TokenColor::fill_colors(colors, l..l+6, TokenColor::Keyword);
@@ -761,7 +757,6 @@ HandleWith: WithLocation<TypeAst> = {
 
 pub Type: WithLocation<TypeAst> = {
     <h: HandleWith> => h,
-    <r: Require> => r,
     <l: Loop> => l,
     <e: Expression> => e,
     <t: Tuple> => t,
