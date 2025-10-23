@@ -113,7 +113,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
     /// 尝试从 Collector 构造 ParamEnv，如果同一索引下的类型不等价则返回 None
     /// 这个构造器拒绝“空洞的真理”，即保证每个索引下至少有一个类型
     pub fn from_collector(
-        mut collector: Collector<(usize, U)>,
+        collector: &mut Collector<(usize, U)>,
     ) -> Result<Option<Self>, TypeError<U, V>> {
         if collector.is_empty() {
             return Ok(Some(ParamEnv(Vec::new(), PhantomData)));
@@ -365,11 +365,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let empty_closure_env = ClosureEnv::new(Vec::<Type<T>>::new());
+        let mut matched_pattern = Collector::new();
+        let mut assumptions_temp = smallvec::smallvec![];
         for (inner, closure_idx) in self.inner.0.iter() {
-            let mut matched_pattern = Collector::new();
-
+            matched_pattern.clear();
+            assumptions_temp.clear();
             // 创建用于模式匹配的类型检查上下文
-            let mut assumptions_temp = smallvec::smallvec![];
             let mut pattern_check_ctx = TypeCheckContext::new(
                 &mut assumptions_temp,
                 (ctx.closure_env, &empty_closure_env), // 模式自身不应当访问闭包环境
@@ -380,7 +381,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 .arg
                 .fulfill(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
                 .is_some()
-                && let Some(param_env) = ParamEnv::from_collector(matched_pattern)?
+                && let Some(param_env) = ParamEnv::from_collector(&mut matched_pattern)?
             {
                 // 模式匹配成功，构造用于表达式求值的上下文
                 if *closure_idx >= self.inner.1.len() {
@@ -411,7 +412,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
         for (inner, _) in self.inner.0.iter() {
             inner.pattern.recalculate_normal_form(cycle_detector);
-            inner.expr.recalculate_normal_form(cycle_detector);
         }
         for env in self.inner.1.iter() {
             for ty in env.iter() {

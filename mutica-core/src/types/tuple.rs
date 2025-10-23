@@ -122,7 +122,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         ctx.arg
-            .map_inner(&mut FastCycleDetector::new(), |_, arg| match arg {
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 TypeRef::IntegerValue(iv) => {
                     if self.types.is_empty() {
                         return Err(super::TypeError::TupleIndexOutOfBounds(Box::new((

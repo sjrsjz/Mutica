@@ -9,13 +9,10 @@ use mutica_compiler::{
     },
 };
 use mutica_core::{
-    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
-    scheduler::{self, ContinuationOrHandler, stack::Stack},
-    types::{
+    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable}, scheduler::{self, stack::Stack, ContinuationOrHandler}, stacksafe::{set_minimum_stack_size, set_stack_allocation_size}, types::{
         AsDispatcher, CoinductiveType, GcAllocObject, Representable, TaggedPtr, Type, TypeError,
         TypeRef,
-    },
-    util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
+    }, util::{cycle_detector::FastCycleDetector, rootstack::RootStack}
 };
 
 // 定义一个用于GC堆分配的类型
@@ -91,6 +88,8 @@ enum Command {
 }
 
 fn main() {
+    set_stack_allocation_size(16 * 1024 * 1024); // 设置栈大小为16MB
+    set_minimum_stack_size(512 * 1024); // 设置最小栈大小为512KB
     let cli = Cli::parse();
     match cli.command {
         Command::Run { file } => {

@@ -65,4 +65,10 @@ impl<T> Collector<T> {
     pub fn take_items(&mut self) -> Option<smallvec::SmallVec<[T; 8]>> {
         self.items.take()
     }
+
+    pub fn clear(&mut self) {
+        if let Some(items) = &mut self.items {
+            items.clear();
+        }
+    }
 }

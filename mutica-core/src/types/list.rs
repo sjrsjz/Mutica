@@ -150,27 +150,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for List<
         &self,
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        match ctx.arg {
-            Type::IntegerValue(iv) => match iv.value() {
-                0 => self.head().map(|t| t.clone()).ok_or_else(|| {
-                    TypeError::TupleIndexOutOfBounds(Box::new((
+        ctx.arg
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                TypeRef::IntegerValue(iv) => match iv.value() {
+                    0 => self.head().map(|t| t.clone()).ok_or_else(|| {
+                        TypeError::TupleIndexOutOfBounds(Box::new((
+                            self.clone().dispatch(),
+                            ctx.arg.clone(),
+                        )))
+                    }),
+                    1 => self.tail().ok_or_else(|| {
+                        TypeError::TupleIndexOutOfBounds(Box::new((
+                            self.clone().dispatch(),
+                            ctx.arg.clone(),
+                        )))
+                    }),
+                    _ => Err(TypeError::TupleIndexOutOfBounds(Box::new((
                         self.clone().dispatch(),
                         ctx.arg.clone(),
-                    )))
-                }),
-                1 => self.tail().ok_or_else(|| {
-                    TypeError::TupleIndexOutOfBounds(Box::new((
-                        self.clone().dispatch(),
-                        ctx.arg.clone(),
-                    )))
-                }),
-                _ => Err(TypeError::TupleIndexOutOfBounds(Box::new((
-                    self.clone().dispatch(),
-                    ctx.arg.clone(),
-                )))),
-            },
-            _ => Ok(TypeBound::bottom()),
-        }
+                    )))),
+                },
+                _ => Ok(TypeBound::bottom()),
+            })?
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
@@ -234,10 +235,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
         if start > self.len() {
             panic!("List view start index out of bounds");
         }
-        let mut is_nf = ThreeValuedLogic::True;
-        for element in self.elements.iter().skip(self.head + start) {
-            is_nf &= element.is_normal_form();
-        }
+        let is_nf = if self.is_normal_form() == ThreeValuedLogic::True {
+            ThreeValuedLogic::True // 删掉这个会导致大部分算法从O(1)变成O(n)，进而严重影响性能
+        } else {
+            let mut is_nf = ThreeValuedLogic::True;
+            for element in self.elements.iter().skip(self.head + start) {
+                is_nf &= element.is_normal_form();
+            }
+            is_nf
+        };
         Self {
             elements: self.elements.clone(),
             head: self.head + start,
