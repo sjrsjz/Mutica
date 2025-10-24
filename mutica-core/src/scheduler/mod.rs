@@ -523,6 +523,38 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     pub fn current(&self) -> &Type<T> {
         self.current_type.as_ref().expect("Current type is None")
     }
+
+    pub fn allocated_types(&self) -> &IdAllocator<Type<T>> {
+        &self.allocated_types
+    }
+
+    pub fn roots(&self) -> &RootStack<Type<T>, T> {
+        &self.roots
+    }
+    
+    pub fn io_handler(
+        &self,
+    ) -> &Option<
+        Box<
+            dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
+                + Send
+                + Sync,
+        >,
+    > {
+        &self.outer_io_handler
+    }
+
+    pub fn io_handler_mut(
+        &mut self,
+    ) -> &mut Option<
+        Box<
+            dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
+                + Send
+                + Sync,
+        >,
+    > {
+        &mut self.outer_io_handler
+    }
 }
 
 pub fn find_last_perform_handler<'a, T: GcAllocObject<T, Inner = Type<T>>>(
