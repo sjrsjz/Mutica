@@ -37,7 +37,6 @@ use crate::{
 /// 由于递归类型的定义需要引用自身，我们必须：
 /// 1. **先创建占位符**：分配类型引用但不指定内容
 /// 2. **后填充定义**：通过 `set` 方法设置具体的递归结构
-
 pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
     reference: GCArcWeak<T>,
     is_nf: Arc<RwLock<ThreeValuedLogic>>,
@@ -63,7 +62,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for FixPoint<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for FixPoint<T> {
-    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<T>>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         if let Some(inner) = self.reference.upgrade() {
             collected.push(inner);
         }
@@ -97,11 +96,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     /// 返回一个 [`Type`]，包含：
     /// - 未初始化的 `FixPoint`
     /// - 对应的强引用以保证 GC 安全
-
-    pub fn new_placeholder<'roots>(
-        gc: &mut GC<T>,
-        roots: &'roots mut RootStack<Type<T>, T>,
-    ) -> Type<T> {
+    pub fn new_placeholder(gc: &mut GC<T>, roots: &mut RootStack<Type<T>, T>) -> Type<T> {
         let pointer = gc.create(T::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
@@ -265,10 +260,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self.reference.upgrade() {
-            Some(_) => self
-                .is_nf
-                .read()
-                .map_or(ThreeValuedLogic::False, |v| v.clone()),
+            Some(_) => self.is_nf.read().map_or(ThreeValuedLogic::False, |v| *v),
             None => ThreeValuedLogic::False, // reference is dead
         }
     }
@@ -279,15 +271,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 match inner.as_ref().get_inner() {
                     Some(t) => {
                         match cycle_detector.with_guard(t.tagged_ptr(), |cycle_detector| {
-                            match self.is_nf.write() {
-                                Ok(mut nf_lock) => {
-                                    let is_nf: ThreeValuedLogic = nf_lock.clone();
-                                    if let ThreeValuedLogic::Unknown = is_nf {
-                                        // 先假设为真，后续会迭代到收敛
-                                        *nf_lock = ThreeValuedLogic::True
-                                    }
+                            if let Ok(mut nf_lock) = self.is_nf.write() {
+                                let is_nf: ThreeValuedLogic = *nf_lock;
+                                if let ThreeValuedLogic::Unknown = is_nf {
+                                    // 先假设为真，后续会迭代到收敛
+                                    *nf_lock = ThreeValuedLogic::True
                                 }
-                                Err(_) => {}
                             }
                             let mut prev_nf = self.is_normal_form();
                             loop {

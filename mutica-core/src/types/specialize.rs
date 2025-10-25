@@ -135,7 +135,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
                     let mut matched = false;
                     for sub in self.types.iter() {
                         // 实际上fallback可能会导致pattern_env被意外修改,我们需要一个可回滚的机制
-                        matched |= sub.fulfill(other.clone(), &mut inner_ctx)?.is_some()
+                        matched |= sub.fulfill(other, &mut inner_ctx)?.is_some()
                     }
                     Ok(if matched { Some(()) } else { None })
                 }
@@ -143,7 +143,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
                 _ => {
                     // 当 pattern_mode 为 false 时,表示不需要匹配子模式,短路返回不会影响正确性
                     for sub in self.types.iter() {
-                        if sub.fulfill(other.clone(), &mut inner_ctx)?.is_some() {
+                        if sub.fulfill(other, &mut inner_ctx)?.is_some() {
                             return Ok(Some(()));
                         }
                     }
@@ -163,7 +163,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
-        for sub in self.types.into_iter() {
+        for sub in self.types.iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
         Self::new(&result, ctx.closure_env)
@@ -182,7 +182,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self.is_nf.read() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
@@ -234,7 +234,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Specialize<T> {
             }
             result.push_str(&sub.represent(path));
         }
-        result.push_str(">");
+        result.push('>');
         result
     }
 }
@@ -262,6 +262,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
     /// 所以 B 在集合中是多余的。
     ///
     /// 最终结果保证：集合中任意两个类型都不存在子类型关系。
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<I, X>(
         types: I,
         closure_env: &ClosureEnv<Type<T>, T>,

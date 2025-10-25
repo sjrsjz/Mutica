@@ -453,6 +453,12 @@ pub enum ContextError {
     NotDeclared(String),
     EmptyContext,
 }
+impl Default for ParseContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParseContext {
     const NOT_USED: usize = 0usize;
 
@@ -605,6 +611,12 @@ pub struct PatternCounter {
     index_mapping: HashMap<String, usize>,
 }
 
+impl Default for PatternCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PatternCounter {
     pub fn new() -> Self {
         Self {
@@ -624,6 +636,12 @@ impl PatternCounter {
 
 pub struct BuildContext<T: GcAllocObject<T, Inner = Type<T>>> {
     layers: Vec<BuildContextLayer<T>>,
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> Default for BuildContext<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
@@ -867,6 +885,7 @@ impl<'a> MultiFileBuilder<'a> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn build(
         &mut self,
         path: PathBuf,
@@ -934,10 +953,7 @@ impl<'a> MultiFileBuilder<'a> {
             .map(|ast| (Some(ast), source.clone()))
             .unwrap_or_else(|| {
                 self.errors.push(WithLocation::new(
-                    MultiFileBuilderError::IOError(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Cyclic import detected",
-                    )),
+                    MultiFileBuilderError::IOError(std::io::Error::other("Cyclic import detected")),
                     Some(&SourceLocation::new(
                         source.clone(),
                         0..source.content().len(),

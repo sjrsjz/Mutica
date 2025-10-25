@@ -170,6 +170,12 @@ pub struct LinearizeContext {
     invoke_tmpvar_counter: usize, // 用于生成唯一的
 }
 
+impl Default for LinearizeContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LinearizeContext {
     pub fn new() -> Self {
         Self {
@@ -191,6 +197,7 @@ impl LinearizeContext {
 
 #[derive(Debug)]
 pub struct LinearizeResult<'ast> {
+    #[allow(clippy::type_complexity)]
     bindings: Vec<(
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
@@ -208,6 +215,7 @@ impl<'ast> LinearizeResult<'ast> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn new_with_binding(
         bindings: Vec<(
             WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
@@ -243,6 +251,7 @@ impl<'ast> LinearizeResult<'ast> {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn bindings(
         &self,
     ) -> &Vec<(
@@ -285,7 +294,7 @@ impl<'ast> LinearizeResult<'ast> {
                         )
                     }
                 },
-                perform_handler: handler.map(|h| Box::new(h)),
+                perform_handler: handler.map(Box::new),
             })
         }
         ty
@@ -330,7 +339,7 @@ impl BasicTypeAst {
             )),
             BasicTypeAst::Tuple(v) => {
                 let elements = v
-                    .into_iter()
+                    .iter()
                     .map(|e| e.linearize(ctx, e.location()))
                     .collect::<Vec<_>>();
                 let ty =
@@ -346,7 +355,7 @@ impl BasicTypeAst {
             }
             BasicTypeAst::List(v) => {
                 let elements = v
-                    .into_iter()
+                    .iter()
                     .map(|e| e.linearize(ctx, e.location()))
                     .collect::<Vec<_>>();
                 let ty =
@@ -361,7 +370,7 @@ impl BasicTypeAst {
             }
             BasicTypeAst::Generalize(v) => {
                 let elements = v
-                    .into_iter()
+                    .iter()
                     .map(|e| e.linearize(ctx, e.location()))
                     .collect::<Vec<_>>();
                 let ty = LinearTypeAst::Generalize(
@@ -377,7 +386,7 @@ impl BasicTypeAst {
             }
             BasicTypeAst::Specialize(v) => {
                 let elements = v
-                    .into_iter()
+                    .iter()
                     .map(|e| e.linearize(ctx, e.location()))
                     .collect::<Vec<_>>();
                 let ty = LinearTypeAst::Specialize(
@@ -399,18 +408,12 @@ impl BasicTypeAst {
             } => {
                 let func = func.linearize(ctx, func.location());
                 let arg = arg.linearize(ctx, arg.location());
-                let continuation = match continuation {
-                    Some(continuation) => Some(Box::new(
-                        continuation.linearize(ctx, continuation.location()),
-                    )),
-                    None => None,
-                };
-                let perform_handler = match perform_handler {
-                    Some(perform_handler) => Some(Box::new(
-                        perform_handler.linearize(ctx, perform_handler.location()),
-                    )),
-                    None => None,
-                };
+                let continuation = continuation.as_ref().map(|continuation| {
+                    Box::new(continuation.linearize(ctx, continuation.location()))
+                });
+                let perform_handler = perform_handler.as_ref().map(|perform_handler| {
+                    Box::new(perform_handler.linearize(ctx, perform_handler.location()))
+                });
                 let ty = LinearTypeAst::Invoke {
                     func: func.tail_type().clone().into(),
                     arg: arg.tail_type().clone().into(),
@@ -506,7 +509,7 @@ impl BasicTypeAst {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FlowedMetaData<'ast> {
     reference: Option<WithLocation<Option<&'ast LinearTypeAst<'ast>>>>,
     variable_context: Vec<WithLocation<String>>,
@@ -532,15 +535,6 @@ impl<'ast> FlowedMetaData<'ast> {
         Self {
             variable_context,
             ..self
-        }
-    }
-}
-
-impl Default for FlowedMetaData<'_> {
-    fn default() -> Self {
-        Self {
-            reference: None,
-            variable_context: Vec::new(),
         }
     }
 }
@@ -620,7 +614,7 @@ impl TypeAst {
             TypeAst::Tuple(elements) => WithLocation::new(
                 BasicTypeAst::Tuple(
                     elements
-                        .into_iter()
+                        .iter()
                         .map(|e| e.into_basic(multifile_builder, e.location()))
                         .collect(),
                 ),
@@ -629,7 +623,7 @@ impl TypeAst {
             TypeAst::List(elements) => WithLocation::new(
                 BasicTypeAst::List(
                     elements
-                        .into_iter()
+                        .iter()
                         .map(|e| e.into_basic(multifile_builder, e.location()))
                         .collect(),
                 ),
@@ -638,7 +632,7 @@ impl TypeAst {
             TypeAst::Generalize(elements) => WithLocation::new(
                 BasicTypeAst::Generalize(
                     elements
-                        .into_iter()
+                        .iter()
                         .map(|e| e.into_basic(multifile_builder, e.location()))
                         .collect(),
                 ),
@@ -647,7 +641,7 @@ impl TypeAst {
             TypeAst::Specialize(elements) => WithLocation::new(
                 BasicTypeAst::Specialize(
                     elements
-                        .into_iter()
+                        .iter()
                         .map(|e| e.into_basic(multifile_builder, e.location()))
                         .collect(),
                 ),
@@ -693,9 +687,9 @@ impl TypeAst {
                 // 转换为嵌套的闭包和应用
                 let mut expr = body.into_basic(multifile_builder, body.location());
                 for (pat, ty) in binding_patterns
-                    .into_iter()
+                    .iter()
                     .rev()
-                    .zip(binding_types.into_iter().rev())
+                    .zip(binding_types.iter().rev())
                 {
                     expr = WithLocation::new(
                         BasicTypeAst::Apply {
@@ -719,7 +713,7 @@ impl TypeAst {
             TypeAst::Match { branches } => WithLocation::new(
                 BasicTypeAst::Match {
                     branches: branches
-                        .into_iter()
+                        .iter()
                         .map(|(pat, expr)| {
                             (
                                 pat.into_basic(multifile_builder, pat.location()),
@@ -1125,6 +1119,12 @@ impl Deref for PatternEnv {
     type Target = HashMap<String, WithLocation<()>>;
     fn deref(&self) -> &Self::Target {
         &self.declared
+    }
+}
+
+impl Default for PatternEnv {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1721,6 +1721,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildResult<T> {
     }
 }
 
+#[allow(clippy::type_complexity)]
 impl<'ast> LinearTypeAst<'ast> {
     #[stacksafe::stacksafe]
     pub fn to_type<'roots, T: GcAllocObject<T, Inner = Type<T>>>(

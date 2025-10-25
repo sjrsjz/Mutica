@@ -84,10 +84,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     Ok(Some(()))
                 }
                 TypeRef::List(v) => {
-                    if self.is_empty() && v.len() == 0 {
+                    if self.is_empty() && v.is_empty() {
                         return Ok(Some(()));
                     }
-                    if self.len() != 2 || v.len() == 0 {
+                    if self.len() != 2 || v.is_empty() {
                         return Ok(None);
                     }
                     let first = &self.types[0];
@@ -110,7 +110,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
-        for sub in self.types.into_iter() {
+        for sub in self.types.iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
 
@@ -147,7 +147,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self.is_nf.read() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
@@ -191,6 +191,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Tuple<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<I, U>(types: I) -> Type<T>
     where
         I: IntoIterator<Item = U>,

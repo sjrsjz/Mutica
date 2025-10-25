@@ -38,7 +38,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Namespace<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Namespace<T> {
-    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<T>>) {
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.expr.upgrade(collected);
     }
 }
@@ -111,7 +111,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self.is_nf.read() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
@@ -126,6 +126,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Namespace<T> {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<I: AsDispatcher<Type<T>, T>, S: Into<Arc<str>>>(tag: S, expr: I) -> Type<T> {
         let expr = expr.into_dispatcher();
         let is_nf = expr.is_normal_form();

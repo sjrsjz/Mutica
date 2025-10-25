@@ -105,24 +105,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for List<
                         return Ok(None);
                     }
                     for (a, b) in self.iter().zip(v.iter()) {
-                        if !a.fulfill(b.as_ref_dispatcher(), &mut inner_ctx)?.is_some() {
+                        if a.fulfill(b.as_ref_dispatcher(), &mut inner_ctx)?.is_none() {
                             return Ok(None);
                         }
                     }
                     Ok(Some(()))
                 }
                 TypeRef::Tuple(v) => {
-                    if self.len() == 0 && v.is_empty() {
+                    if self.is_empty() && v.is_empty() {
                         return Ok(Some(()));
                     }
-                    if self.len() == 0 || v.len() != 2 {
+                    if self.is_empty() || v.len() != 2 {
                         return Ok(None);
                     }
                     let head = self.head().unwrap();
                     let first = &v.types()[0];
-                    if !head
+                    if head
                         .fulfill(first.as_ref_dispatcher(), &mut inner_ctx)?
-                        .is_some()
+                        .is_none()
                     {
                         return Ok(None);
                     }
@@ -153,7 +153,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for List<
         ctx.arg
             .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 TypeRef::IntegerValue(iv) => match iv.value() {
-                    0 => self.head().map(|t| t.clone()).ok_or_else(|| {
+                    0 => self.head().cloned().ok_or_else(|| {
                         TypeError::TupleIndexOutOfBounds(Box::new((
                             self.clone().dispatch(),
                             ctx.arg.clone(),
@@ -180,7 +180,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for List<
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self.is_nf.read() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
@@ -202,6 +202,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
         self.elements.len() - self.head
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Type<T>> {
         self.elements.iter().skip(self.head)
     }
@@ -213,6 +217,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
         self.elements.get(self.head + index)
     }
 
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<I, X>(types: I) -> Type<T>
     where
         I: IntoIterator<Item = X>,
@@ -257,7 +262,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> List<T> {
     }
 
     pub fn tail(&self) -> Option<Type<T>> {
-        if self.len() == 0 {
+        if self.is_empty() {
             return None;
         }
         Some(self.view(1))

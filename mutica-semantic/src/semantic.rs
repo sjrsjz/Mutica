@@ -24,18 +24,17 @@ impl<'ast> SourceMapping<'ast> {
         source_file: &SourceFile,
     ) {
         // 按照字节偏移标记对应的 AST 节点
-        if let Some(loc) = node.location() {
-            if loc.source() == source_file {
-                let start = loc.span().start;
-                let end = loc.span().end;
-                if mapping.len() < end {
-                    mapping.resize(end, None);
-                }
-                for i in start..end {
-                    //if mapping[i].is_none() {
-                    mapping[i] = Some(node);
-                    //}
-                }
+        if let Some(loc) = node.location()
+            && loc.source() == source_file
+        {
+            let start = loc.span().start;
+            let end = loc.span().end;
+            if mapping.len() < end {
+                mapping.resize(end, None);
+            }
+            // Fill the slice with the node reference to avoid indexing warnings.
+            for slot in &mut mapping[start..end] {
+                *slot = Some(node);
             }
         }
         // 递归处理子节点

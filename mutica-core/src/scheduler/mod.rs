@@ -53,6 +53,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> ContinuationOrHandler<T> {
 }
 
 pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
+    #[allow(clippy::type_complexity)]
     outer_io_handler: Option<
         Box<
             dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
@@ -67,6 +68,7 @@ pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
+    #[allow(clippy::type_complexity)]
     pub fn new(
         initial_type: Type<T>,
         outer_io_handler: Option<
@@ -89,10 +91,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     }
 
     fn io(&mut self, f: &Type<T>, arg: &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>> {
-        if let Some(outer_handler) = &self.outer_io_handler {
-            if let Some(result) = outer_handler(f, arg)? {
-                return Ok(Some(result));
-            }
+        if let Some(outer_handler) = &self.outer_io_handler
+            && let Some(result) = outer_handler(f, arg)?
+        {
+            return Ok(Some(result));
         }
         f.map(&mut FastCycleDetector::new(), |_, f| {
             if !matches!(f, TypeRef::Opcode(_)) {
@@ -298,10 +300,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             &mut self.roots,
         );
         let current_type = self.current_type.take().ok_or_else(|| {
-            TypeError::RuntimeError(Arc::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "No current type to step",
-            )))
+            TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))
         })?;
         let reduced = current_type.reduce(&mut reduction_ctx)?;
         let (next_type, updated) =
@@ -415,10 +414,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 Some(view) => view,
                                 None => {
                                     return Err(TypeError::RuntimeError(Arc::new(
-                                        std::io::Error::new(
-                                            std::io::ErrorKind::Other,
-                                            "No continuation to resume",
-                                        ),
+                                        std::io::Error::other("No continuation to resume"),
                                     )));
                                 }
                             };
@@ -509,10 +505,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         if let Some(current) = &self.current_type {
             self.roots.attach(current);
         }
-        for entry in self.allocated_types.iter() {
-            if let Some(ty) = entry {
-                self.roots.attach(ty);
-            }
+        for ty in self.allocated_types.iter().flatten() {
+            self.roots.attach(ty);
         }
     }
 
@@ -532,6 +526,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         &self.roots
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn io_handler(
         &self,
     ) -> &Option<
@@ -544,6 +539,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         &self.outer_io_handler
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn io_handler_mut(
         &mut self,
     ) -> &mut Option<

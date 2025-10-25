@@ -9,6 +9,12 @@ pub struct RootStack<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     _phantom: std::marker::PhantomData<U>,
 }
 
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Default for RootStack<U, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> RootStack<U, V> {
     pub fn new() -> Self {
         Self {
@@ -60,5 +66,5 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> RootStack<U, V> {
 
 pub trait Rootable<T: GCTraceable<T> + 'static> {
     #[allow(unused_variables)]
-    fn upgrade<'roots>(&self, collected: &'roots mut Vec<GCArc<T>>) {}
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {}
 }

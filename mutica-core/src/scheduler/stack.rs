@@ -5,6 +5,12 @@ pub struct Stack<T> {
     frames: Vec<(usize, usize, usize)>, // (fork的上一逻辑栈帧的长度，当前逻辑栈帧新增的长度, 上一栈帧的索引)
 }
 
+impl<T> Default for Stack<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> Stack<T> {
     pub fn new() -> Self {
         Self {
@@ -104,14 +110,14 @@ impl<T> Stack<T> {
                 // 0号frame，物理栈帧
                 return Some(index); // 直接返回index（物理栈索引）
             }
-            Self::__get(&frames, frames[frame_index].2, index)
+            Self::__get(frames, frames[frame_index].2, index)
         } else {
             // 从当前frame中获取
             // 我们可以计算出父栈帧总长度
-            let mut acc = 0;
-            for i in 0..frame_index {
-                acc += frames[i].1; // 累加前面frame的实际新增长度
-            }
+            let acc: usize = frames[..frame_index]
+                .iter()
+                .map(|f| f.1) // 累加前面frame的实际新增长度
+                .sum();
             Some(acc + (index - frames[frame_index].0))
         }
     }
@@ -266,6 +272,9 @@ impl<'a, T> StackView<'a, T> {
         } else {
             panic!("Frame index out of bounds");
         }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 

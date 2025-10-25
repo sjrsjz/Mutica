@@ -304,7 +304,6 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                 TypeRef::Tuple(tuple) if tuple.is_empty() => (),
                 _ => {
                     println!("{}", v.display(&mut FastCycleDetector::new()));
-                    ()
                 }
             })
             .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e)),

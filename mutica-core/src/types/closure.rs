@@ -84,7 +84,6 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureEnv<U, V> {
     pub fn get(&self, index: usize) -> Result<&U, TypeError<U, V>> {
         self.0
             .get(index)
-            .map(|v| v)
             .ok_or_else(|| TypeError::UnboundVariable(-1 - index as isize))
     }
 
@@ -205,6 +204,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureBranch<U, V> {
 }
 
 pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
+    #[allow(clippy::type_complexity)]
     inner: Arc<(
         Vec<(ClosureBranch<Type<T>, T>, usize)>, // usize 用于记录分支指向的环境索引
         Vec<ClosureEnv<Type<T>, T>>,             // 环境列表
@@ -404,7 +404,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self.is_nf.read() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
@@ -438,7 +438,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
         if !self.inner.1.is_empty() {
             repr.push_str(" capture<");
             repr.push_str(&self.inner.1.represent(path));
-            repr.push_str(">");
+            repr.push('>');
         }
         for (inner, closure_idx) in self.inner.0.iter() {
             repr.push_str(&format!(" | c.{} ", closure_idx));
@@ -452,6 +452,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<U, V, W>(
         branches: Vec<(U, V, usize)>,
         closure_env: Vec<ClosureEnv<Type<T>, T>>,

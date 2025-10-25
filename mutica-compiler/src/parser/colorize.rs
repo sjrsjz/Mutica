@@ -21,7 +21,7 @@ pub enum TokenColor {
 }
 impl TokenColor {
     pub fn fill_colors(
-        colors: &mut Vec<TokenColor>,
+        colors: &mut [TokenColor],
         range: std::ops::Range<usize>,
         color: TokenColor,
     ) {

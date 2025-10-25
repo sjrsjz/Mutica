@@ -97,11 +97,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         if idx >= 0 {
             Ok(ctx
                 .param_env
-                .get(idx as usize)
-                .map(|t| t.clone())
+                .get(idx as usize).cloned()
                 .unwrap_or(TypeBound::bottom()))
         } else {
-            ctx.closure_env.get((-1 - idx) as usize).map(|t| t.clone())
+            ctx.closure_env.get((-1 - idx) as usize).cloned()
         }
     }
 

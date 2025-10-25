@@ -130,7 +130,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
-                        if !sub.fulfill(other, &mut inner_ctx)?.is_some() {
+                        if sub.fulfill(other, &mut inner_ctx)?.is_none() {
                             return Ok(None);
                         }
                     }
@@ -150,7 +150,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
-        for sub in self.types.into_iter() {
+        for sub in self.types.iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
         Self::new(&result, ctx.closure_env)
@@ -169,7 +169,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self.is_nf.read() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
@@ -221,7 +221,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Generalize<T> {
             }
             result.push_str(&sub.represent(path));
         }
-        result.push_str(">");
+        result.push('>');
         result
     }
 }
@@ -250,6 +250,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
     ///
     /// 最终结果保证：集合中任意两个类型都不存在子类型关系，
     /// 且保留的都是最泛化的类型。
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<I, X>(
         types: I,
         closure_env: &ClosureEnv<Type<T>, T>,

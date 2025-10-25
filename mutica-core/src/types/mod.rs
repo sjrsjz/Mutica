@@ -156,28 +156,7 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
     fn clone(&self) -> Self {
-        match self {
-            TypeRef::Bound(v) => TypeRef::Bound(v),
-            TypeRef::Integer(v) => TypeRef::Integer(v),
-            TypeRef::IntegerValue(v) => TypeRef::IntegerValue(v),
-            TypeRef::Float(v) => TypeRef::Float(v),
-            TypeRef::FloatValue(v) => TypeRef::FloatValue(v),
-            TypeRef::Char(v) => TypeRef::Char(v),
-            TypeRef::CharValue(v) => TypeRef::CharValue(v),
-            TypeRef::Tuple(v) => TypeRef::Tuple(v),
-            TypeRef::List(v) => TypeRef::List(v),
-            TypeRef::Generalize(v) => TypeRef::Generalize(v),
-            TypeRef::Specialize(v) => TypeRef::Specialize(v),
-            TypeRef::FixPoint(v) => TypeRef::FixPoint(v),
-            TypeRef::Invoke(v) => TypeRef::Invoke(v),
-            TypeRef::Variable(v) => TypeRef::Variable(v),
-            TypeRef::Closure(v) => TypeRef::Closure(v),
-            TypeRef::Opcode(v) => TypeRef::Opcode(v),
-            TypeRef::Namespace(v) => TypeRef::Namespace(v),
-            TypeRef::Pattern(v) => TypeRef::Pattern(v),
-            TypeRef::Lazy(v) => TypeRef::Lazy(v),
-            TypeRef::Rot(v) => TypeRef::Rot(v),
-        }
+        *self
     }
 }
 

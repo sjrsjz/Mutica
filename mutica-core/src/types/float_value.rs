@@ -104,6 +104,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FloatValue<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> FloatValue<T> {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(value: f64) -> Type<T> {
         Self {
             value,

@@ -127,8 +127,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
             .map(&mut FastCycleDetector::new(), |_, arg| match self {
                 Opcode::Opcode => Err(TypeError::NonApplicableType(self.clone().dispatch().into())),
                 Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    std::io::Error::other(
                         format!("Unhandled IO operation: {}", v),
                     ),
                 ))),
@@ -260,8 +259,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             (TypeRef::Closure(l), TypeRef::Closure(r)) => match self {
                                 Opcode::Add => Ok(l.impls(r)),
                                 _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
-                                    std::io::Error::new(
-                                        std::io::ErrorKind::Other,
+                                    std::io::Error::other(
                                         "Only 'Add' operation is supported for Closure types",
                                     ),
                                 ))),
@@ -320,6 +318,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<T> {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(op: Opcode<T>) -> Type<T> {
         op.dispatch()
     }

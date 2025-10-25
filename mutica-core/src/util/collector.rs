@@ -2,6 +2,12 @@ pub struct Collector<T> {
     items: Option<smallvec::SmallVec<[T; 8]>>,
 }
 
+impl<T> Default for Collector<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> Collector<T> {
     pub fn new() -> Self {
         Self {
@@ -45,10 +51,7 @@ impl<T> Collector<T> {
     }
 
     pub fn push(&mut self, item: T) {
-        match &mut self.items {
-            Some(items) => items.push(item),
-            None => {}
-        }
+        if let Some(items) = &mut self.items { items.push(item) }
     }
 
     pub fn into_vec(self) -> Vec<T> {
