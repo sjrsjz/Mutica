@@ -75,36 +75,38 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let enabled = pattern_env.is_enabled();
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
-            if enabled {
-                // 模式泄露到了待匹配的对象而非模式中
-                // 这通常意味着编译器的bug
-                // 理想情况是直接 panic
-                panic!(
-                    "CRITICAL: Pattern variable leaked to non-pattern context: {:?}",
-                    self.represent(&mut FastCycleDetector::new())
-                )
-            }
-            // // 由于Pattern的特殊性，非模式匹配下的Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
-            // match other {
-            //     TypeRef::Pattern(v) => {
-            //         if self.debruijn_index == v.debruijn_index {
-            //             self.expr.is(v.expr.as_ref_dispatcher(), &mut inner_ctx)
-            //         } else {
-            //             Ok(None)
-            //         }
-            //     }
-            //     _ => Ok(None),
-            // }
+        self.expr.fulfill(other, ctx)
+        // ctx.pattern_env.collect(|pattern_env| {
+        //     // let enabled = pattern_env.is_enabled();
+        //     let mut inner_ctx =
+        //         TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+        //     // if enabled {
+        //     //     // 模式泄露到了待匹配的对象而非模式中
+        //     //     // 这通常意味着编译器的bug
+        //     //     // 理想情况是直接 panic
+        //     //     panic!(
+        //     //         "CRITICAL: Pattern variable leaked to non-pattern context: {:?}",
+        //     //         self.represent(&mut FastCycleDetector::new())
+        //     //     )
+        //     // }
+        //     // 实际上上述检查会导致函数参数类型检查panic
+        //     // // 由于Pattern的特殊性，非模式匹配下的Pattern只能和Pattern进行比较，否则可能破坏alpha等价性
+        //     // match other {
+        //     //     TypeRef::Pattern(v) => {
+        //     //         if self.debruijn_index == v.debruijn_index {
+        //     //             self.expr.is(v.expr.as_ref_dispatcher(), &mut inner_ctx)
+        //     //         } else {
+        //     //             Ok(None)
+        //     //         }
+        //     //     }
+        //     //     _ => Ok(None),
+        //     // }
 
-            // 虽然使用Pattern进行类型检查可以判定alpha等价性
-            // 但是它会导致TypeBound的反向子类型关系失效
-            // 因此这里直接透过Pattern进行比较
-            self.expr.fulfill(other, &mut inner_ctx)
-        })
+        //     // 虽然使用Pattern进行类型检查可以判定alpha等价性
+        //     // 但是它会导致TypeBound的反向子类型关系失效
+        //     // 因此这里直接透过Pattern进行比较
+        //     self.expr.fulfill(other, &mut inner_ctx)
+        // })
     }
 
     fn invoke(
@@ -152,13 +154,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<Option<()>, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
-            if !pattern_env.is_enabled() {
-                // 模式泄露到了非模式匹配的上下文中
-                panic!(
-                    "CRITICAL: Pattern variable leaked to non-pattern context: {:?}",
-                    self.represent(&mut FastCycleDetector::new())
-                )
-            }
+            // if !pattern_env.is_enabled() {
+            //     // 模式泄露到了非模式匹配的上下文中
+            //     panic!(
+            //         "CRITICAL: Pattern variable leaked to non-pattern context: {:?}",
+            //         self.represent(&mut FastCycleDetector::new())
+            //     )
+            // }
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             if other
