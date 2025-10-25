@@ -110,6 +110,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 unreachable!()
             };
             match io_name.as_ref().as_str() {
+                // 基本IO操作
                 "print" => {
                     let str = arg.display(&mut FastCycleDetector::new());
                     print!("{}", str);
@@ -134,6 +135,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     io::stdout().flush().unwrap();
                     Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
                 }
+                // 类型表示相关
                 "repr" => {
                     let repr = arg.represent(&mut FastCycleDetector::new());
                     let chars = repr
@@ -154,6 +156,82 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 "perform" => Err(TypeError::Perform(arg.clone().into())),
                 "break" => Err(TypeError::Break(arg.clone().into())),
                 "resume" => Err(TypeError::Resume(arg.clone().into())),
+                // 类型结构描述相关
+                "tuple_len" => arg.map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                    TypeRef::Tuple(v) => Ok(Some(IntegerValue::new(v.len() as i64))),
+                    TypeRef::List(v) => {
+                        if v.is_empty() {
+                            Ok(Some(IntegerValue::new(0)))
+                        } else {
+                            Ok(Some(IntegerValue::new(2)))
+                        }
+                    }
+                    _ => Err(TypeError::TypeMismatch(
+                        (arg.clone_data(), "Tuple | List".into()).into(),
+                    )),
+                })?,
+                "as_list" => arg.map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                    TypeRef::Tuple(v) => {
+                        let mut elements = Vec::with_capacity(v.len());
+                        for ty in v.types() {
+                            elements.push(ty.clone());
+                        }
+                        Ok(Some(List::new(elements)))
+                    }
+                    TypeRef::List(_) => Ok(Some(arg.clone_data())),
+                    TypeRef::Generalize(v) => {
+                        let mut elements = Vec::new();
+                        for ty in v.types() {
+                            elements.push(ty.clone());
+                        }
+                        Ok(Some(List::new(elements)))
+                    }
+                    TypeRef::Specialize(v) => {
+                        let mut elements = Vec::new();
+                        for ty in v.types() {
+                            elements.push(ty.clone());
+                        }
+                        Ok(Some(List::new(elements)))
+                    }
+                    _ => Err(TypeError::TypeMismatch(
+                        (
+                            arg.clone_data(),
+                            "Tuple | List | Generalize | Specialize".into(),
+                        )
+                            .into(),
+                    )),
+                })?,
+                "as_tuple" => arg.map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                    TypeRef::Tuple(_) => Ok(Some(arg.clone_data())),
+                    TypeRef::List(v) => {
+                        let mut elements = Vec::with_capacity(v.len());
+                        for ty in v.iter() {
+                            elements.push(ty.clone());
+                        }
+                        Ok(Some(Tuple::new(elements)))
+                    }
+                    TypeRef::Generalize(v) => {
+                        let mut elements = Vec::new();
+                        for ty in v.types() {
+                            elements.push(ty.clone());
+                        }
+                        Ok(Some(Tuple::new(elements)))
+                    }
+                    TypeRef::Specialize(v) => {
+                        let mut elements = Vec::new();
+                        for ty in v.types() {
+                            elements.push(ty.clone());
+                        }
+                        Ok(Some(Tuple::new(elements)))
+                    }
+                    _ => Err(TypeError::TypeMismatch(
+                        (
+                            arg.clone_data(),
+                            "Tuple | List | Generalize | Specialize".into(),
+                        )
+                            .into(),
+                    )),
+                })?,
                 // 可变状态相关
                 "alloc" => {
                     let id = self.allocated_types.alloc(arg.clone());
