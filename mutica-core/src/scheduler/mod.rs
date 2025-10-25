@@ -531,7 +531,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     pub fn roots(&self) -> &RootStack<Type<T>, T> {
         &self.roots
     }
-    
+
     pub fn io_handler(
         &self,
     ) -> &Option<
@@ -554,6 +554,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         >,
     > {
         &mut self.outer_io_handler
+    }
+
+    pub fn set_state(&mut self, ty: Type<T>, stack: Stack<ContinuationOrHandler<T>>) {
+        self.current_type = Some(ty);
+        self.cont_stack = stack;
     }
 }
 
