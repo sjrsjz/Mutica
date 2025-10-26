@@ -141,7 +141,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                 match error_with_loc.value() {
                     MultiFileBuilderError::SyntaxError(e) => {
                         let syntax_error = SyntaxError::new(e.clone());
-                        let report = syntax_error.report(filepath.clone(), &source_content);
+                        let report = syntax_error.report(filepath.clone(), &source_content, None);
                         report
                             .eprint((filepath, ariadne::Source::from(source_content)))
                             .ok();
@@ -149,11 +149,11 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                     MultiFileBuilderError::RecoveryError(e) => {
                         let report = mutica_compiler::parser::report_error_recovery(
                             e,
-                            &filepath,
+                            filepath.clone(),
                             &source_content,
                         );
                         report
-                            .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                            .eprint((filepath, ariadne::Source::from(source_content)))
                             .ok();
                     }
                     MultiFileBuilderError::IOError(e) => {

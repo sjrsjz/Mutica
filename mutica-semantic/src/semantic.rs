@@ -227,7 +227,8 @@ mod test {
                     match error_with_loc.value() {
                         MultiFileBuilderError::SyntaxError(e) => {
                             let syntax_error = SyntaxError::new(e.clone());
-                            let report = syntax_error.report(filepath.clone(), &source_content);
+                            let report =
+                                syntax_error.report(filepath.clone(), &source_content, None);
                             report
                                 .eprint((filepath, ariadne::Source::from(source_content)))
                                 .ok();
@@ -235,11 +236,11 @@ mod test {
                         MultiFileBuilderError::RecoveryError(e) => {
                             let report = mutica_compiler::parser::report_error_recovery(
                                 e,
-                                &filepath,
+                                filepath.clone(),
                                 &source_content,
                             );
                             report
-                                .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                                .eprint((filepath.clone(), ariadne::Source::from(source_content)))
                                 .ok();
                         }
                         MultiFileBuilderError::IOError(e) => {
@@ -365,7 +366,8 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
                     match error_with_loc.value() {
                         MultiFileBuilderError::SyntaxError(e) => {
                             let syntax_error = SyntaxError::new(e.clone());
-                            let report = syntax_error.report(filepath.clone(), &source_content);
+                            let report =
+                                syntax_error.report(filepath.clone(), &source_content, None);
                             report
                                 .eprint((filepath, ariadne::Source::from(source_content)))
                                 .ok();
@@ -373,11 +375,11 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
                         MultiFileBuilderError::RecoveryError(e) => {
                             let report = mutica_compiler::parser::report_error_recovery(
                                 e,
-                                &filepath,
+                                filepath.clone(),
                                 &source_content,
                             );
                             report
-                                .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                                .eprint((filepath, ariadne::Source::from(source_content)))
                                 .ok();
                         }
                         MultiFileBuilderError::IOError(e) => {

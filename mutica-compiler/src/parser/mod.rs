@@ -62,8 +62,8 @@ pub fn calculate_full_error_span(
             max_pos = max_pos.max(*end);
         }
         User { error } => {
-            min_pos = min_pos.min(error.span.start);
-            max_pos = max_pos.max(error.span.end);
+            min_pos = min_pos.min(error.span().start);
+            max_pos = max_pos.max(error.span().end);
         }
     }
 
@@ -317,132 +317,14 @@ impl<'ast> ParseError<'ast> {
 /// 为 lalrpop 的 ErrorRecovery 生成美观的错误报告
 pub fn report_error_recovery<'a>(
     error: &ErrorRecovery<usize, LexerToken, LexicalError>,
-    filepath: &'a str,
+    filepath: String,
     source: &str,
-) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-    use lalrpop_util::ParseError::*;
-
-    // Calculate the full error span including dropped tokens
-    let (span_start_byte, span_end_byte) = calculate_full_error_span(error);
-    let span_start_char = byte_offset_to_char_offset(source, span_start_byte);
-    let span_end_char = byte_offset_to_char_offset(source, span_end_byte);
-
-    match &error.error {
-        InvalidToken { location } => {
-            let (line, col) = byte_offset_to_position(source, *location);
-            let char_offset = byte_offset_to_char_offset(source, *location);
-            Report::build(ReportKind::Error, filepath, char_offset)
-                .with_message(format!("Invalid token at line {}, column {}", line, col))
-                .with_label(
-                    Label::new((filepath, span_start_char..span_end_char))
-                        .with_message("The token at this position is not recognized")
-                        .with_color(Color::Red),
-                )
-        }
-        UnrecognizedToken {
-            token: (start, token, end),
-            expected,
-        } => {
-            let (line, col) = byte_offset_to_position(source, *start);
-            let char_start = byte_offset_to_char_offset(source, *start);
-            let char_end = byte_offset_to_char_offset(source, *end);
-
-            let mut report_builder = Report::build(ReportKind::Error, filepath, char_start)
-                .with_message(format!(
-                    "Unrecognized token {:?} at line {}, column {}",
-                    token, line, col
-                ))
-                .with_label(
-                    Label::new((filepath, char_start..char_end))
-                        .with_message({
-                            if !expected.is_empty() {
-                                let expected_str = expected.join(", ");
-                                format!("Expected one of: {}", expected_str)
-                            } else {
-                                "Invalid token".to_string()
-                            }
-                        })
-                        .with_color(Color::Red),
-                );
-
-            // Add a secondary label showing the full error range if dropped tokens exist
-            if !error.dropped_tokens.is_empty()
-                && (span_start_char < char_start || span_end_char > char_end)
-            {
-                report_builder = report_builder.with_label(
-                    Label::new((filepath, span_start_char..span_end_char))
-                        .with_message("Full error region (including skipped tokens)")
-                        .with_color(Color::Yellow),
-                );
-            }
-
-            report_builder
-        }
-        UnrecognizedEof { location, expected } => {
-            let (line, col) = byte_offset_to_position(source, *location);
-            let char_offset = byte_offset_to_char_offset(source, *location);
-            Report::build(ReportKind::Error, filepath, char_offset)
-                .with_message(format!(
-                    "Unexpected end of file at line {}, column {}",
-                    line, col
-                ))
-                .with_label(
-                    Label::new((filepath, span_start_char..span_end_char.max(1)))
-                        .with_message({
-                            if !expected.is_empty() {
-                                let expected_str = expected.join(", ");
-                                format!("Expected one of: {}", expected_str)
-                            } else {
-                                "Unexpected end of file".to_string()
-                            }
-                        })
-                        .with_color(Color::Red),
-                )
-        }
-        ExtraToken {
-            token: (start, token, end),
-        } => {
-            let (line, col) = byte_offset_to_position(source, *start);
-            let char_start = byte_offset_to_char_offset(source, *start);
-            let char_end = byte_offset_to_char_offset(source, *end);
-            let mut report_builder = Report::build(ReportKind::Error, filepath, char_start)
-                .with_message(format!(
-                    "Extra token {:?} at line {}, column {}",
-                    token, line, col
-                ))
-                .with_label(
-                    Label::new((filepath, char_start..char_end))
-                        .with_message("Try removing this token")
-                        .with_color(Color::Yellow),
-                );
-
-            // Add a secondary label showing the full error range if dropped tokens exist
-            if !error.dropped_tokens.is_empty()
-                && (span_start_char < char_start || span_end_char > char_end)
-            {
-                report_builder = report_builder.with_label(
-                    Label::new((filepath, span_start_char..span_end_char))
-                        .with_message("Full error region (including skipped tokens)")
-                        .with_color(Color::Cyan),
-                );
-            }
-
-            report_builder
-        }
-        User { error: lex_error } => {
-            let (line, col) = byte_offset_to_position(source, lex_error.span.start);
-            let char_start = byte_offset_to_char_offset(source, lex_error.span.start);
-            let char_end = byte_offset_to_char_offset(source, lex_error.span.end);
-            Report::build(ReportKind::Error, filepath, char_start)
-                .with_message(format!("Lexical error at line {}, column {}", line, col))
-                .with_label(
-                    Label::new((filepath, char_start..char_end))
-                        .with_message("There is a lexical error here")
-                        .with_color(Color::Red),
-                )
-        }
-    }
-    .finish()
+) -> Report<'a, (String, std::ops::Range<usize>)> {
+    SyntaxError::new(error.error.clone()).report(
+        filepath.to_string(),
+        source,
+        Some(calculate_full_error_span(error)),
+    )
 }
 
 pub struct ParseContext {
@@ -979,83 +861,153 @@ impl SyntaxError {
         &self,
         filepath: String,
         source: &str,
+        span: Option<(usize, usize)>,
     ) -> Report<'static, (String, std::ops::Range<usize>)> {
         use lalrpop_util::ParseError::*;
 
         match &self.0 {
             InvalidToken { location } => {
-                let char_pos = byte_offset_to_char_offset(source, *location);
-                Report::build(ReportKind::Error, filepath.clone(), char_pos)
-                    .with_message("Invalid token")
+                let (line, col) = byte_offset_to_position(source, *location);
+                let char_offset = byte_offset_to_char_offset(source, *location);
+                let (span_start_char, span_end_char) = match span {
+                    Some(span) => (
+                        byte_offset_to_char_offset(source, span.0),
+                        byte_offset_to_char_offset(source, span.1),
+                    ),
+                    None => (char_offset, char_offset + 1),
+                };
+                Report::build(ReportKind::Error, filepath.clone(), char_offset)
+                    .with_message(format!("Invalid token at line {}, column {}", line, col))
                     .with_label(
-                        Label::new((filepath, char_pos..char_pos + 1))
-                            .with_message("Invalid token found here")
+                        Label::new((filepath, span_start_char..span_end_char))
+                            .with_message("The token at this position is not recognized")
                             .with_color(Color::Red),
                     )
-                    .finish()
             }
             UnrecognizedToken {
                 token: (start, token, end),
                 expected,
             } => {
+                let (line, col) = byte_offset_to_position(source, *start);
                 let char_start = byte_offset_to_char_offset(source, *start);
                 let char_end = byte_offset_to_char_offset(source, *end);
-                let mut report = Report::build(ReportKind::Error, filepath.clone(), char_start)
-                    .with_message(format!("Unrecognized token: {:?}", token))
+                let (span_start_char, span_end_char) = match span {
+                    Some(span) => (
+                        byte_offset_to_char_offset(source, span.0),
+                        byte_offset_to_char_offset(source, span.1),
+                    ),
+                    None => (char_start, char_end),
+                };
+                let report_builder = Report::build(ReportKind::Error, filepath.clone(), char_start)
+                    .with_message(format!(
+                        "Unrecognized token {:?} at line {}, column {}",
+                        token, line, col
+                    ))
                     .with_label(
                         Label::new((filepath.clone(), char_start..char_end))
-                            .with_message("Unexpected token")
+                            .with_message({
+                                if !expected.is_empty() {
+                                    let expected_str = expected.join(", ");
+                                    format!("Expected one of: {}", expected_str)
+                                } else {
+                                    "Invalid token".to_string()
+                                }
+                            })
                             .with_color(Color::Red),
+                    )
+                    .with_label(
+                        Label::new((filepath, span_start_char..span_end_char))
+                            .with_message("The error span including all tokens")
+                            .with_color(Color::Cyan),
                     );
-
-                if !expected.is_empty() {
-                    report = report.with_help(format!("Expected one of: {}", expected.join(", ")));
-                }
-
-                report.finish()
+                report_builder
             }
             UnrecognizedEof { location, expected } => {
-                let char_pos = byte_offset_to_char_offset(source, *location);
-                let mut report = Report::build(ReportKind::Error, filepath.clone(), char_pos)
-                    .with_message("Unexpected end of input")
+                let (line, col) = byte_offset_to_position(source, *location);
+                let char_offset = byte_offset_to_char_offset(source, *location);
+                let (span_start_char, span_end_char) = match span {
+                    Some(span) => (
+                        byte_offset_to_char_offset(source, span.0),
+                        byte_offset_to_char_offset(source, span.1),
+                    ),
+                    None => (char_offset, char_offset + 1),
+                };
+                Report::build(ReportKind::Error, filepath.clone(), char_offset)
+                    .with_message(format!(
+                        "Unexpected end of file at line {}, column {}",
+                        line, col
+                    ))
                     .with_label(
-                        Label::new((filepath.clone(), char_pos..char_pos))
-                            .with_message("Expected more input here")
+                        Label::new((filepath, span_start_char..span_end_char.max(1)))
+                            .with_message({
+                                if !expected.is_empty() {
+                                    let expected_str = expected.join(", ");
+                                    format!("Expected one of: {}", expected_str)
+                                } else {
+                                    "Unexpected end of file".to_string()
+                                }
+                            })
                             .with_color(Color::Red),
-                    );
-
-                if !expected.is_empty() {
-                    report = report.with_help(format!("Expected one of: {}", expected.join(", ")));
-                }
-
-                report.finish()
+                    )
             }
             ExtraToken {
                 token: (start, token, end),
             } => {
+                let (line, col) = byte_offset_to_position(source, *start);
                 let char_start = byte_offset_to_char_offset(source, *start);
                 let char_end = byte_offset_to_char_offset(source, *end);
-                Report::build(ReportKind::Error, filepath.clone(), char_start)
-                    .with_message(format!("Extra token: {:?}", token))
+                let (span_start_char, span_end_char) = match span {
+                    Some(span) => (
+                        byte_offset_to_char_offset(source, span.0),
+                        byte_offset_to_char_offset(source, span.1),
+                    ),
+                    None => (char_start, char_end),
+                };
+                let report_builder = Report::build(ReportKind::Error, filepath.clone(), char_start)
+                    .with_message(format!(
+                        "Extra token {:?} at line {}, column {}",
+                        token, line, col
+                    ))
                     .with_label(
-                        Label::new((filepath, char_start..char_end))
-                            .with_message("This token should not be here")
-                            .with_color(Color::Red),
+                        Label::new((filepath.clone(), char_start..char_end))
+                            .with_message("Try removing this token")
+                            .with_color(Color::Yellow),
                     )
-                    .finish()
+                    .with_label(
+                        Label::new((filepath, span_start_char..span_end_char))
+                            .with_message("The error span including all tokens")
+                            .with_color(Color::Cyan),
+                    );
+                report_builder
             }
-            User { error } => {
-                let char_start = byte_offset_to_char_offset(source, error.span.start);
-                let char_end = byte_offset_to_char_offset(source, error.span.end);
+            User { error: lex_error } => {
+                let (line, col) = byte_offset_to_position(source, lex_error.span().start);
+                let char_start = byte_offset_to_char_offset(source, lex_error.span().start);
+                let char_end = byte_offset_to_char_offset(source, lex_error.span().end);
+                let (span_start_char, span_end_char) = match span {
+                    Some(span) => (
+                        byte_offset_to_char_offset(source, span.0),
+                        byte_offset_to_char_offset(source, span.1),
+                    ),
+                    None => (char_start, char_end),
+                };
                 Report::build(ReportKind::Error, filepath.clone(), char_start)
-                    .with_message("Lexical error")
+                    .with_message(format!(
+                        "Lexical error at line {}, column {}: {}",
+                        line, col, lex_error
+                    ))
                     .with_label(
-                        Label::new((filepath, char_start..char_end))
-                            .with_message(format!("{:?}", error))
+                        Label::new((filepath.clone(), char_start..char_end))
+                            .with_message("There is a lexical error here")
                             .with_color(Color::Red),
                     )
-                    .finish()
+                    .with_label(
+                        Label::new((filepath, span_start_char..span_end_char))
+                            .with_message("The error span including all tokens")
+                            .with_color(Color::Cyan),
+                    )
             }
         }
+        .finish()
     }
 }
