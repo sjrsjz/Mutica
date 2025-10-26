@@ -1,15 +1,15 @@
 let list_pkg: any = import "list.mu";
 let List: any = list_pkg.List;
-
+let cons: any = list_pkg.cons;
 // 归并两个已排序的列表
 let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) -> {
     loop go: t: any = (lst1, lst2);
     match t
         | ((), l2: any) => l2
         | (l1: any, ()) => l1
-        | ((h1: any, t1: any), (h2: any, t2: any)) => if cmp(h1, h2)
-            then (h1, go(t1, (h2, t2)))
-            else (h2, go((h1, t1), t2))
+        | ((h1: any) @ (t1: any), (h2: any) @ (t2: any)) => if cmp(h1, h2)
+            then cons(h1, go(t1, cons(h2, t2)))
+            else cons(h2, go(cons(h1, t1), t2))
         | panic
 };
 
@@ -27,7 +27,7 @@ let merge_sort: any = cmp: any -> lst: List(any) -> {
     loop go: t: any = lst;
     match t
         | () => ()
-        | v: (any, ()) => v
+        | v: (any @ ()) => v
         | l: any => {
             let (left: any, right: any) = split(l);
             let sorted_left: any = go(left);

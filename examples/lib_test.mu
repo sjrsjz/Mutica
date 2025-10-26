@@ -5,7 +5,7 @@ let sort_pkg: any = import "lib/sort.mu";
 
 // 创建测试列表: [1, 2, 3, 4, 5]
 let test_list: any = list_pkg.cons(1, list_pkg.cons(2, list_pkg.cons(3, list_pkg.cons(4, list_pkg.cons(5, list_pkg.Nil)))));
-let (_x: any, _x: any) = (test_list, @(1, 2, 3, 4, 5)); // 类型检查
+let (_x: any, _x: any) = (test_list, (1, 2, 3, 4, 5)); // 类型检查
 let print_int_list: any = lst: list_pkg.List(int) -> {
     discard list_pkg.iter(lst)(x: int -> {
         discard print!(x);
