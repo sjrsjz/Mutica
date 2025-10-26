@@ -9,6 +9,7 @@ use mutica_core::as_type;
 use mutica_core::types::character::Character;
 use mutica_core::types::character_value::CharacterValue;
 use mutica_core::types::closure::{Closure, ClosureEnv};
+use mutica_core::types::construct::Construct;
 use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
@@ -17,7 +18,6 @@ use mutica_core::types::integer::Integer;
 use mutica_core::types::integer_value::IntegerValue;
 use mutica_core::types::invoke::Invoke;
 use mutica_core::types::lazy::Lazy;
-use mutica_core::types::list::List;
 use mutica_core::types::namespace::Namespace;
 use mutica_core::types::opcode::Opcode;
 use mutica_core::types::pattern::Pattern;
@@ -50,19 +50,22 @@ pub enum AtomicOpcode {
 #[derive(Debug, Clone)]
 pub enum TypeAst {
     ParseError(ErrorRecovery<usize, LexerToken, LexicalError>),
-    Import(String), // 用于import语句
+    Import(String),
     Int,
-    Float, // Added for float type
+    Float,
     Char,
     Top,
     Bottom,
-    DiscardPattern, // 用于表示_模式
+    DiscardPattern,
     IntLiteral(i64),
-    FloatLiteral(f64), // Added for float literal
+    FloatLiteral(f64),
     CharLiteral(char),
     Variable(String),
     Tuple(Vec<WithLocation<TypeAst>>),
-    List(Vec<WithLocation<TypeAst>>),
+    Cons {
+        head: Box<WithLocation<TypeAst>>,
+        tail: Box<WithLocation<TypeAst>>,
+    },
     Generalize(Vec<WithLocation<TypeAst>>),
     Specialize(Vec<WithLocation<TypeAst>>),
     Invoke {
@@ -130,7 +133,10 @@ pub enum BasicTypeAst {
     CharLiteral(char),
     Variable(String),
     Tuple(Vec<WithLocation<BasicTypeAst>>),
-    List(Vec<WithLocation<BasicTypeAst>>),
+    Cons {
+        head: Box<WithLocation<BasicTypeAst>>,
+        tail: Box<WithLocation<BasicTypeAst>>,
+    },
     Generalize(Vec<WithLocation<BasicTypeAst>>),
     Specialize(Vec<WithLocation<BasicTypeAst>>),
     Invoke {
@@ -353,18 +359,19 @@ impl BasicTypeAst {
                     WithLocation::new(ty, loc),
                 )
             }
-            BasicTypeAst::List(v) => {
-                let elements = v
-                    .iter()
-                    .map(|e| e.linearize(ctx, e.location()))
-                    .collect::<Vec<_>>();
-                let ty =
-                    LinearTypeAst::List(elements.iter().map(|e| e.tail_type().clone()).collect());
+            BasicTypeAst::Cons { head, tail } => {
+                let head = head.linearize(ctx, head.location());
+                let tail = tail.linearize(ctx, tail.location());
+                let ty = LinearTypeAst::Cons {
+                    head: Box::new(head.tail_type().clone()),
+                    tail: Box::new(tail.tail_type().clone()),
+                };
                 LinearizeResult::new_with_binding(
-                    elements
-                        .into_iter()
-                        .flat_map(|e| e.bindings.into_iter())
-                        .collect(),
+                    {
+                        let mut bindings = head.bindings;
+                        bindings.extend(tail.bindings);
+                        bindings
+                    },
                     WithLocation::new(ty, loc),
                 )
             }
@@ -551,7 +558,10 @@ pub enum LinearTypeAst<'ast> {
     CharLiteral(char),
     Variable(String), // None 表示续体
     Tuple(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
-    List(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    Cons {
+        head: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        tail: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+    },
     Generalize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     Specialize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     Match {
@@ -620,13 +630,11 @@ impl TypeAst {
                 ),
                 loc,
             ),
-            TypeAst::List(elements) => WithLocation::new(
-                BasicTypeAst::List(
-                    elements
-                        .iter()
-                        .map(|e| e.into_basic(multifile_builder, e.location()))
-                        .collect(),
-                ),
+            TypeAst::Cons { head, tail } => WithLocation::new(
+                BasicTypeAst::Cons {
+                    head: Box::new(head.into_basic(multifile_builder, head.location())),
+                    tail: Box::new(tail.into_basic(multifile_builder, tail.location())),
+                },
                 loc,
             ),
             TypeAst::Generalize(elements) => WithLocation::new(
@@ -934,7 +942,6 @@ impl TypeAst {
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => {}
             TypeAst::Tuple(elements)
-            | TypeAst::List(elements)
             | TypeAst::Generalize(elements)
             | TypeAst::Specialize(elements) => {
                 for elem in elements {
@@ -1011,6 +1018,10 @@ impl TypeAst {
             TypeAst::Rot { value } => {
                 value.collect_errors(errors);
             }
+            TypeAst::Cons { head, tail } => {
+                head.collect_errors(errors);
+                tail.collect_errors(errors);
+            }
         }
     }
 
@@ -1031,9 +1042,10 @@ impl TypeAst {
             TypeAst::Tuple(elements) => {
                 TypeAst::Tuple(elements.into_iter().map(Self::sanitize).collect())
             }
-            TypeAst::List(elements) => {
-                TypeAst::List(elements.into_iter().map(Self::sanitize).collect())
-            }
+            TypeAst::Cons { head, tail } => TypeAst::Cons {
+                head: Box::new(Self::sanitize(*head)),
+                tail: Box::new(Self::sanitize(*tail)),
+            },
             TypeAst::Generalize(elements) => {
                 TypeAst::Generalize(elements.into_iter().map(Self::sanitize).collect())
             }
@@ -1299,22 +1311,26 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::List(elements) => {
-                let mut new_elements = Vec::new();
-                let mut all_captures = HashMap::new();
-                let mut all_patterns = PatternEnv::new();
-                for elem in elements {
-                    let res = elem.flow(ctx, pattern_mode, elem.location(), errors);
-                    new_elements.push(res.ty);
-                    all_captures.extend(res.captures);
-                    all_patterns.extend(
-                        res.patterns
-                            .into_iter()
-                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
-                    );
-                }
+            LinearTypeAst::Cons { head, tail } => {
+                let head_res = head.flow(ctx, pattern_mode, head.location(), errors);
+                let tail_res = tail.flow(ctx, pattern_mode, tail.location(), errors);
+                let mut all_captures = head_res.captures;
+                all_captures.extend(tail_res.captures);
+                let mut all_patterns = head_res.patterns;
+                all_patterns.extend(
+                    tail_res
+                        .patterns
+                        .into_iter()
+                        .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                );
                 FlowResult::complex(
-                    WithLocation::new(LinearTypeAst::List(new_elements), loc),
+                    WithLocation::new(
+                        LinearTypeAst::Cons {
+                            head: Box::new(head_res.ty),
+                            tail: Box::new(tail_res.ty),
+                        },
+                        loc,
+                    ),
                     all_captures,
                     all_patterns,
                 )
@@ -1770,20 +1786,28 @@ impl<'ast> LinearTypeAst<'ast> {
                 let (types, patterns) = BuildResult::fold(types);
                 Ok(BuildResult::complex(Tuple::new(&types), patterns))
             }
-            LinearTypeAst::List(basic_type_asts) => {
-                let mut types = Vec::new();
-                for bta in basic_type_asts {
-                    types.push(bta.to_type(
-                        ctx,
-                        pattern_counter,
-                        pattern_mode,
-                        gc,
-                        roots,
-                        bta.location(),
-                    )?);
-                }
-                let (types, patterns) = BuildResult::fold(types);
-                Ok(BuildResult::complex(List::new(&types), patterns))
+            LinearTypeAst::Cons { head, tail } => {
+                let head_type = head.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    head.location(),
+                )?;
+                let tail_type = tail.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    tail.location(),
+                )?;
+                let (types, patterns) = BuildResult::fold(vec![head_type, tail_type]);
+                Ok(BuildResult::complex(
+                    Construct::new(&types[0], &types[1]),
+                    patterns,
+                ))
             }
             LinearTypeAst::Generalize(basic_type_asts) => {
                 let mut types = Vec::new();

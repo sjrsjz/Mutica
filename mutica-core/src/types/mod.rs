@@ -3,6 +3,7 @@
 pub mod character;
 pub mod character_value;
 pub mod closure;
+pub mod construct;
 pub mod fixpoint;
 pub mod float;
 pub mod float_value;
@@ -11,7 +12,6 @@ pub mod integer;
 pub mod integer_value;
 pub mod invoke;
 pub mod lazy;
-pub mod list;
 pub mod namespace;
 pub mod opcode;
 pub mod pattern;
@@ -35,6 +35,7 @@ use crate::{
         character::Character,
         character_value::CharacterValue,
         closure::{Closure, ClosureEnv, ParamEnv},
+        construct::Construct,
         fixpoint::FixPoint,
         float::Float,
         float_value::FloatValue,
@@ -43,7 +44,6 @@ use crate::{
         integer_value::IntegerValue,
         invoke::Invoke,
         lazy::Lazy,
-        list::List,
         namespace::Namespace,
         opcode::Opcode,
         pattern::Pattern,
@@ -72,7 +72,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Char(v) => Type::<T>::Char(v.clone()),
             Type::CharValue(v) => Type::<T>::CharValue(v.clone()),
             Type::Tuple(v) => Type::<T>::Tuple(v.clone()),
-            Type::List(v) => Type::<T>::List(v.clone()),
             Type::Generalize(v) => Type::<T>::Generalize(v.clone()),
             Type::Specialize(v) => Type::<T>::Specialize(v.clone()),
             Type::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
@@ -84,6 +83,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Pattern(v) => Type::<T>::Pattern(v.clone()),
             Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
             Type::Rot(v) => Type::<T>::Rot(v.clone()),
+            Type::Construct(v) => Type::<T>::Construct(v.clone()),
         }
     }
 }
@@ -105,8 +105,6 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     CharValue(CharacterValue<T>),
     // 元组类型
     Tuple(Tuple<T>),
-    // 列表类型（嵌套元组的优化表示）
-    List(List<T>),
     // 泛化类型
     Generalize(Generalize<T>),
     // 专化类型
@@ -129,6 +127,8 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Lazy(Lazy<T>),
     // Rot变换
     Rot(Rotate<T>),
+    // Construct类型
+    Construct(Construct<T>),
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
@@ -140,7 +140,6 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Char(&'a Character<T>),
     CharValue(&'a CharacterValue<T>),
     Tuple(&'a Tuple<T>),
-    List(&'a List<T>),
     Generalize(&'a Generalize<T>),
     Specialize(&'a Specialize<T>),
     FixPoint(&'a FixPoint<T>),
@@ -152,6 +151,7 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Pattern(&'a Pattern<T>),
     Lazy(&'a Lazy<T>),
     Rot(&'a Rotate<T>),
+    Construct(&'a Construct<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
@@ -173,7 +173,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Char(v) => Type::<T>::Char(v.clone()),
             TypeRef::CharValue(v) => Type::<T>::CharValue(v.clone()),
             TypeRef::Tuple(v) => Type::<T>::Tuple(v.clone()),
-            TypeRef::List(v) => Type::<T>::List(v.clone()),
             TypeRef::Generalize(v) => Type::<T>::Generalize(v.clone()),
             TypeRef::Specialize(v) => Type::<T>::Specialize(v.clone()),
             TypeRef::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
@@ -185,6 +184,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Pattern(v) => Type::<T>::Pattern(v.clone()),
             TypeRef::Lazy(v) => Type::<T>::Lazy(v.clone()),
             TypeRef::Rot(v) => Type::<T>::Rot(v.clone()),
+            TypeRef::Construct(v) => Type::<T>::Construct(v.clone()),
         }
     }
 }
@@ -200,7 +200,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Char(v) => v.tagged_ptr(),
             TypeRef::CharValue(v) => v.tagged_ptr(),
             TypeRef::Tuple(v) => v.tagged_ptr(),
-            TypeRef::List(v) => v.tagged_ptr(),
             TypeRef::Generalize(v) => v.tagged_ptr(),
             TypeRef::Specialize(v) => v.tagged_ptr(),
             TypeRef::FixPoint(v) => v.tagged_ptr(),
@@ -212,6 +211,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Pattern(v) => v.tagged_ptr(),
             TypeRef::Lazy(v) => v.tagged_ptr(),
             TypeRef::Rot(v) => v.tagged_ptr(),
+            TypeRef::Construct(v) => v.tagged_ptr(),
         }
     }
 
@@ -244,7 +244,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Char(v) => v.fulfill(other, ctx),
             TypeRef::CharValue(v) => v.fulfill(other, ctx),
             TypeRef::Tuple(v) => v.fulfill(other, ctx),
-            TypeRef::List(v) => v.fulfill(other, ctx),
             TypeRef::Generalize(v) => v.fulfill(other, ctx),
             TypeRef::Specialize(v) => v.fulfill(other, ctx),
             TypeRef::FixPoint(v) => v.fulfill(other, ctx),
@@ -256,6 +255,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Pattern(v) => v.fulfill(other, ctx),
             TypeRef::Lazy(v) => v.fulfill(other, ctx),
             TypeRef::Rot(v) => v.fulfill(other, ctx),
+            TypeRef::Construct(v) => v.fulfill(other, ctx),
         }
     }
 }
@@ -344,13 +344,13 @@ macro_rules! type_dispatch {
             Type::Variable(v) => v.$method($($args),*),
             Type::Closure(v) => v.$method($($args),*),
             Type::Opcode(v) => v.$method($($args),*),
-            Type::List(v) => v.$method($($args),*),
             Type::Char(v) => v.$method($($args),*),
             Type::CharValue(v) => v.$method($($args),*),
             Type::Namespace(v) => v.$method($($args),*),
             Type::Pattern(v) => v.$method($($args),*),
             Type::Lazy(v) => v.$method($($args),*),
             Type::Rot(v) => v.$method($($args),*),
+            Type::Construct(v) => v.$method($($args),*),
         }
     };
 }
@@ -478,7 +478,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Char(v) => v.is_normal_form(),
             Type::CharValue(v) => v.is_normal_form(),
             Type::Tuple(v) => v.is_normal_form(),
-            Type::List(v) => v.is_normal_form(),
             Type::Generalize(v) => v.is_normal_form(),
             Type::Specialize(v) => v.is_normal_form(),
             Type::FixPoint(v) => v.is_normal_form(),
@@ -490,6 +489,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Pattern(v) => v.is_normal_form(),
             Type::Lazy(v) => v.is_normal_form(),
             Type::Rot(v) => v.is_normal_form(),
+            Type::Construct(v) => v.is_normal_form(),
         }
     }
 
@@ -566,7 +566,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Char(v) => TypeRef::Char(v),
             Type::CharValue(v) => TypeRef::CharValue(v),
             Type::Tuple(v) => TypeRef::Tuple(v),
-            Type::List(v) => TypeRef::List(v),
             Type::Generalize(v) => TypeRef::Generalize(v),
             Type::Specialize(v) => TypeRef::Specialize(v),
             Type::FixPoint(v) => TypeRef::FixPoint(v),
@@ -578,6 +577,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::Rot(v) => TypeRef::Rot(v),
+            Type::Construct(v) => TypeRef::Construct(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -603,7 +603,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Char(v) => TypeRef::Char(v),
             Type::CharValue(v) => TypeRef::CharValue(v),
             Type::Tuple(v) => TypeRef::Tuple(v),
-            Type::List(v) => TypeRef::List(v),
             Type::Generalize(v) => TypeRef::Generalize(v),
             Type::Specialize(v) => TypeRef::Specialize(v),
             Type::FixPoint(v) => TypeRef::FixPoint(v),
@@ -615,6 +614,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::Rot(v) => TypeRef::Rot(v),
+            Type::Construct(v) => TypeRef::Construct(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>

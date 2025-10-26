@@ -13,7 +13,6 @@ use crate::{
         closure::{ClosureEnv, ParamEnv},
         integer_value::IntegerValue,
         invoke::{Invoke, InvokeCountinuationStyle},
-        list::List,
         opcode::Opcode,
         tuple::Tuple,
     },
@@ -128,7 +127,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         .chars()
                         .map(|c| CharacterValue::new(c))
                         .collect::<Vec<_>>();
-                    Ok(Some(List::new(chars)))
+                    Ok(Some(Tuple::new(chars)))
                 }
                 "flush" => {
                     use std::io;
@@ -142,7 +141,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         .chars()
                         .map(|c| CharacterValue::new(c))
                         .collect::<Vec<_>>();
-                    Ok(Some(List::new(chars)))
+                    Ok(Some(Tuple::new(chars)))
                 }
                 "display" => {
                     let disp = arg.display(&mut FastCycleDetector::new());
@@ -150,7 +149,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         .chars()
                         .map(|c| CharacterValue::new(c))
                         .collect::<Vec<_>>();
-                    Ok(Some(List::new(chars)))
+                    Ok(Some(Tuple::new(chars)))
                 }
                 // 代数效应相关
                 "perform" => Err(TypeError::Perform(arg.clone().into())),
@@ -159,57 +158,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 // 类型结构描述相关
                 "tuple_len" => arg.map(&mut FastCycleDetector::new(), |_, arg| match arg {
                     TypeRef::Tuple(v) => Ok(Some(IntegerValue::new(v.len() as i64))),
-                    TypeRef::List(v) => {
-                        if v.is_empty() {
-                            Ok(Some(IntegerValue::new(0)))
-                        } else {
-                            Ok(Some(IntegerValue::new(2)))
-                        }
-                    }
                     _ => Err(TypeError::TypeMismatch(
                         (arg.clone_data(), "Tuple | List".into()).into(),
                     )),
                 })?,
-                "as_list" => arg.map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                    TypeRef::Tuple(v) => {
-                        let mut elements = Vec::with_capacity(v.len());
-                        for ty in v.types() {
-                            elements.push(ty.clone());
-                        }
-                        Ok(Some(List::new(elements)))
-                    }
-                    TypeRef::List(_) => Ok(Some(arg.clone_data())),
-                    TypeRef::Generalize(v) => {
-                        let mut elements = Vec::new();
-                        for ty in v.types() {
-                            elements.push(ty.clone());
-                        }
-                        Ok(Some(List::new(elements)))
-                    }
-                    TypeRef::Specialize(v) => {
-                        let mut elements = Vec::new();
-                        for ty in v.types() {
-                            elements.push(ty.clone());
-                        }
-                        Ok(Some(List::new(elements)))
-                    }
-                    _ => Err(TypeError::TypeMismatch(
-                        (
-                            arg.clone_data(),
-                            "Tuple | List | Generalize | Specialize".into(),
-                        )
-                            .into(),
-                    )),
-                })?,
                 "as_tuple" => arg.map(&mut FastCycleDetector::new(), |_, arg| match arg {
                     TypeRef::Tuple(_) => Ok(Some(arg.clone_data())),
-                    TypeRef::List(v) => {
-                        let mut elements = Vec::with_capacity(v.len());
-                        for ty in v.iter() {
-                            elements.push(ty.clone());
-                        }
-                        Ok(Some(Tuple::new(elements)))
-                    }
                     TypeRef::Generalize(v) => {
                         let mut elements = Vec::new();
                         for ty in v.types() {
@@ -241,14 +195,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     ])))
                 }
                 "dealloc" => arg.map(&mut FastCycleDetector::new(), |_, arg| {
-                    if let TypeRef::Tuple(tup) = arg {
-                        if tup.types().len() != 2 {
+                    if let TypeRef::Tuple(tuple) = arg {
+                        if tuple.len() != 2 {
                             return Err(TypeError::TypeMismatch(
                                 (arg.clone_data(), "Tuple of length 2".into()).into(),
                             ));
                         }
-                        let index_ty = &tup.types()[0];
-                        let generation_ty = &tup.types()[1];
+                        let index_ty = tuple.get(0).unwrap();
+                        let generation_ty = tuple.get(1).unwrap();
                         if let (TypeRef::IntegerValue(index_iv), TypeRef::IntegerValue(gen_iv)) = (
                             index_ty.as_ref_dispatcher(),
                             generation_ty.as_ref_dispatcher(),
@@ -270,14 +224,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     }
                 })?,
                 "get" => arg.map(&mut FastCycleDetector::new(), |_, arg| {
-                    if let TypeRef::Tuple(tup) = arg {
-                        if tup.types().len() != 2 {
+                    if let TypeRef::Tuple(tuple) = arg {
+                        if tuple.len() != 2 {
                             return Err(TypeError::TypeMismatch(
                                 (arg.clone_data(), "Tuple of length 2".into()).into(),
                             ));
                         }
-                        let index_ty = &tup.types()[0];
-                        let generation_ty = &tup.types()[1];
+                        let index_ty = tuple.get(0).unwrap();
+                        let generation_ty = tuple.get(1).unwrap();
                         if let (Type::IntegerValue(index_iv), Type::IntegerValue(gen_iv)) =
                             (index_ty, generation_ty)
                         {
@@ -305,23 +259,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     }
                 })?,
                 "set" => arg.map(&mut FastCycleDetector::new(), |_, arg| {
-                    if let TypeRef::Tuple(tup) = arg {
-                        if tup.types().len() != 2 {
+                    if let TypeRef::Tuple(tuple) = arg {
+                        if tuple.len() != 2 {
                             return Err(TypeError::TypeMismatch(
                                 (arg.clone_data(), "Tuple of length 2".into()).into(),
                             ));
                         }
-                        let id_ty = &tup.types()[0];
-                        let value_ty = &tup.types()[1];
+                        let id_ty = tuple.get(0).unwrap();
+                        let value_ty = tuple.get(1).unwrap();
                         id_ty.map(&mut FastCycleDetector::new(), |_, id_ty| {
                             if let TypeRef::Tuple(id_tup) = id_ty {
-                                if id_tup.types().len() != 2 {
+                                if id_tup.len() != 2 {
                                     return Err(TypeError::TypeMismatch(
                                         (id_ty.clone_data(), "Tuple of length 2".into()).into(),
                                     ));
                                 }
-                                let index_ty = &id_tup.types()[0];
-                                let generation_ty = &id_tup.types()[1];
+                                let index_ty = id_tup.get(0).unwrap();
+                                let generation_ty = id_tup.get(1).unwrap();
                                 if let (Type::IntegerValue(index_iv), Type::IntegerValue(gen_iv)) =
                                     (index_ty, generation_ty)
                                 {

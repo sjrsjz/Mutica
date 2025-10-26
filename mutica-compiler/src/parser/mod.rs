@@ -898,7 +898,7 @@ impl SyntaxError {
                     ),
                     None => (char_start, char_end),
                 };
-                let report_builder = Report::build(ReportKind::Error, filepath.clone(), char_start)
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message(format!(
                         "Unrecognized token {:?} at line {}, column {}",
                         token, line, col
@@ -919,8 +919,7 @@ impl SyntaxError {
                         Label::new((filepath, span_start_char..span_end_char))
                             .with_message("The error span including all tokens")
                             .with_color(Color::Cyan),
-                    );
-                report_builder
+                    )
             }
             UnrecognizedEof { location, expected } => {
                 let (line, col) = byte_offset_to_position(source, *location);
@@ -963,7 +962,7 @@ impl SyntaxError {
                     ),
                     None => (char_start, char_end),
                 };
-                let report_builder = Report::build(ReportKind::Error, filepath.clone(), char_start)
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message(format!(
                         "Extra token {:?} at line {}, column {}",
                         token, line, col
@@ -977,8 +976,7 @@ impl SyntaxError {
                         Label::new((filepath, span_start_char..span_end_char))
                             .with_message("The error span including all tokens")
                             .with_color(Color::Cyan),
-                    );
-                report_builder
+                    )
             }
             User { error: lex_error } => {
                 let (line, col) = byte_offset_to_position(source, lex_error.span().start);

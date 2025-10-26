@@ -53,10 +53,9 @@ impl<'ast> SourceMapping<'ast> {
                     Self::build_mapping(item, mapping, source_file);
                 }
             }
-            LinearTypeAst::List(items) => {
-                for item in items {
-                    Self::build_mapping(item, mapping, source_file);
-                }
+            LinearTypeAst::Cons { head, tail } => {
+                Self::build_mapping(head, mapping, source_file);
+                Self::build_mapping(tail, mapping, source_file);
             }
             LinearTypeAst::Generalize(items) => {
                 for item in items {

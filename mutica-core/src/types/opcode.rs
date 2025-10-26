@@ -145,8 +145,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 Opcode::Is => {
                     if let TypeRef::Tuple(tuple) = arg {
                         if tuple.len() == 2 {
-                            let left = &tuple.types()[0];
-                            let right = &tuple.types()[1];
+                            let left = tuple.get(0).unwrap();
+                            let right = tuple.get(1).unwrap();
                             let empty_closure = ClosureEnv::new(Vec::<Type<T>>::new());
                             let mut assumptions = smallvec::SmallVec::new();
                             let mut pattern_env = Collector::new_disabled();
@@ -183,8 +183,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 | Opcode::Greater => {
                     if let TypeRef::Tuple(tuple) = arg {
                         if tuple.len() == 2 {
-                            let left = &tuple.types()[0];
-                            let right = &tuple.types()[1];
+                            let left = tuple.get(0).unwrap();
+                            let right = tuple.get(1).unwrap();
                             left.map(&mut FastCycleDetector::new(), |_, left| {
                                 right.map(&mut FastCycleDetector::new(), |_, right| {
                                     match (left, right) {
@@ -264,10 +264,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     ),
                                 ))),
                             },
+                            (TypeRef::Tuple(l), TypeRef::Tuple(r)) => match self {
+                                Opcode::Add => Ok(l.concat(r)),
+                                _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                                    std::io::Error::other(
+                                        "Only 'Add' operation is supported for Tuple types",
+                                    ),
+                                ))),
+                            },
                             _ => Err(TypeError::TypeMismatch(
                                 (
                                     ctx.arg.clone(),
-                                    "(IntegerValue, IntegerValue) | (FloatValue, FloatValue) | (Closure, Closure)".into(),
+                                    "(IntegerValue, IntegerValue) | (FloatValue, FloatValue) | (Closure, Closure) | (Tuple, Tuple)".into()
                                 )
                                     .into(),
                             )),

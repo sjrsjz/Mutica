@@ -219,7 +219,7 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <s: StringLiteral> <r:@R> => {
         let chars: Vec<WithLocation<TypeAst>> = s.chars().map(|ch| WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref())).collect();
-        WithLocation::new(TypeAst::List(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        WithLocation::new(TypeAst::Tuple(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <io: Ident> BangTok <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Function);
@@ -292,15 +292,6 @@ Apply: WithLocation<TypeAst> = {
         arg: Box::new(x),
     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <t: Term> => t,
-}
-
-List: WithLocation<TypeAst> = {
-    <l:@L> AtTok <element: Primary> <r:@R> => {
-        match element.value() {
-            TypeAst::Tuple(elements) => WithLocation::new(TypeAst::List(elements.clone()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-            single => WithLocation::new(TypeAst::List(vec![WithLocation::new(single.clone(), element.location())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-        }
-    },
 }
 
 IfElse: WithLocation<TypeAst> = {
@@ -396,7 +387,6 @@ Literal: WithLocation<TypeAst> = {
 
 Primary: WithLocation<TypeAst> = {
     <l: Literal> => l,
-    <l: List> => l,
     <r: RecursiveGen> => r,
     <c: Closure> => c,
     <m: Match> => m,
@@ -572,9 +562,18 @@ MulDiv: WithLocation<TypeAst> = {
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <t: Factor> => t,
+    <c: Construct> => c,
 }
 
+Construct: WithLocation<TypeAst> = {
+    <l:@L> <head: Factor> AtTok <body: Construct> <r:@R> => {
+        WithLocation::new(TypeAst::Cons {
+            head: Box::new(head),
+            tail: Box::new(body),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <f: Factor> => f,
+}
 
 Let: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     <l:@L> LetTok <id: Primary> AssignTok <value: Type> SemicolonTok <r:@R> => {
