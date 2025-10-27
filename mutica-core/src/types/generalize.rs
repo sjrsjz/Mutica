@@ -115,10 +115,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
+    ) -> Result<bool, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -126,11 +126,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
-                        if sub.fulfill(other, &mut inner_ctx)?.is_none() {
-                            return Ok(None);
+                        if !sub.fulfill(other, &mut inner_ctx)? {
+                            return Ok(false);
                         }
                     }
-                    Ok(Some(()))
+                    Ok(true)
                 }
             }
         })
@@ -188,21 +188,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
+    ) -> Result<bool, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|_| {
             let mut new_pattern_env = Collector::new_disabled();
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                &mut new_pattern_env,
+                ctx.rhs,
+            );
             for sub in self.types.iter() {
                 // 我们传入 false 是因为generalize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
-                if other
-                    .fullfill(sub.as_ref_dispatcher(), &mut inner_ctx)?
-                    .is_some()
-                {
-                    return Ok(Some(())); // 由于不需要匹配子模式,短路返回不会影响正确性
+                if other.fullfill(sub.as_ref_dispatcher(), &mut inner_ctx)? {
+                    return Ok(true); // 由于不需要匹配子模式,短路返回不会影响正确性
                 }
             }
-            Ok(None)
+            Ok(false)
         })
     }
 }
@@ -304,11 +305,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
                         &mut assumptions_temp,
                         (closure_env, closure_env),
                         &mut pattern_env_temp,
+                        false,
                     );
-                    if collected[i]
-                        .fulfill(collected[j].as_ref_dispatcher(), &mut check_ctx)?
-                        .is_some()
-                    {
+                    if collected[i].fulfill(collected[j].as_ref_dispatcher(), &mut check_ctx)? {
                         absorbed[i] = true;
                         break;
                     }

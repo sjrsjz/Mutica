@@ -5,7 +5,7 @@ let String: any = string_pkg.String;
 
 let Json: any = rec object: (
     List(object) |
-    (rot String, object) |
+    (rot [rec t: [() & (none @ t)]], object) |
     String |
     int |
     float |
@@ -34,9 +34,9 @@ let print_json: any =  rec go: spacing: String -> match
         discard string_pkg.print(spacing);
         string_pkg.println(v)
     }
-    | (k: rot String, v: Json) => {
+    | (rot (k: [rec t: [() & (none @ t)]]), v: Json) => {
         discard string_pkg.print(spacing);
-        discard string_pkg.println("> " + rot k);
+        discard string_pkg.println("> " + k);
         go(spacing + "  ")(v)
     }
     | vs: List(Json) => {

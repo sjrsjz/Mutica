@@ -86,10 +86,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -97,22 +97,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Tuple(v) => {
                     if self.len() != v.len() {
-                        return Ok(None);
+                        return Ok(false);
                     }
                     for (a, b) in self.iter().zip(v.iter()) {
-                        if a.fulfill(b.as_ref_dispatcher(), &mut inner_ctx)?.is_none() {
-                            return Ok(None);
+                        if !a.fulfill(b.as_ref_dispatcher(), &mut inner_ctx)? {
+                            return Ok(false);
                         }
                     }
-                    Ok(Some(()))
+                    Ok(true)
                 }
                 TypeRef::Construct(cons) => {
                     if self.is_empty() {
                         // 空元组无法匹配任何构造
-                        return Ok(None);
+                        return Ok(false);
                     }
                     let head = cons.head();
                     let tail = cons.tail();
@@ -121,14 +121,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                         .head()
                         .unwrap()
                         .fulfill(head.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if head_result.is_none() {
-                        return Ok(None);
+                    if !head_result {
+                        return Ok(false);
                     }
                     self.tail()
                         .unwrap()
                         .fulfill(tail.as_ref_dispatcher(), &mut inner_ctx)
                 }
-                _ => Ok(None),
+                _ => Ok(false),
             }
         })
     }

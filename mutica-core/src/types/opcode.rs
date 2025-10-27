@@ -77,10 +77,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -88,11 +88,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Opcode(Opcode::Opcode) => Ok(Some(())),
+                TypeRef::Bound(TypeBound::Top) => Ok(true),
+                TypeRef::Opcode(Opcode::Opcode) => Ok(true),
                 TypeRef::Opcode(v) => match (self, v) {
-                    (Opcode::Opcode, _) => Ok(Some(())),
-                    (_, Opcode::Opcode) => Ok(Some(())),
+                    (Opcode::Opcode, _) => Ok(true),
+                    (_, Opcode::Opcode) => Ok(true),
                     (Opcode::Add, Opcode::Add)
                     | (Opcode::Sub, Opcode::Sub)
                     | (Opcode::Mul, Opcode::Mul)
@@ -103,11 +103,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     | (Opcode::Neg, Opcode::Neg)
                     | (Opcode::Set, Opcode::Set)
                     | (Opcode::BuildFixPoint, Opcode::BuildFixPoint)
-                    | (Opcode::Is, Opcode::Is) => Ok(Some(())),
-                    (Opcode::IO(a), Opcode::IO(b)) => Ok(if a == b { Some(()) } else { None }),
-                    _ => Ok(None),
+                    | (Opcode::Is, Opcode::Is) => Ok(true),
+                    (Opcode::IO(a), Opcode::IO(b)) => Ok(a == b),
+                    _ => Ok(false),
                 },
-                _ => Ok(None),
+                _ => Ok(false),
             }
         })
     }
@@ -191,9 +191,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 &mut assumptions,
                                 (&empty_closure, &empty_closure),
                                 &mut pattern_env,
+                                false,
                             );
                             match left.fulfill(right.as_ref_dispatcher(), &mut type_check_ctx) {
-                                Ok(res) => Ok(if res.is_some() {
+                                Ok(res) => Ok(if res {
                                     TypeBound::top()
                                 } else {
                                     TypeBound::bottom()

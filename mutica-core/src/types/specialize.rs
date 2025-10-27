@@ -114,11 +114,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let enabled = pattern_env.is_enabled();
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -131,19 +131,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
                     let mut matched = false;
                     for sub in self.types.iter() {
                         // 实际上fallback可能会导致pattern_env被意外修改,我们需要一个可回滚的机制
-                        matched |= sub.fulfill(other, &mut inner_ctx)?.is_some()
+                        matched |= sub.fulfill(other, &mut inner_ctx)?
                     }
-                    Ok(if matched { Some(()) } else { None })
+                    Ok(matched)
                 }
 
                 _ => {
                     // 当 pattern_mode 为 false 时,表示不需要匹配子模式,短路返回不会影响正确性
                     for sub in self.types.iter() {
-                        if sub.fulfill(other, &mut inner_ctx)?.is_some() {
-                            return Ok(Some(()));
+                        if sub.fulfill(other, &mut inner_ctx)? {
+                            return Ok(true);
                         }
                     }
-                    Ok(None)
+                    Ok(false)
                 }
             }
         })
@@ -201,21 +201,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
+    ) -> Result<bool, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|_| {
             let mut new_pattern_env = Collector::new_disabled();
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, &mut new_pattern_env);
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                ctx.closure_env,
+                &mut new_pattern_env,
+                ctx.rhs,
+            );
             for sub in self.types.iter() {
                 // 我们传入 disabled 是因为specialize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
-                if other
-                    .fullfill(sub.as_ref_dispatcher(), &mut inner_ctx)?
-                    .is_none()
-                {
-                    return Ok(None);
+                if !other.fullfill(sub.as_ref_dispatcher(), &mut inner_ctx)? {
+                    return Ok(false);
                 }
             }
-            Ok(Some(()))
+            Ok(true)
         })
     }
 }
@@ -316,11 +317,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
                         &mut assumptions,
                         (closure_env, closure_env),
                         &mut pattern_env,
+                        false,
                     );
-                    if collected[j]
-                        .fulfill(collected[i].as_ref_dispatcher(), &mut check_ctx)?
-                        .is_some()
-                    {
+                    if collected[j].fulfill(collected[i].as_ref_dispatcher(), &mut check_ctx)? {
                         absorbed[i] = true;
                         break;
                     }

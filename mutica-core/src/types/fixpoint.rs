@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Weak};
 
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
@@ -173,36 +173,41 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                // 这里不能放 Generalize 等，不然会导致 fixpoint <: Max<> 这种形式，但是由于是通过accept调用的，会导致 Max 比 fixpoint 先拆开
+                // 为了透明化 fixpoint 的存在，我们必须先展开 fixpoint
+                TypeRef::FixPoint(v) => {
+                    let l: Weak<_> = self.reference.clone().into();
+                    let r: Weak<_> = v.reference.clone().into();
+                    if l.ptr_eq(&r) {
+                        // 相同引用，协归纳假设成立
+                        return Ok(true);
+                    }
+                    v.accept(self.as_ref_dispatcher(), &mut inner_ctx)
+                }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Bound(TypeBound::Top) => Ok(true),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {
                             Some(t) => t,
-                            None => return Ok(None), // 未初始化
+                            None => return Ok(false), // 未初始化（实际上这个可能需要更精细的处理）
                         };
                         let self_ptr = inner.tagged_ptr();
                         let other_ptr = other.tagged_ptr();
                         let assumption_pair = (self_ptr, other_ptr);
-
                         // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
                         let already_assumed =
                             inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
                         if already_assumed {
-                            return Ok(Some(())); // already assumed
+                            return Ok(true); // already assumed
                         }
 
-                        inner_ctx.assumptions.push(assumption_pair);
+                        inner_ctx.assumptions.push(assumption_pair.clone());
                         let result = inner.fulfill(other, &mut inner_ctx);
                         inner_ctx.assumptions.pop();
                         result
@@ -315,15 +320,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match self.reference.upgrade() {
                 Some(inner) => other.fullfill(
                     match inner.as_ref().get_value() {
                         Some(t) => t.as_ref_dispatcher(),
-                        None => return Ok(None), // 未初始化
+                        None => return Ok(false), // 未初始化
                     },
                     &mut inner_ctx,
                 ),

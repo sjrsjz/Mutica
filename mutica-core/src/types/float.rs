@@ -42,10 +42,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -53,9 +53,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                TypeRef::Float(_) => Ok(Some(())),
-                _ => Ok(None),
+                TypeRef::Bound(TypeBound::Top) => Ok(true),
+                TypeRef::Float(_) => Ok(true),
+                _ => Ok(false),
             }
         })
     }

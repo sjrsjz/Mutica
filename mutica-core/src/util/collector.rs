@@ -30,19 +30,19 @@ impl<T> Collector<T> {
         }
     }
 
-    pub fn collect<F, R, E>(&mut self, f: F) -> Result<Option<R>, E>
+    pub fn collect<F, E>(&mut self, f: F) -> Result<bool, E>
     where
-        F: FnOnce(&mut Self) -> Result<Option<R>, E>,
+        F: FnOnce(&mut Self) -> Result<bool, E>,
     {
         if self.items.is_some() {
             let len = self.items.as_ref().unwrap().len();
             let result = f(self);
             match result {
-                Ok(Some(res)) => Ok(Some(res)),
+                Ok(true) => Ok(true),
                 Err(e) => Err(e),
-                Ok(None) => {
+                Ok(false) => {
                     self.items.as_mut().unwrap().truncate(len);
-                    Ok(None)
+                    Ok(false)
                 }
             }
         } else {
@@ -51,7 +51,9 @@ impl<T> Collector<T> {
     }
 
     pub fn push(&mut self, item: T) {
-        if let Some(items) = &mut self.items { items.push(item) }
+        if let Some(items) = &mut self.items {
+            items.push(item)
+        }
     }
 
     pub fn into_vec(self) -> Vec<T> {

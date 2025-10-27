@@ -1633,7 +1633,7 @@ impl<'ast> LinearTypeAst<'ast> {
             }
             LinearTypeAst::Rot { value } => {
                 // Rot类型内不允许出现模式变量，因为Rot检查是反向的
-                let value_res = value.flow(ctx, false, value.location(), errors);
+                let value_res = value.flow(ctx, pattern_mode, value.location(), errors);
                 FlowResult::complex(
                     WithLocation::new(
                         LinearTypeAst::Rot {
@@ -1996,13 +1996,13 @@ impl<'ast> LinearTypeAst<'ast> {
                 let value_type = value.to_type(
                     ctx,
                     pattern_counter,
-                    false, // Rot类型内不允许出现模式变量
+                    pattern_mode,
                     gc,
                     roots,
                     value.location(),
                 )?;
                 Ok(BuildResult::complex(
-                    Rotate::new(&value_type.ty).map_err(Ok)?,
+                    Rotate::new(&value_type.ty),
                     value_type.patterns,
                 ))
             }

@@ -263,10 +263,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -274,10 +274,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Closure(v) => {
                     if self.inner.0.len() != v.inner.0.len() {
-                        return Ok(None);
+                        return Ok(false);
                     }
 
                     for ((self_inner, self_idx), (other_inner, other_idx)) in
@@ -296,14 +296,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                             ctx.assumptions,
                             (&self.inner.1[*self_idx], &v.inner.1[*other_idx]),
                             &mut pattern_env_disabled,
+                            ctx.rhs,
                         );
 
-                        if self_inner
+                        if !self_inner
                             .expr
                             .fulfill(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
-                            .is_none()
                         {
-                            return Ok(None);
+                            return Ok(false);
                         }
 
                         // 创建用于模式比较的上下文
@@ -312,19 +312,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                             ctx.assumptions,
                             (ctx.closure_env.1, ctx.closure_env.0), // 逆变
                             &mut pattern_env_disabled,
+                            !ctx.rhs,
                         );
 
-                        if other_inner
+                        if !other_inner
                             .pattern
                             .fulfill(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
-                            .is_none()
                         {
-                            return Ok(None);
+                            return Ok(false);
                         }
                     }
-                    Ok(Some(()))
+                    Ok(true)
                 }
-                _ => Ok(None),
+                _ => Ok(false),
             }
         })
     }
@@ -371,12 +371,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 &mut assumptions_temp,
                 (ctx.closure_env, &empty_closure_env), // 模式自身不应当访问闭包环境
                 &mut matched_pattern,
+                false,
             );
 
             if ctx
                 .arg
                 .fulfill(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
-                .is_some()
                 && let Some(param_env) = ParamEnv::from_collector(&mut matched_pattern)?
             {
                 // 模式匹配成功，构造用于表达式求值的上下文

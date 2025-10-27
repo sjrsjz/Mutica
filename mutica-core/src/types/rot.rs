@@ -5,7 +5,7 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef, type_bound::TypeBound,
+        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -65,10 +65,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
         &self,
         other: TypeRef<T>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
+    ) -> Result<bool, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -76,24 +76,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Rot(v) => {
                     // 反转方向
                     let mut inner_ctx = TypeCheckContext::new(
                         ctx.assumptions,
                         (ctx.closure_env.1, ctx.closure_env.0),
                         pattern_env,
+                        !ctx.rhs,
                     );
-                    if v.value
-                        .fulfill(self.as_ref_dispatcher(), &mut inner_ctx)?
-                        .is_some()
-                    {
-                        Ok(None)
-                    } else {
-                        Ok(Some(()))
-                    }
+                    v.value
+                        .fulfill(self.value.as_ref_dispatcher(), &mut inner_ctx)
                 }
-                _ => Ok(None),
+                _ => Ok(false),
             }
         })
     }
@@ -102,7 +97,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
         self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        self.value.as_ref().clone().reduce(ctx).and_then(Self::new)
+        self.value.as_ref().clone().reduce(ctx).map(Self::new)
     }
 
     fn invoke(
@@ -132,34 +127,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rotate<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match value.into_dispatcher() {
-            Type::Rot(v) => Ok(v.value.as_ref().clone()), // rot rot T => T
-            ref n @ Type::FixPoint(ref v) => v
-                .map(&mut FastCycleDetector::new(), |_, inner| match inner {
-                    TypeRef::Rot(r) => r.value.as_ref().clone(), // rot rot T => T
-                    _ => Self {
-                        value: Arc::new(n.clone()),
-                        is_nf: Arc::new(RwLock::new(n.is_normal_form())),
-                    }
-                    .dispatch(),
-                })
-                .map(|inner| {
-                    inner.unwrap_or(
-                        Self {
-                            // rot unknown_fixpoint => rot unknown_fixpoint
-                            value: Arc::new(n.clone()),
-                            is_nf: Arc::new(RwLock::new(n.is_normal_form())),
-                        }
-                        .dispatch(),
-                    )
-                }),
-            other => Ok(Self {
-                is_nf: Arc::new(RwLock::new(other.is_normal_form())),
-                value: Arc::new(other),
-            }
-            .dispatch()),
+    pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Type<T> {
+        let value = value.into_dispatcher();
+        Self {
+            is_nf: Arc::new(RwLock::new(value.is_normal_form())),
+            value: Arc::new(value),
         }
+        .dispatch()
     }
 
     pub fn value(&self) -> &Type<T> {

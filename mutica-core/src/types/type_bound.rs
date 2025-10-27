@@ -51,10 +51,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 // 这些都是规则变换类型，他们必须被优先处理
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -65,11 +65,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
 
                 _ => match self {
                     TypeBound::Top => match other {
-                        TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
-                        _ => Ok(None),
+                        TypeRef::Bound(TypeBound::Top) => Ok(true),
+                        _ => Ok(false),
                     },
-                    TypeBound::Bottom => Ok(Some(())), // ⊥ 可以满足任何类型
-                    TypeBound::PandomData(_) => Ok(None),
+                    TypeBound::Bottom => Ok(true), // ⊥ 可以满足任何类型
+                    TypeBound::PandomData(_) => Ok(false),
                 },
             }
         })

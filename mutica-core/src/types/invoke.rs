@@ -108,10 +108,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, super::TypeError<Type<T>, T>> {
+    ) -> Result<bool, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -119,27 +119,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Invoke(v) => {
                     let func_eq = self
                         .inner
                         .0
                         .fulfill(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if func_eq.is_none() {
-                        return Ok(None);
+                    if !func_eq {
+                        return Ok(false);
                     }
                     let arg_eq = self
                         .inner
                         .1
                         .fulfill(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if arg_eq.is_none() {
-                        return Ok(None);
+                    if !arg_eq {
+                        return Ok(false);
                     }
                     let cont_eq = match (&self.inner.2, &v.inner.2) {
                         (
                             InvokeCountinuationStyle::TailCall,
                             InvokeCountinuationStyle::TailCall,
-                        ) => Some(()),
+                        ) => true,
                         (
                             InvokeCountinuationStyle::WithContinuation(c1),
                             InvokeCountinuationStyle::WithContinuation(c2),
@@ -153,23 +153,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                             InvokeCountinuationStyle::WithBoth(c2a, c2b),
                         ) => {
                             let res_a = c1a.fulfill(c2a.as_ref_dispatcher(), &mut inner_ctx)?;
-                            if res_a.is_none() {
-                                return Ok(None);
+                            if !res_a {
+                                return Ok(false);
                             }
                             let res_b = c1b.fulfill(c2b.as_ref_dispatcher(), &mut inner_ctx)?;
-                            if res_b.is_none() {
-                                return Ok(None);
+                            if !res_b {
+                                return Ok(false);
                             }
-                            Some(())
+                            true
                         }
-                        _ => None,
+                        _ => false,
                     };
-                    if cont_eq.is_none() {
-                        return Ok(None);
+                    if !cont_eq {
+                        return Ok(false);
                     }
-                    Ok(Some(()))
+                    Ok(true)
                 }
-                _ => Ok(None),
+                _ => Ok(false),
             }
         })
     }

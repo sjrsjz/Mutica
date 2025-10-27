@@ -47,10 +47,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -61,7 +61,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                     let self_idx = self.debruijn_index;
                     let v_idx = v.debruijn_index;
                     if self_idx >= 0 || v_idx >= 0 {
-                        return Ok(if self_idx == v_idx { Some(()) } else { None });
+                        return Ok(self_idx == v_idx);
                     }
                     // 如果都是负数,说明都是闭包内的变量
                     // 需要从闭包环境中取出对应的类型进行比较
@@ -74,8 +74,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 }
                 _ => {
                     if self.debruijn_index >= 0 {
-                        // 如果是正数,说明是全局变量,无法确定类型
-                        return Ok(None);
+                        // 如果是正数,说明是参数变量,无法确定
+                        return Ok(false);
                     }
                     let r = (-1 - self.debruijn_index) as usize;
                     let value = ctx.closure_env.1.get(r)?;
@@ -93,7 +93,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         if idx >= 0 {
             Ok(ctx
                 .param_env
-                .get(idx as usize).cloned()
+                .get(idx as usize)
+                .cloned()
                 .unwrap_or(TypeBound::bottom()))
         } else {
             ctx.closure_env.get((-1 - idx) as usize).cloned()
@@ -120,15 +121,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             if self.debruijn_index >= 0 {
-                Ok(None)
+                Ok(false)
             } else {
                 let r = (-1 - self.debruijn_index) as usize;
                 let value = ctx.closure_env.1.get(r)?;
                 let mut inner_ctx =
-                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
+                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 other.fullfill(value.as_ref_dispatcher(), &mut inner_ctx)
             }
         })

@@ -234,7 +234,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         match self {
             TypeRef::Bound(v) => v.fulfill(other, ctx),
             TypeRef::Integer(v) => v.fulfill(other, ctx),
@@ -404,7 +404,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<Option<()>, TypeError<Type<T>, T>> {
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         type_dispatch!(self, fulfill, other, ctx)
     }
 
@@ -615,6 +615,7 @@ pub struct TypeCheckContext<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
     pub closure_env: (&'a ClosureEnv<U, V>, &'a ClosureEnv<U, V>),
     pub pattern_env: &'a mut Collector<(usize, U)>,
+    pub rhs: bool,
     pandom: std::marker::PhantomData<V>,
 }
 
@@ -623,11 +624,13 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, 
         assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
         closure_env: (&'a ClosureEnv<U, V>, &'a ClosureEnv<U, V>),
         pattern_env: &'a mut Collector<(usize, U)>,
+        rhs: bool,
     ) -> Self {
         Self {
             assumptions,
             closure_env,
             pattern_env,
+            rhs,
             pandom: std::marker::PhantomData,
         }
     }
@@ -696,7 +699,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<U, V>,
-    ) -> Result<Option<()>, TypeError<U, V>>;
+    ) -> Result<bool, TypeError<U, V>>;
 
     // 归约变换
     fn reduce(self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
@@ -716,19 +719,24 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         closure_env_r: &ClosureEnv<U, V>,
         other: &Self,
     ) -> Result<bool, TypeError<U, V>> {
-        let mut assumptions = SmallVec::new();
-        let mut pattern_env = Collector::new_disabled();
-        let type_check_ctx = &mut TypeCheckContext::new(
-            &mut assumptions,
+        let mut assumptions_l = SmallVec::new();
+        let mut assumptions_r = SmallVec::new();
+        let mut pattern_env_l = Collector::new_disabled();
+        let mut pattern_env_r = Collector::new_disabled();
+        let type_check_ctx_l = &mut TypeCheckContext::new(
+            &mut assumptions_l,
             (closure_env_l, closure_env_r),
-            &mut pattern_env,
+            &mut pattern_env_l,
+            false,
         );
-        Ok(self
-            .fulfill(other.as_ref_dispatcher(), type_check_ctx)?
-            .is_some()
-            && other
-                .fulfill(self.as_ref_dispatcher(), type_check_ctx)?
-                .is_some())
+        let type_check_ctx_r = &mut TypeCheckContext::new(
+            &mut assumptions_r,
+            (closure_env_r, closure_env_l),
+            &mut pattern_env_r,
+            true,
+        );
+        Ok(self.fulfill(other.as_ref_dispatcher(), type_check_ctx_l)?
+            && other.fulfill(self.as_ref_dispatcher(), type_check_ctx_r)?)
     }
 
     fn dispatch(self) -> U {
@@ -752,7 +760,7 @@ pub trait CoinductiveTypeWithAny<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<U, V>,
-    ) -> Result<Option<()>, TypeError<U, V>>;
+    ) -> Result<bool, TypeError<U, V>>;
 }
 
 pub trait Representable {
