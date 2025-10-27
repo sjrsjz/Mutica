@@ -276,8 +276,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
             path: &mut FastCycleDetector<TaggedPtr<()>>,
             t: Type<T>,
         ) -> Result<(), TypeError<Type<T>, T>> {
-            let result =
-                t.map_inner(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
+            let result = t
+                .map_inner(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
                     Ok(match t {
                         TypeRef::Specialize(specialize) => {
                             for sub in specialize.types.iter() {
@@ -287,7 +287,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
                         }
                         _ => true,
                     })
-                })??;
+                })
+                .unwrap_or(Ok(false))?;
             if result {
                 collected.push(t);
             }

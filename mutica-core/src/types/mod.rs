@@ -219,14 +219,14 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
-    ) -> Result<R, TypeError<Type<T>, T>>
+    ) -> Result<Option<R>, TypeError<Type<T>, T>>
     where
         F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, TypeRef<T>) -> R,
         T: GcAllocObject<T, Inner = Type<T>>,
     {
         match self {
             TypeRef::FixPoint(v) => v.map(path, f),
-            _ => Ok(f(path, self)),
+            _ => Ok(Some(f(path, self))),
         }
     }
 
@@ -393,11 +393,7 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
     //     }
     // }
 
-    fn map_inner<F, R>(
-        &self,
-        path: &mut FastCycleDetector<TaggedPtr<()>>,
-        f: F,
-    ) -> Result<R, TypeError<Self::Inner, T>>
+    fn map_inner<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
     where
         F: FnOnce(
             &mut FastCycleDetector<TaggedPtr<()>>,
@@ -406,9 +402,9 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
         T: GcAllocObject<T>,
     {
         if let Some(inner) = self.get_inner() {
-            Ok(f(path, inner.as_ref_dispatcher()))
+            Some(f(path, inner.as_ref_dispatcher()))
         } else {
-            Err(TypeError::UnresolvableType)
+            None
         }
     }
 }
@@ -527,13 +523,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Type<T> {
         &self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
-    ) -> Result<R, TypeError<Type<T>, T>>
+    ) -> Result<Option<R>, TypeError<Type<T>, T>>
     where
         F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, TypeRef<T>) -> R,
     {
         match self {
             Type::FixPoint(v) => v.map(path, f),
-            _ => Ok(f(path, self.as_ref_dispatcher())),
+            _ => Ok(Some(f(path, self.as_ref_dispatcher()))),
         }
     }
 }

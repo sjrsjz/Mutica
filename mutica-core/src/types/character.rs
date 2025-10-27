@@ -75,28 +75,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
         &self,
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        ctx.arg.map(
-            &mut FastCycleDetector::new(),
-            |_, arg: TypeRef<'_, T>| match arg {
-                TypeRef::IntegerValue(iv) => {
-                    let v = iv.value();
-                    if v > std::char::MAX as i64 || v < 0 {
-                        return Err(TypeError::TypeMismatch(
-                            (
-                                ctx.arg.clone(),
-                                "Expected a valid Unicode code point".into(),
-                            )
-                                .into(),
-                        ));
+        ctx.arg
+            .map(
+                &mut FastCycleDetector::new(),
+                |_, arg: TypeRef<'_, T>| match arg {
+                    TypeRef::IntegerValue(iv) => {
+                        let v = iv.value();
+                        if v > std::char::MAX as i64 || v < 0 {
+                            return Err(TypeError::TypeMismatch(
+                                (
+                                    ctx.arg.clone(),
+                                    "Expected a valid Unicode code point".into(),
+                                )
+                                    .into(),
+                            ));
+                        }
+                        Ok(CharacterValue::new(std::char::from_u32(v as u32).unwrap()))
                     }
-                    Ok(CharacterValue::new(std::char::from_u32(v as u32).unwrap()))
-                }
-                TypeRef::CharValue(_) => Ok(arg.clone_data()),
-                _ => Err(TypeError::TypeMismatch(
-                    (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
-                )),
-            },
-        )?
+                    TypeRef::CharValue(_) => Ok(arg.clone_data()),
+                    _ => Err(TypeError::TypeMismatch(
+                        (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
+                    )),
+                },
+            )?
+            .unwrap_or(Err(TypeError::UnresolvableType))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

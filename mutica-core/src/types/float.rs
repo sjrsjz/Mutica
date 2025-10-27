@@ -75,7 +75,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg
-            .map_inner(&mut FastCycleDetector::new(), |_, arg| match arg {
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 TypeRef::FloatValue(_) => Ok(arg.clone_data()),
                 TypeRef::IntegerValue(v) => {
                     let float_value = FloatValue::<T>::new(v.value() as f64);
@@ -84,7 +84,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 _ => Err(super::TypeError::TypeMismatch(
                     (ctx.arg.clone(), "FloatValue or IntegerValue".into()).into(),
                 )),
-            })?
+            })?.unwrap_or(Err(TypeError::UnresolvableType))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

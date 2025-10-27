@@ -74,14 +74,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Integ
         &self,
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        ctx.arg
-            .map_inner(&mut FastCycleDetector::new(), |_, arg| match arg {
+        match ctx
+            .arg
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 TypeRef::IntegerValue(_) => Ok(arg.clone_data()),
                 TypeRef::CharValue(c) => Ok(IntegerValue::new(c.value() as i64)),
                 _ => Err(super::TypeError::TypeMismatch(
                     (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
                 )),
-            })?
+            }) {
+            Some(v) => v,
+            None => Err(super::TypeError::UnresolvableType),
+        }
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

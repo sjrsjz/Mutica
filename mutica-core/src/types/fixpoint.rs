@@ -74,7 +74,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         &self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
-    ) -> Result<R, TypeError<<T as GcAllocObject<T>>::Inner, T>>
+    ) -> Result<Option<R>, TypeError<<T as GcAllocObject<T>>::Inner, T>>
     where
         F: FnOnce(
             &mut FastCycleDetector<TaggedPtr<()>>,
@@ -84,7 +84,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         self.reference
             .upgrade()
             .ok_or(TypeError::UnresolvableType)
-            .and_then(|inner: GCArc<T>| inner.as_ref().map_inner(path, f))
+            .map(|inner: GCArc<T>| inner.as_ref().map_inner(path, f))
     }
 }
 
