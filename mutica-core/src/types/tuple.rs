@@ -203,6 +203,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         self.elements.iter().skip(self.head)
     }
 
+    pub fn types(&self) -> &[Type<T>] {
+        &self.elements[self.head..]
+    }
+
     pub fn get(&self, index: usize) -> Option<&Type<T>> {
         if index >= self.len() {
             return None;
@@ -263,12 +267,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
 
     pub fn concat(&self, other: &Tuple<T>) -> Type<T> {
         let mut new_elements = Vec::with_capacity(self.len() + other.len());
-        for element in self.iter() {
-            new_elements.push(element.clone());
-        }
-        for element in other.iter() {
-            new_elements.push(element.clone());
-        }
+        new_elements.extend_from_slice(self.types());
+        new_elements.extend_from_slice(other.types());
         let is_nf = self.is_normal_form() & other.is_normal_form();
         Self {
             elements: Arc::new(new_elements),
