@@ -4,8 +4,8 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, closure::ClosureEnv, float_value::FloatValue, integer_value::IntegerValue,
-        type_bound::TypeBound,
+        TypeRef, closure::ClosureEnv, fixpoint::FixPoint, float_value::FloatValue,
+        integer_value::IntegerValue, invoke::Invoke, type_bound::TypeBound,
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector,
@@ -25,9 +25,11 @@ pub enum Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
     Less,
     Greater,
     Is,
+    Neg,
+    Set,
+    InjectFixPointPlaceholder,
     // I/O
     IO(Box<String>),
-    Neg,
     Pandom(std::marker::PhantomData<T>),
 }
 
@@ -43,8 +45,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Opcode<T> {
             Opcode::Less => Opcode::Less,
             Opcode::Greater => Opcode::Greater,
             Opcode::Is => Opcode::Is,
-            Opcode::IO(v) => Opcode::IO(v.clone()),
             Opcode::Neg => Opcode::Neg,
+            Opcode::Set => Opcode::Set,
+            Opcode::InjectFixPointPlaceholder => Opcode::InjectFixPointPlaceholder,
+            Opcode::IO(v) => Opcode::IO(v.clone()),
             Opcode::Pandom(_) => Opcode::Pandom(std::marker::PhantomData),
         }
     }
@@ -103,6 +107,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     | (Opcode::Mod, Opcode::Mod)
                     | (Opcode::Less, Opcode::Less)
                     | (Opcode::Greater, Opcode::Greater)
+                    | (Opcode::Neg, Opcode::Neg)
+                    | (Opcode::Set, Opcode::Set)
+                    | (Opcode::InjectFixPointPlaceholder, Opcode::InjectFixPointPlaceholder)
                     | (Opcode::Is, Opcode::Is) => Ok(Some(())),
                     (Opcode::IO(a), Opcode::IO(b)) => Ok(if a == b { Some(()) } else { None }),
                     _ => Ok(None),
@@ -126,6 +133,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
         ctx.arg
             .map(&mut FastCycleDetector::new(), |_, arg| match self {
                 Opcode::Opcode => Err(TypeError::NonApplicableType(self.clone().dispatch().into())),
+                Opcode::Set => {
+                    if let TypeRef::Tuple(tuple) = arg {
+                        if tuple.len() == 2 {
+                            let left = tuple.get(0).unwrap();
+                            let right = tuple.get(1).unwrap();
+                            match left {
+                                Type::FixPoint(fixpoint) => {
+                                    fixpoint.set(right)?;
+                                    Ok(left.clone())
+                                }
+                                _ => Err(TypeError::TypeMismatch(
+                                    (ctx.arg.clone(), "FixPoint".into()).into(),
+                                )),
+                            }
+                        } else {
+                            Err(TypeError::TypeMismatch(
+                                (ctx.arg.clone(), "(FixPoint, Any)".into()).into(),
+                            ))
+                        }
+                    } else {
+                        Err(TypeError::TypeMismatch(
+                            (ctx.arg.clone(), "Tuple".into()).into(),
+                        ))
+                    }
+                }
+                Opcode::InjectFixPointPlaceholder => {
+                    Ok(Invoke::new(arg.clone_data(), FixPoint::new_placeholder(ctx.gc, ctx.roots), None::<Type<_>>, None::<Type<_>>))
+                }
                 Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
                     std::io::Error::other(
                         format!("Unhandled IO operation: {}", v),
@@ -319,6 +354,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
             Opcode::Greater => "Greater".to_string(),
             Opcode::Neg => "Neg".to_string(),
             Opcode::Is => "Is".to_string(),
+            Opcode::Set => "Set".to_string(),
+            Opcode::InjectFixPointPlaceholder => "InjectFixPointPlaceholder".to_string(),
             Opcode::IO(v) => format!("IO({})", v),
             Opcode::Pandom(_) => "Pandom".to_string(),
         }

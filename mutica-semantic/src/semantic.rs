@@ -89,9 +89,6 @@ impl<'ast> SourceMapping<'ast> {
                 Self::build_mapping(arg, mapping, source_file);
             }
             LinearTypeAst::AtomicOpcode(_) => (),
-            LinearTypeAst::FixPoint { expr, .. } => {
-                Self::build_mapping(expr, mapping, source_file);
-            }
             LinearTypeAst::Namespace { expr, .. } => {
                 Self::build_mapping(expr, mapping, source_file);
             }

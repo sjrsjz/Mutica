@@ -5,12 +5,10 @@ use crate::parser::{
 };
 use lalrpop_util::ErrorRecovery;
 use mutica_core::arc_gc::gc::GC;
-use mutica_core::as_type;
 use mutica_core::types::character::Character;
 use mutica_core::types::character_value::CharacterValue;
 use mutica_core::types::closure::{Closure, ClosureEnv};
 use mutica_core::types::construct::Construct;
-use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
 use mutica_core::types::generalize::Generalize;
@@ -43,8 +41,10 @@ pub enum AtomicOpcode {
     Less,
     Greater,
     Is,
-    IO(String),
     Neg,
+    Set,
+    InjectFixPointPlaceholder,
+    IO(String),
 }
 
 #[derive(Debug, Clone)]
@@ -154,10 +154,6 @@ pub enum BasicTypeAst {
         handler: Option<Box<WithLocation<BasicTypeAst>>>,
     },
     AtomicOpcode(AtomicOpcode),
-    FixPoint {
-        param_name: String,
-        expr: Box<WithLocation<BasicTypeAst>>,
-    },
     Namespace {
         tag: String,
         expr: Box<WithLocation<BasicTypeAst>>,
@@ -477,14 +473,6 @@ impl BasicTypeAst {
             BasicTypeAst::AtomicOpcode(atomic_opcode) => LinearizeResult::new_simple(
                 WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc),
             ),
-            BasicTypeAst::FixPoint { param_name, expr } => {
-                let expr = expr.linearize(ctx, expr.location());
-                let ty = LinearTypeAst::FixPoint {
-                    param_name: param_name.clone(),
-                    expr: Box::new(expr.tail_type().clone()),
-                };
-                LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
-            }
             BasicTypeAst::Namespace { tag, expr } => {
                 let expr = expr.linearize(ctx, expr.location());
                 let ty = LinearTypeAst::Namespace {
@@ -578,10 +566,6 @@ pub enum LinearTypeAst<'ast> {
         perform_handler: Option<Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
     },
     AtomicOpcode(AtomicOpcode),
-    FixPoint {
-        param_name: String,
-        expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
-    },
     Namespace {
         tag: String,
         expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
@@ -870,13 +854,90 @@ impl TypeAst {
             TypeAst::AtomicOpcode(binary_op) => {
                 WithLocation::new(BasicTypeAst::AtomicOpcode(binary_op.clone()), loc)
             }
-            TypeAst::FixPoint { param_name, expr } => WithLocation::new(
-                BasicTypeAst::FixPoint {
-                    param_name: param_name.clone(),
-                    expr: Box::new(expr.into_basic(multifile_builder, expr.location())),
-                },
-                loc,
-            ),
+            TypeAst::FixPoint { param_name, expr } => {
+                // [x: any -> Opcode(set)((x, [x: any -> expr](x)))](fixpoint_placeholder)
+                // Construct inner lambda: [x: any -> expr]
+                let inner_lambda = WithLocation::new(
+                    BasicTypeAst::Match {
+                        branches: vec![(
+                            WithLocation::new(
+                                BasicTypeAst::Pattern {
+                                    name: param_name.clone(),
+                                    expr: Box::new(WithLocation::new(BasicTypeAst::Top, loc)),
+                                },
+                                loc,
+                            ),
+                            expr.into_basic(multifile_builder, expr.location()),
+                        )],
+                    },
+                    loc,
+                );
+
+                // Inner application: [x: any -> expr](x)
+                let inner_apply = WithLocation::new(
+                    BasicTypeAst::Apply {
+                        func: Box::new(inner_lambda.clone()),
+                        arg: Box::new(WithLocation::new(
+                            BasicTypeAst::Variable(param_name.clone()),
+                            loc,
+                        )),
+                        handler: None,
+                    },
+                    loc,
+                );
+
+                // Combine arguments into a tuple: (x, [x: any -> expr](x))
+                let combined_args = WithLocation::new(
+                    BasicTypeAst::Tuple(vec![
+                        WithLocation::new(BasicTypeAst::Variable(param_name.clone()), loc),
+                        inner_apply.clone(),
+                    ]),
+                    loc,
+                );
+
+                // Apply `set` with the combined tuple
+                let set_apply = WithLocation::new(
+                    BasicTypeAst::Apply {
+                        func: Box::new(WithLocation::new(
+                            BasicTypeAst::AtomicOpcode(AtomicOpcode::Set),
+                            loc,
+                        )),
+                        arg: Box::new(combined_args),
+                        handler: None,
+                    },
+                    loc,
+                );
+
+                // Outer lambda [x: any -> Opcode(set)((x, ...))]
+                let outer_lambda = WithLocation::new(
+                    BasicTypeAst::Match {
+                        branches: vec![(
+                            WithLocation::new(
+                                BasicTypeAst::Pattern {
+                                    name: param_name.clone(),
+                                    expr: Box::new(WithLocation::new(BasicTypeAst::Top, loc)),
+                                },
+                                loc,
+                            ),
+                            set_apply,
+                        )],
+                    },
+                    loc,
+                );
+
+                // Apply outer lambda to the fixpoint placeholder
+                WithLocation::new(
+                    BasicTypeAst::Apply {
+                        func: Box::new(WithLocation::new(
+                            BasicTypeAst::AtomicOpcode(AtomicOpcode::InjectFixPointPlaceholder),
+                            loc,
+                        )),
+                        arg: Box::new(outer_lambda),
+                        handler: None,
+                    },
+                    loc,
+                )
+            }
             TypeAst::Namespace { tag, expr } => WithLocation::new(
                 BasicTypeAst::Namespace {
                     tag: tag.clone(),
@@ -1461,53 +1522,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
-            LinearTypeAst::FixPoint { param_name, expr } => {
-                ctx.enter_scope();
-                match ctx.declare_variable(param_name.clone(), loc) {
-                    Ok(_) => {}
-                    Err(ContextError::EmptyContext) => {
-                        panic!(
-                            "Internal error: Context should not be empty when declaring a variable"
-                        );
-                    }
-                    Err(ContextError::NotDeclared(_)) => unreachable!(),
-                    Err(ContextError::NotUsed(v)) => {
-                        errors.push(WithLocation::new(
-                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
-                            loc,
-                        ));
-                    }
-                }
-                // 递归函数的表达式中不允许出现模式变量
-                let mut expr_res = expr.flow(ctx, false, expr.location(), errors);
-                match ctx.exit_scope() {
-                    Ok(_) => {}
-                    Err(ContextError::EmptyContext) => {
-                        panic!("Internal error: Context should not be empty when exiting a scope");
-                    }
-                    Err(ContextError::NotDeclared(_)) => unreachable!(),
-                    Err(ContextError::NotUsed(v)) => {
-                        errors.push(WithLocation::new(
-                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
-                            loc,
-                        ));
-                    }
-                }
-                // 移除掉param_name，因为它是递归函数的参数，不应当被视为捕获的自由变量
-                expr_res.captures.remove(param_name);
-                FlowResult::complex(
-                    WithLocation::new(
-                        LinearTypeAst::FixPoint {
-                            param_name: param_name.clone(),
-                            expr: Box::new(expr_res.ty),
-                        },
-                        loc,
-                    ),
-                    expr_res.captures,
-                    PatternEnv::new(), // fixpoint类型本身不应当把模式变量泄露出去
-                )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
-            }
             LinearTypeAst::Namespace { tag, expr } => {
                 let expr_res = expr.flow(ctx, pattern_mode, expr.location(), errors);
                 FlowResult::complex(
@@ -1978,26 +1992,10 @@ impl<'ast> LinearTypeAst<'ast> {
                     AtomicOpcode::Greater => Opcode::Greater,
                     AtomicOpcode::Neg => Opcode::Neg,
                     AtomicOpcode::Is => Opcode::Is,
+                    AtomicOpcode::Set => Opcode::Set,
+                    AtomicOpcode::InjectFixPointPlaceholder => Opcode::InjectFixPointPlaceholder,
                     AtomicOpcode::IO(v) => Opcode::IO(v.clone().into()),
                 })))
-            }
-            LinearTypeAst::FixPoint { param_name, expr } => {
-                let placeholder = FixPoint::new_placeholder(gc, roots);
-                ctx.current_layer_mut()
-                    .enter_fixpoint(param_name.clone(), placeholder.clone());
-                let expr_type = expr.to_type(
-                    ctx,
-                    &mut PatternCounter::new(),
-                    false,
-                    gc,
-                    roots,
-                    expr.location(),
-                )?; // 递归函数的表达式中不允许出现模式变量，安全起见传入一个新的计数器
-                ctx.current_layer_mut().exit_fixpoint();
-                as_type!(&placeholder, Type::FixPoint)
-                    .set(expr_type.ty)
-                    .map_err(Ok)?;
-                Ok(BuildResult::simple(placeholder))
             }
             LinearTypeAst::Namespace { tag, expr } => {
                 let expr_type = expr.to_type(

@@ -269,6 +269,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         for element in other.iter() {
             new_elements.push(element.clone());
         }
-        Self::new(new_elements)
+        let is_nf = self.is_normal_form() & other.is_normal_form();
+        Self {
+            elements: Arc::new(new_elements),
+            head: 0,
+            is_nf: Arc::new(RwLock::new(is_nf)),
+        }
+        .dispatch()
     }
 }

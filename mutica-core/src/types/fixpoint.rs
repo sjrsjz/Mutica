@@ -11,7 +11,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeRef, type_bound::TypeBound,
     },
     util::{
         cycle_detector::FastCycleDetector, rootstack::RootStack,
@@ -181,29 +181,38 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
-            match self.reference.upgrade() {
-                Some(inner) => {
-                    let inner = inner
-                        .as_ref()
-                        .get_inner()
-                        .ok_or(TypeError::UnresolvableType)?;
-                    let self_ptr = inner.tagged_ptr();
-                    let other_ptr = other.tagged_ptr();
-                    let assumption_pair = (self_ptr, other_ptr);
+            match other {
+                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                    // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
-                    let already_assumed =
-                        inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
-                    if already_assumed {
-                        return Ok(Some(())); // already assumed
+                TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
+                _ => match self.reference.upgrade() {
+                    Some(inner) => {
+                        let inner = inner
+                            .as_ref()
+                            .get_inner()
+                            .ok_or(TypeError::UnresolvableType)?;
+                        let self_ptr = inner.tagged_ptr();
+                        let other_ptr = other.tagged_ptr();
+                        let assumption_pair = (self_ptr, other_ptr);
+
+                        // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
+                        let already_assumed =
+                            inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
+                        if already_assumed {
+                            return Ok(Some(())); // already assumed
+                        }
+
+                        inner_ctx.assumptions.push(assumption_pair);
+                        let result = inner.fulfill(other, &mut inner_ctx);
+                        inner_ctx.assumptions.pop();
+                        result
                     }
-
-                    inner_ctx.assumptions.push(assumption_pair);
-                    let result = inner.fulfill(other, &mut inner_ctx);
-                    inner_ctx.assumptions.pop();
-                    result
-                }
-                None => Err(TypeError::UnresolvableType), // reference is dead
+                    None => Err(TypeError::UnresolvableType), // reference is dead
+                },
             }
         })
     }
@@ -214,10 +223,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
             Some(inner) => {
-                let inner_type = inner
-                    .as_ref()
-                    .get_inner()
-                    .ok_or(TypeError::UnresolvableType)?;
+                let inner_type = match inner.as_ref().get_inner() {
+                    Some(t) => t,
+                    None => return Ok(self.dispatch()), // 未初始化
+                };
                 for r in ctx.rec_assumptions.iter_mut().rev() {
                     if r.0 == inner_type.tagged_ptr() {
                         //已经假设递归的归约结果,直接返回
