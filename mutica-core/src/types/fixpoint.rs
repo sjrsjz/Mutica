@@ -191,10 +191,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
-                        let inner = inner
-                            .as_ref()
-                            .get_inner()
-                            .ok_or(TypeError::UnresolvableType)?;
+                        let inner = match inner.as_ref().get_inner() {
+                            Some(t) => t,
+                            None => return Ok(None), // 未初始化
+                        };
                         let self_ptr = inner.tagged_ptr();
                         let other_ptr = other.tagged_ptr();
                         let assumption_pair = (self_ptr, other_ptr);
@@ -325,11 +325,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match self.reference.upgrade() {
                 Some(inner) => other.fullfill(
-                    inner
-                        .as_ref()
-                        .get_inner()
-                        .ok_or(TypeError::UnresolvableType)?
-                        .as_ref_dispatcher(),
+                    match inner.as_ref().get_inner() {
+                        Some(t) => t.as_ref_dispatcher(),
+                        None => return Ok(None), // 未初始化
+                    },
                     &mut inner_ctx,
                 ),
                 None => Err(TypeError::UnresolvableType), // reference is dead

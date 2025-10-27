@@ -354,7 +354,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             let reduced_pattern = inner.pattern.clone().reduce(ctx)?;
             reduced_branches.push((reduced_pattern, inner.expr.clone(), *closure_idx)); // expr 是惰性的,不需要立即化简
         }
-        Ok(Closure::new::<Type<T>, Type<T>, Type<T>>(
+        Ok(Closure::new::<Type<T>, Type<T>>(
             reduced_branches,
             reduced_env,
         ))
@@ -453,14 +453,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<U, V, W>(
+    pub fn new<U, V>(
         branches: Vec<(U, V, usize)>,
         closure_env: Vec<ClosureEnv<Type<T>, T>>,
     ) -> Type<T>
     where
         U: AsDispatcher<Type<T>, T>,
         V: AsDispatcher<Type<T>, T>,
-        W: AsDispatcher<Type<T>, T>,
     {
         let mut is_nf = ThreeValuedLogic::True;
         let inner = Arc::from((

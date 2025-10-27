@@ -2,10 +2,7 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, closure::ClosureEnv, fixpoint::FixPoint, float_value::FloatValue,
-        integer_value::IntegerValue, invoke::Invoke, type_bound::TypeBound,
+        closure::{Closure, ClosureEnv}, fixpoint::FixPoint, float_value::FloatValue, integer_value::IntegerValue, invoke::Invoke, pattern::Pattern, tuple::Tuple, type_bound::TypeBound, variable::Variable, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector,
@@ -27,7 +24,7 @@ pub enum Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
     Is,
     Neg,
     Set,
-    InjectFixPointPlaceholder,
+    BuildFixPoint,
     // I/O
     IO(Box<String>),
     Pandom(std::marker::PhantomData<T>),
@@ -47,7 +44,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Opcode<T> {
             Opcode::Is => Opcode::Is,
             Opcode::Neg => Opcode::Neg,
             Opcode::Set => Opcode::Set,
-            Opcode::InjectFixPointPlaceholder => Opcode::InjectFixPointPlaceholder,
+            Opcode::BuildFixPoint => Opcode::BuildFixPoint,
             Opcode::IO(v) => Opcode::IO(v.clone()),
             Opcode::Pandom(_) => Opcode::Pandom(std::marker::PhantomData),
         }
@@ -109,7 +106,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     | (Opcode::Greater, Opcode::Greater)
                     | (Opcode::Neg, Opcode::Neg)
                     | (Opcode::Set, Opcode::Set)
-                    | (Opcode::InjectFixPointPlaceholder, Opcode::InjectFixPointPlaceholder)
+                    | (Opcode::BuildFixPoint, Opcode::BuildFixPoint)
                     | (Opcode::Is, Opcode::Is) => Ok(Some(())),
                     (Opcode::IO(a), Opcode::IO(b)) => Ok(if a == b { Some(()) } else { None }),
                     _ => Ok(None),
@@ -158,8 +155,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         ))
                     }
                 }
-                Opcode::InjectFixPointPlaceholder => {
-                    Ok(Invoke::new(arg.clone_data(), FixPoint::new_placeholder(ctx.gc, ctx.roots), None::<Type<_>>, None::<Type<_>>))
+                Opcode::BuildFixPoint => {
+                    let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
+                    let call_back: Type<T> = Closure::new(
+                        vec![(Pattern::new(0, TypeBound::<T>::top()), Invoke::new(
+                            Opcode::Set.dispatch(), 
+                            Tuple::new(vec![place_holder.clone(), Variable::new_debruijn(0)]), 
+                            None::<Type<T>>, 
+                            None::<Type<T>>),0)],
+                        vec![ClosureEnv::new(Vec::<Type<T>>::new())]
+                    );
+                    Ok(Invoke::new(arg.clone_data(), place_holder, Some(call_back), None::<Type<_>>))
                 }
                 Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
                     std::io::Error::other(
@@ -355,7 +361,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
             Opcode::Neg => "Neg".to_string(),
             Opcode::Is => "Is".to_string(),
             Opcode::Set => "Set".to_string(),
-            Opcode::InjectFixPointPlaceholder => "InjectFixPointPlaceholder".to_string(),
+            Opcode::BuildFixPoint => "InjectFixPointPlaceholder".to_string(),
             Opcode::IO(v) => format!("IO({})", v),
             Opcode::Pandom(_) => "Pandom".to_string(),
         }

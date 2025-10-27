@@ -43,7 +43,7 @@ pub enum AtomicOpcode {
     Is,
     Neg,
     Set,
-    InjectFixPointPlaceholder,
+    BuildFixPoint,
     IO(String),
 }
 
@@ -855,8 +855,6 @@ impl TypeAst {
                 WithLocation::new(BasicTypeAst::AtomicOpcode(binary_op.clone()), loc)
             }
             TypeAst::FixPoint { param_name, expr } => {
-                // [x: any -> Opcode(set)((x, [x: any -> expr](x)))](fixpoint_placeholder)
-                // Construct inner lambda: [x: any -> expr]
                 let inner_lambda = WithLocation::new(
                     BasicTypeAst::Match {
                         branches: vec![(
@@ -872,67 +870,13 @@ impl TypeAst {
                     },
                     loc,
                 );
-
-                // Inner application: [x: any -> expr](x)
-                let inner_apply = WithLocation::new(
-                    BasicTypeAst::Apply {
-                        func: Box::new(inner_lambda.clone()),
-                        arg: Box::new(WithLocation::new(
-                            BasicTypeAst::Variable(param_name.clone()),
-                            loc,
-                        )),
-                        handler: None,
-                    },
-                    loc,
-                );
-
-                // Combine arguments into a tuple: (x, [x: any -> expr](x))
-                let combined_args = WithLocation::new(
-                    BasicTypeAst::Tuple(vec![
-                        WithLocation::new(BasicTypeAst::Variable(param_name.clone()), loc),
-                        inner_apply.clone(),
-                    ]),
-                    loc,
-                );
-
-                // Apply `set` with the combined tuple
-                let set_apply = WithLocation::new(
-                    BasicTypeAst::Apply {
-                        func: Box::new(WithLocation::new(
-                            BasicTypeAst::AtomicOpcode(AtomicOpcode::Set),
-                            loc,
-                        )),
-                        arg: Box::new(combined_args),
-                        handler: None,
-                    },
-                    loc,
-                );
-
-                // Outer lambda [x: any -> Opcode(set)((x, ...))]
-                let outer_lambda = WithLocation::new(
-                    BasicTypeAst::Match {
-                        branches: vec![(
-                            WithLocation::new(
-                                BasicTypeAst::Pattern {
-                                    name: param_name.clone(),
-                                    expr: Box::new(WithLocation::new(BasicTypeAst::Top, loc)),
-                                },
-                                loc,
-                            ),
-                            set_apply,
-                        )],
-                    },
-                    loc,
-                );
-
-                // Apply outer lambda to the fixpoint placeholder
                 WithLocation::new(
                     BasicTypeAst::Apply {
                         func: Box::new(WithLocation::new(
-                            BasicTypeAst::AtomicOpcode(AtomicOpcode::InjectFixPointPlaceholder),
+                            BasicTypeAst::AtomicOpcode(AtomicOpcode::BuildFixPoint),
                             loc,
                         )),
-                        arg: Box::new(outer_lambda),
+                        arg: Box::new(inner_lambda),
                         handler: None,
                     },
                     loc,
@@ -1976,9 +1920,10 @@ impl<'ast> LinearTypeAst<'ast> {
                     ctx.exit_layer();
                     new_branches.push((pattern_type.ty, body_type.ty, 0));
                 }
-                Ok(BuildResult::simple(
-                    Closure::new::<Type<T>, Type<T>, Type<T>>(new_branches, vec![closure_env]),
-                ))
+                Ok(BuildResult::simple(Closure::new::<Type<T>, Type<T>>(
+                    new_branches,
+                    vec![closure_env],
+                )))
             }
             LinearTypeAst::AtomicOpcode(atomic_opcode) => {
                 Ok(BuildResult::simple(Opcode::new(match atomic_opcode {
@@ -1993,7 +1938,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     AtomicOpcode::Neg => Opcode::Neg,
                     AtomicOpcode::Is => Opcode::Is,
                     AtomicOpcode::Set => Opcode::Set,
-                    AtomicOpcode::InjectFixPointPlaceholder => Opcode::InjectFixPointPlaceholder,
+                    AtomicOpcode::BuildFixPoint => Opcode::BuildFixPoint,
                     AtomicOpcode::IO(v) => Opcode::IO(v.clone().into()),
                 })))
             }
