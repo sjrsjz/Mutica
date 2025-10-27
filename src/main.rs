@@ -12,10 +12,7 @@ use mutica_core::{
     arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
     scheduler::{self, ContinuationOrHandler, stack::Stack},
     stacksafe::{set_minimum_stack_size, set_stack_allocation_size},
-    types::{
-        AsDispatcher, CoinductiveType, GcAllocObject, Representable, TaggedPtr, Type, TypeError,
-        TypeRef,
-    },
+    types::{AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef},
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
@@ -36,30 +33,22 @@ impl GcAllocObject<TypeGcOnceLock> for TypeGcOnceLock {
         }
     }
 
-    fn get_inner(&self) -> Option<&Self::Inner> {
+    fn get_value(&self) -> Option<&Self::Inner> {
         self.inner.get()
     }
 
-    fn map_inner<F, R>(
-        &self,
-        path: &mut FastCycleDetector<TaggedPtr<()>>,
-        f: F,
-    ) -> Result<R, TypeError<Self::Inner, TypeGcOnceLock>>
+    fn map_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
     where
         F: FnOnce(
             &mut FastCycleDetector<TaggedPtr<()>>,
             <Self::Inner as AsDispatcher<Self::Inner, TypeGcOnceLock>>::RefDispatcher<'_>,
         ) -> R,
     {
-        match self.inner.get() {
-            Some(t) => path
-                .with_guard(t.tagged_ptr(), |path| t.map_inner(path, f))
-                .ok_or(TypeError::InfiniteRecursion)?,
-            None => Err(TypeError::UnresolvableType),
-        }
+        self.get_value()
+            .map(|inner| f(path, inner.as_ref_dispatcher()))
     }
 
-    fn set_inner(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, TypeGcOnceLock>> {
+    fn set_value(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, TypeGcOnceLock>> {
         self.inner
             .set(_value)
             .map_err(|_| TypeError::RedeclaredType)
@@ -306,7 +295,8 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                     println!("{}", v.display(&mut FastCycleDetector::new()));
                 }
             })
-            .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e)),
+            .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e))
+            .unwrap_or(()),
         Err(e) => {
             eprintln!("--- Type Reduction Error ---");
             eprintln!(

@@ -66,10 +66,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Tuple<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Tuple<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Tuple<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
@@ -165,6 +161,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 }
                 _ => Ok(TypeBound::bottom()),
             })?
+            .unwrap_or(Err(TypeError::UnresolvableType))
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {

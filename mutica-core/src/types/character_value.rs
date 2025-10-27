@@ -27,9 +27,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for CharacterValue<T> 
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for CharacterValue<T> {
-    type Inner = Type<T>;
-}
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for CharacterValue<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>

@@ -33,10 +33,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Construct<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Construct<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Construct<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.head.upgrade(collected);

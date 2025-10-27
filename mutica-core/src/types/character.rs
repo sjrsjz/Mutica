@@ -21,10 +21,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Character<T> {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Character<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Character<T> {}
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Character<T> {

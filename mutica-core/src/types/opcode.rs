@@ -55,10 +55,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Opcode<T> {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Opcode<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Opcode<T> {}
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Opcode<T> {
@@ -321,8 +317,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     .into(),
                             )),
                         }
-                                })
-                            })??
+                                })?.unwrap_or(Err(TypeError::UnresolvableType))
+                            })?.unwrap_or(Err(TypeError::UnresolvableType))
                         } else {
                             Err(TypeError::TypeMismatch(
                                 (ctx.arg.clone(), "Tuple".into()).into(),
@@ -337,7 +333,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 Opcode::Pandom(_) => {
                     unreachable!()
                 }
-            })?
+            })?.unwrap_or(Err(TypeError::UnresolvableType))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

@@ -87,10 +87,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Generalize<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Generalize<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Generalize<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for sub in self.types.iter() {
@@ -264,7 +260,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
             path: &mut FastCycleDetector<TaggedPtr<()>>,
             x: Type<T>,
         ) -> Result<(), TypeError<Type<T>, T>> {
-            if x.map_inner(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
+            if x.map(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
                 Ok(match t {
                     TypeRef::Generalize(generalize) => {
                         for sub in generalize.types.iter() {
@@ -274,7 +270,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
                     }
                     _ => true,
                 })
-            })?? {
+            })?
+            .unwrap_or(Ok(true))?
+            {
                 collected.push(x);
             }
             Ok(())

@@ -70,10 +70,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Invoke<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Invoke<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Invoke<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         self.inner.0.upgrade(collected);

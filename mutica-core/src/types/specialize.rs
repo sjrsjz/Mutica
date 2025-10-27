@@ -101,10 +101,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Speciali
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Specialize<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Specialize<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for sub in self.types.iter() {
@@ -276,20 +272,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
             path: &mut FastCycleDetector<TaggedPtr<()>>,
             t: Type<T>,
         ) -> Result<(), TypeError<Type<T>, T>> {
-            let result = t
-                .map_inner(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
-                    Ok(match t {
-                        TypeRef::Specialize(specialize) => {
-                            for sub in specialize.types.iter() {
-                                collect(collected, path, sub.clone())?;
-                            }
-                            false
+            if t.map(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
+                Ok(match t {
+                    TypeRef::Specialize(specialize) => {
+                        for sub in specialize.types.iter() {
+                            collect(collected, path, sub.clone())?;
                         }
-                        _ => true,
-                    })
+                        false
+                    }
+                    _ => true,
                 })
-                .unwrap_or(Ok(false))?;
-            if result {
+            })?
+            .unwrap_or(Ok(false))?
+            {
                 collected.push(t);
             }
             Ok(())

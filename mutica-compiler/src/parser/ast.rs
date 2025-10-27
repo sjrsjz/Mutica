@@ -2002,7 +2002,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     value.location(),
                 )?;
                 Ok(BuildResult::complex(
-                    Rotate::new(&value_type.ty),
+                    Rotate::new(&value_type.ty).map_err(Ok)?,
                     value_type.patterns,
                 ))
             }

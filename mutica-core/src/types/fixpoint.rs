@@ -51,10 +51,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for FixPoint<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for FixPoint<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
         queue.push_back(self.reference.clone());
@@ -84,7 +80,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         self.reference
             .upgrade()
             .ok_or(TypeError::UnresolvableType)
-            .map(|inner: GCArc<T>| inner.as_ref().map_inner(path, f))
+            .map(|inner: GCArc<T>| inner.as_ref().map_value(path, f))
     }
 }
 
@@ -118,7 +114,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         if let Some(inner) = self.reference.upgrade() {
             let t = t.into_dispatcher();
             let is_nf = t.is_normal_form();
-            inner.as_ref().set_inner(t)?;
+            inner.as_ref().set_value(t)?;
             // 先预设置归约状态
             match self.is_nf.write() {
                 Ok(mut nf_lock) => {
@@ -191,7 +187,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 TypeRef::Bound(TypeBound::Top) => Ok(Some(())),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
-                        let inner = match inner.as_ref().get_inner() {
+                        let inner = match inner.as_ref().get_value() {
                             Some(t) => t,
                             None => return Ok(None), // 未初始化
                         };
@@ -223,7 +219,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
             Some(inner) => {
-                let inner_type = match inner.as_ref().get_inner() {
+                let inner_type = match inner.as_ref().get_value() {
                     Some(t) => t,
                     None => return Ok(self.dispatch()), // 未初始化
                 };
@@ -260,7 +256,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         match self.reference.upgrade() {
             Some(inner) => inner
                 .as_ref()
-                .get_inner()
+                .get_value()
                 .ok_or(TypeError::UnresolvableType)
                 .and_then(|t| t.invoke(ctx)),
             None => Err(TypeError::UnresolvableType), // reference is dead
@@ -277,7 +273,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
         let is_nf = match self.reference.upgrade() {
             Some(inner) => {
-                match inner.as_ref().get_inner() {
+                match inner.as_ref().get_value() {
                     Some(t) => {
                         match cycle_detector.with_guard(t.tagged_ptr(), |cycle_detector| {
                             if let Ok(mut nf_lock) = self.is_nf.write() {
@@ -325,7 +321,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env);
             match self.reference.upgrade() {
                 Some(inner) => other.fullfill(
-                    match inner.as_ref().get_inner() {
+                    match inner.as_ref().get_value() {
                         Some(t) => t.as_ref_dispatcher(),
                         None => return Ok(None), // 未初始化
                     },
@@ -348,7 +344,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<T> {
     /// 对于循环引用，只显示地址以避免无限递归打印。
     fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
         match self.reference.upgrade() {
-            Some(inner) => match inner.as_ref().get_inner() {
+            Some(inner) => match inner.as_ref().get_value() {
                 Some(t) => match path.with_guard(t.tagged_ptr(), |path| t.represent(path)) {
                     Some(s) => format!("μ.{:?} {}", t as *const _ as *const (), s),
                     None => format!("{:?}", t as *const _ as *const ()),

@@ -28,10 +28,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for FloatValue<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for FloatValue<T> {}
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for FloatValue<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for FloatValue<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>

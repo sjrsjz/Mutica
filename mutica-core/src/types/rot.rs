@@ -5,7 +5,7 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
+        Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -28,10 +28,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Rotate<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         self.value.collect(queue);
     }
-}
-
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Rotate<T> {
-    type Inner = Type<T>;
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Rotate<T> {
@@ -106,7 +102,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
         self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        self.value.as_ref().clone().reduce(ctx).map(Self::new)
+        self.value.as_ref().clone().reduce(ctx).and_then(Self::new)
     }
 
     fn invoke(
@@ -136,14 +132,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rotate<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Type<T> {
-        let value = value.into_dispatcher();
-        let is_nf = value.is_normal_form();
-        Self {
-            value: Arc::new(value),
-            is_nf: Arc::new(RwLock::new(is_nf)),
+    pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        match value.into_dispatcher() {
+            Type::Rot(v) => Ok(v.value.as_ref().clone()), // rot rot T => T
+            ref n @ Type::FixPoint(ref v) => v
+                .map(&mut FastCycleDetector::new(), |_, inner| match inner {
+                    TypeRef::Rot(r) => r.value.as_ref().clone(), // rot rot T => T
+                    _ => Self {
+                        value: Arc::new(n.clone()),
+                        is_nf: Arc::new(RwLock::new(n.is_normal_form())),
+                    }
+                    .dispatch(),
+                })
+                .map(|inner| {
+                    inner.unwrap_or(
+                        Self {
+                            // rot unknown_fixpoint => rot unknown_fixpoint
+                            value: Arc::new(n.clone()),
+                            is_nf: Arc::new(RwLock::new(n.is_normal_form())),
+                        }
+                        .dispatch(),
+                    )
+                }),
+            other => Ok(Self {
+                is_nf: Arc::new(RwLock::new(other.is_normal_form())),
+                value: Arc::new(other),
+            }
+            .dispatch()),
         }
-        .dispatch()
     }
 
     pub fn value(&self) -> &Type<T> {

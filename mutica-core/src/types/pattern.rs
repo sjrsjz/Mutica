@@ -50,10 +50,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Pattern<T> {
-    type Inner = Type<T>;
-}
-
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Pattern<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>

@@ -22,9 +22,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Integer<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Integer<T> {}
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Integer<T> {
-    type Inner = Type<T>;
-}
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Integer<T> {
     type RefDispatcher<'a>
@@ -82,7 +79,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Integ
                 _ => Err(super::TypeError::TypeMismatch(
                     (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
                 )),
-            }) {
+            })? {
             Some(v) => v,
             None => Err(super::TypeError::UnresolvableType),
         }

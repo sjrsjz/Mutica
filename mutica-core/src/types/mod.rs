@@ -215,7 +215,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         }
     }
 
-    pub fn map_inner<F, R>(
+    pub fn map<F, R>(
         self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
         f: F,
@@ -361,39 +361,17 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
     type Inner: CoinductiveType<Self::Inner, T>
     where
         T: GcAllocObject<T>;
-    fn new_placeholder() -> Self {
-        unimplemented!()
-    }
+    fn new_placeholder() -> Self;
 
-    fn get_inner(&self) -> Option<&Self::Inner>
+    fn get_value(&self) -> Option<&Self::Inner>
     where
-        T: GcAllocObject<T>,
-    {
-        unimplemented!()
-    }
+        T: GcAllocObject<T>;
 
-    fn set_inner(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
+    fn set_value(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
     where
-        T: GcAllocObject<T>,
-    {
-        unimplemented!()
-    }
+        T: GcAllocObject<T>;
 
-    // pub fn map<F, R>(
-    //     &self,
-    //     path: &mut FastCycleDetector<TaggedPtr<()>>,
-    //     f: F,
-    // ) -> Result<R, TypeError<Type<T>, T>>
-    // where
-    //     F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, &Type<T>) -> R,
-    // {
-    //     match self {
-    //         Type::FixPoint(v) => v.map(path, f),
-    //         _ => Ok(f(path, self)),
-    //     }
-    // }
-
-    fn map_inner<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
+    fn map_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
     where
         F: FnOnce(
             &mut FastCycleDetector<TaggedPtr<()>>,
@@ -401,11 +379,8 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
         ) -> R,
         T: GcAllocObject<T>,
     {
-        if let Some(inner) = self.get_inner() {
-            Some(f(path, inner.as_ref_dispatcher()))
-        } else {
-            None
-        }
+        self.get_value()
+            .map(|inner| f(path, inner.as_ref_dispatcher()))
     }
 }
 
@@ -413,16 +388,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Type<T> {
     #[stacksafe::stacksafe]
     fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
         type_dispatch!(self, collect, queue)
-    }
-}
-
-impl<T: GcAllocObject<T, Inner = Type<T>>> GcAllocObject<T> for Type<T> {
-    type Inner = Type<T>;
-    fn get_inner(&self) -> Option<&Self::Inner>
-    where
-        T: GcAllocObject<T>,
-    {
-        Some(self)
     }
 }
 
@@ -725,7 +690,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
     }
 }
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
-    GcAllocObject<V> + Clone + Rootable<V> + Representable + AsDispatcher<U, V>
+    Clone + Rootable<V> + Representable + AsDispatcher<U, V> + GCTraceable<V> + 'static + Sized
 {
     fn fulfill(
         &self,
