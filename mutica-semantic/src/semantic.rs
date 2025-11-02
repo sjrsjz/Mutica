@@ -101,6 +101,9 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::Rot { value } => {
                 Self::build_mapping(value, mapping, source_file);
             }
+            LinearTypeAst::EqType { value } => {
+                Self::build_mapping(value, mapping, source_file);
+            }
         }
     }
 }

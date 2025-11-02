@@ -9,6 +9,7 @@ use mutica_core::types::character::Character;
 use mutica_core::types::character_value::CharacterValue;
 use mutica_core::types::closure::{Closure, ClosureEnv};
 use mutica_core::types::construct::Construct;
+use mutica_core::types::eq_type::EqType;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
 use mutica_core::types::generalize::Generalize;
@@ -119,6 +120,9 @@ pub enum TypeAst {
     Rot {
         value: Box<WithLocation<TypeAst>>,
     },
+    EqType {
+        value: Box<WithLocation<TypeAst>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +168,9 @@ pub enum BasicTypeAst {
     },
     Literal(Box<WithLocation<BasicTypeAst>>),
     Rot {
+        value: Box<WithLocation<BasicTypeAst>>,
+    },
+    EqType {
         value: Box<WithLocation<BasicTypeAst>>,
     },
 }
@@ -500,6 +507,13 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
             }
+            BasicTypeAst::EqType { value } => {
+                let value = value.linearize(ctx, value.location());
+                let ty = LinearTypeAst::EqType {
+                    value: Box::new(value.tail_type().clone()),
+                };
+                LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
+            }
         }
     }
 }
@@ -576,6 +590,9 @@ pub enum LinearTypeAst<'ast> {
     },
     Literal(Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     Rot {
+        value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+    },
+    EqType {
         value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
 }
@@ -927,6 +944,12 @@ impl TypeAst {
                 },
                 loc,
             ),
+            TypeAst::EqType { value } => WithLocation::new(
+                BasicTypeAst::EqType {
+                    value: Box::new(value.into_basic(multifile_builder, value.location())),
+                },
+                loc,
+            ),
         }
     }
 
@@ -1027,6 +1050,9 @@ impl TypeAst {
                 head.collect_errors(errors);
                 tail.collect_errors(errors);
             }
+            TypeAst::EqType { value } => {
+                value.collect_errors(errors);
+            }
         }
     }
 
@@ -1122,6 +1148,9 @@ impl TypeAst {
             },
             TypeAst::Literal(inner) => TypeAst::Literal(Box::new(Self::sanitize(*inner))),
             TypeAst::Rot { value } => TypeAst::Rot {
+                value: Box::new(Self::sanitize(*value)),
+            },
+            TypeAst::EqType { value } => TypeAst::EqType {
                 value: Box::new(Self::sanitize(*value)),
             },
         })
@@ -1646,6 +1675,21 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
+            LinearTypeAst::EqType { value } => {
+                // EqType类型内不允许出现模式变量，因为EqType检查是反向的
+                let value_res = value.flow(ctx, pattern_mode, value.location(), errors);
+                FlowResult::complex(
+                    WithLocation::new(
+                        LinearTypeAst::EqType {
+                            value: Box::new(value_res.ty),
+                        },
+                        loc,
+                    ),
+                    value_res.captures,
+                    value_res.patterns,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
         }
     }
 }
@@ -2003,6 +2047,20 @@ impl<'ast> LinearTypeAst<'ast> {
                 )?;
                 Ok(BuildResult::complex(
                     Rotate::new(&value_type.ty),
+                    value_type.patterns,
+                ))
+            }
+            LinearTypeAst::EqType { value } => {
+                let value_type = value.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    value.location(),
+                )?;
+                Ok(BuildResult::complex(
+                    EqType::new(&value_type.ty),
                     value_type.patterns,
                 ))
             }

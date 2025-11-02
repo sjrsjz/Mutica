@@ -52,6 +52,7 @@ extern {
         "DunderLess"    => LexerToken::DunderLess,
         "DunderIs"      => LexerToken::DunderIs,
         "DunderOpcode"  => LexerToken::DunderOpcode,
+        "EqType"        => LexerToken::EqType,
 
         "Arrow"         => LexerToken::Arrow,
         "FatArrow"      => LexerToken::FatArrow,
@@ -159,6 +160,7 @@ ThenTok: () = <l:@L> "Then" <r:@R> => { TokenColor::fill_colors(colors, l..r, To
 ElseTok: () = <l:@L> "Else" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 RotTok: () = <l:@L> "Rot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 HandleTok: () = <l:@L> "Handle" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+EqTypeTok: () = <l:@L> "EqType" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 
 // Individual operator tokens with centralized coloring
 DotTok: () = <l:@L> "Dot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
@@ -385,8 +387,17 @@ Literal: WithLocation<TypeAst> = {
     },
 }
 
+EqType: WithLocation<TypeAst> = {
+    <l:@L> EqTypeTok <t: Primary> <r:@R> => {
+        WithLocation::new(TypeAst::EqType {
+            value: Box::new(t),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
 Primary: WithLocation<TypeAst> = {
     <l: Literal> => l,
+    <e: EqType> => e,
     <r: RecursiveGen> => r,
     <c: Closure> => c,
     <m: Match> => m,
