@@ -361,7 +361,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
                         &mut pattern_env,
                         false,
                     );
-                    if collected[j].check(collected[i].as_ref_dispatcher(), &mut check_ctx)? {
+                    if collected[j].equals(collected[i].as_ref_dispatcher(), &mut check_ctx)? {
                         absorbed[i] = true;
                         break;
                     }
