@@ -219,7 +219,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         // 相同引用，协归纳假设成立
                         return Ok(true);
                     }
-                    v.accept(self.as_ref_dispatcher(), &mut inner_ctx)
+                    v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => match self.reference.upgrade() {
