@@ -79,7 +79,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
         })
     }
 
-
     fn reduce(
         self,
         _ctx: &mut ReductionContext<Type<T>, T>,
@@ -102,7 +101,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                     (ctx.arg.clone(), "FloatValue or IntegerValue".into()).into(),
                 )),
             })?
-            .unwrap_or(Err(TypeError::UnresolvableType))
+            .unwrap_or(Err(TypeError::UnresolvableType(
+                "Could not resolve argument".into(),
+            )))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

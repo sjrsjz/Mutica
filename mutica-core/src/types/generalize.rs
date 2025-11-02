@@ -7,7 +7,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, closure::ClosureEnv, type_bound::TypeBound,
+        TypeRef, closure::ClosureEnv,
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector,
@@ -27,8 +27,7 @@ use crate::{
 ///
 /// `Max<T₁, T₂, ..., Tₙ>` 表示一个**不可约类型集合** `{T₁, T₂, ..., Tₙ}`，满足：
 ///
-/// - **互不包含性**：∀i,j. i≠j ⟹ Tᵢ ⊄ Tⱼ ∧ Tⱼ ⊄ Tᵢ
-/// - **极大性**：无法通过子类型关系进一步约简（保留最泛化的类型）
+/// - **互不等价性**：∀i,j. i≠j ⟹ Tᵢ ≠ Tⱼ
 ///
 /// ### 子类型语义（定义性质）
 ///
@@ -58,12 +57,6 @@ use crate::{
 /// ```
 ///
 /// 这不是因为"子类型格不是布尔代数"，而是因为 `Min` 和 `Max` 根本就不是代数运算符。
-///
-/// ### 实现细节
-///
-/// 1. **扁平化**：自动展开嵌套的 `Generalize` 类型
-/// 2. **吸收律**：移除被其他类型包含的冗余类型（与 Min 相反）
-/// 3. **简化**：单个类型时直接返回该类型，空集时返回 `⊥`
 pub struct Generalize<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
     is_nf: Arc<RwLock<ThreeValuedLogic>>, // 仅仅只是为了能可变的存储ThreeValuedLogic
@@ -124,6 +117,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
                 _ => {
                     for sub in self.types.iter() {
                         if !sub.check(other, &mut inner_ctx)? {
@@ -148,7 +143,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
                 TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Generalize(v) => {
                     if self.types.len() != v.types.len() {
@@ -364,7 +358,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
             }
         }
         let new_type = match result.len() {
-            0 => TypeBound::Bottom.dispatch(),
+            0 => {
+                return Err(TypeError::UnresolvableType(
+                    "Generalize with empty type set".into(),
+                ));
+            }
             1 => result.into_iter().next().unwrap(),
             _ => Generalize {
                 is_nf: {

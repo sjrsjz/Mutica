@@ -209,7 +209,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 }
                 _ => Ok(TypeBound::bottom()),
             })?
-            .unwrap_or(Err(TypeError::UnresolvableType))
+            .unwrap_or(Err(TypeError::UnresolvableType(
+                "Could not resolve argument".into(),
+            )))
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {

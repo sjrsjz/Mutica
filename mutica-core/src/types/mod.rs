@@ -319,7 +319,7 @@ use thiserror::Error;
 
 #[derive(Clone, Error)]
 pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    UnresolvableType,
+    UnresolvableType(Box<str>),
     InfiniteRecursion,
     RedeclaredType,
     NonApplicableType(Box<U>),
@@ -330,7 +330,7 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     MissingContinuation(Box<U>),
     MissingPerformHandler(Box<U>),
     RuntimeError(Arc<dyn Error + Send + Sync>),
-    OtherError(String),
+    OtherError(Box<str>),
     Perform(Box<U>),
     Break(Box<U>),
     Resume(Box<U>),
@@ -341,8 +341,8 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
 impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display for TypeError<U, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeError::UnresolvableType => {
-                write!(f, "Unresolvable type (e.g. fixpoint reference lost)")
+            TypeError::UnresolvableType(msg) => {
+                write!(f, "Unresolvable type: {}", msg)
             }
             TypeError::InfiniteRecursion => write!(f, "Infinite recursion"),
             TypeError::RedeclaredType => write!(f, "Type redeclared"),

@@ -53,6 +53,7 @@ extern {
         "DunderIs"      => LexerToken::DunderIs,
         "DunderOpcode"  => LexerToken::DunderOpcode,
         "EqType"        => LexerToken::EqType,
+        "Type"          => LexerToken::Type,
 
         "Arrow"         => LexerToken::Arrow,
         "FatArrow"      => LexerToken::FatArrow,
@@ -161,6 +162,7 @@ ElseTok: () = <l:@L> "Else" <r:@R> => { TokenColor::fill_colors(colors, l..r, To
 RotTok: () = <l:@L> "Rot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 HandleTok: () = <l:@L> "Handle" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 EqTypeTok: () = <l:@L> "EqType" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+TypeTok: () = <l:@L> "Type" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 
 // Individual operator tokens with centralized coloring
 DotTok: () = <l:@L> "Dot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
@@ -177,7 +179,7 @@ LtTok: () = <l:@L> "Lt" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenC
 LteTok: () = <l:@L> "Lte" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 GtTok: () = <l:@L> "Gt" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 GteTok: () = <l:@L> "Gte" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-IsTok: () = <l:@L> "Is" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
+IsTok: () = <l:@L> "Is" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 PlusTok: () = <l:@L> "Plus" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 MinusTok: () = <l:@L> "Minus" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 StarTok: () = <l:@L> "Star" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
@@ -226,6 +228,9 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> <io: Ident> BangTok <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Function);
         WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> TypeTok <n:Num> <r:@R> => {
+        WithLocation::new(TypeAst::OrderedType(n as usize), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> ImportTok <s: StringLiteral> <r:@R> => {
         WithLocation::new(TypeAst::Import(s), Some(SourceLocation::new(source.clone(), l..r)).as_ref())

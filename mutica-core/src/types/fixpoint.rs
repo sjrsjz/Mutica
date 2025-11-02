@@ -79,7 +79,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     {
         self.reference
             .upgrade()
-            .ok_or(TypeError::UnresolvableType)
+            .ok_or(TypeError::UnresolvableType("Reference is dead".into()))
             .map(|inner: GCArc<T>| inner.as_ref().map_value(path, f))
     }
 }
@@ -121,14 +121,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
                     *nf_lock = is_nf;
                 }
                 Err(_) => {
-                    return Err(TypeError::UnresolvableType);
+                    return Err(TypeError::UnresolvableType(
+                        "Failed to acquire write lock for is_nf".into(),
+                    ));
                 }
             }
             // 重新计算所有相关类型的归约状态
             self.recalculate_normal_form(&mut FastCycleDetector::new());
             Ok(())
         } else {
-            Err(TypeError::UnresolvableType) // reference is dead
+            Err(TypeError::UnresolvableType("Reference is dead".into()))
         }
     }
 
@@ -152,23 +154,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for FixPoint
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPoint<T> {
-    /// 递归类型的子类型检查
-    ///
-    /// ## 算法原理
-    ///
-    /// 递归类型的子类型检查必须处理**无限展开**的问题。
-    /// 我们使用**假设集合** (assumption set) 来记录"正在检查的关系"，
-    /// 当遇到重复的检查时，假设关系成立（**协归纳假设**）。
-    ///
-    /// ## 协归纳子类型规则
-    ///
-    /// ```text
-    /// Γ, μX.S <: μY.T ⊢ S[μX.S/X] <: T[μY.T/Y]
-    /// ────────────────────────────────────────────
-    ///              μX.S <: μY.T
-    /// ```
-    ///
-    /// 即：在假设 μX.S <: μY.T 的前提下，检查展开后的类型关系。
     fn check(
         &self,
         other: TypeRef<T>,
@@ -212,7 +197,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         inner_ctx.assumptions.pop();
                         result
                     }
-                    None => Err(TypeError::UnresolvableType), // reference is dead
+                    None => Err(TypeError::UnresolvableType("Reference is dead".into())),
                 },
             }
         })
@@ -258,7 +243,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         inner_ctx.assumptions.pop();
                         result
                     }
-                    None => Err(TypeError::UnresolvableType), // reference is dead
+                    None => Err(TypeError::UnresolvableType("Reference is dead".into())),
                 },
             }
         })
@@ -296,7 +281,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     result
                 }
             }
-            None => Err(TypeError::UnresolvableType), // reference is dead
+            None => Err(TypeError::UnresolvableType("Reference is dead".into())),
         }
     }
 
@@ -308,9 +293,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
             Some(inner) => inner
                 .as_ref()
                 .get_value()
-                .ok_or(TypeError::UnresolvableType)
+                .ok_or(TypeError::UnresolvableType("Reference is dead".into()))
                 .and_then(|t| t.invoke(ctx)),
-            None => Err(TypeError::UnresolvableType), // reference is dead
+            None => Err(TypeError::UnresolvableType("Reference is dead".into())),
         }
     }
 
@@ -378,7 +363,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                     },
                     &mut inner_ctx,
                 ),
-                None => Err(TypeError::UnresolvableType), // reference is dead
+                None => Err(TypeError::UnresolvableType("Reference is dead".into())),
             }
         })
     }
@@ -400,7 +385,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                     },
                     &mut inner_ctx,
                 ),
-                None => Err(TypeError::UnresolvableType), // reference is dead
+                None => Err(TypeError::UnresolvableType("Reference is dead".into())),
             }
         })
     }

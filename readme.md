@@ -4,8 +4,8 @@
 
 **An experimental, statically-typed programming language based on a pure Continuation-Passing Style (CPS) core.**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) 
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
 </div>
 
@@ -27,7 +27,7 @@ Mutica is an experimental, statically-typed functional programming language that
 
 ### Installation
 
-Ensure you have the Rust toolchain (version 1.85 or newer) installed. Then, clone and build the project:
+Ensure you have the Rust toolchain installed. Then, clone and build the project:
 
 ```bash
 git clone https://github.com/yourusername/Mutica.git
@@ -42,7 +42,7 @@ cargo build --release
 cargo run -- run examples/fib.mu
 
 # Or use the compiled executable directly
-./target/release/mutica run examples/hello.mu
+./target/release/mutica run examples/fib.mu
 ```
 
 ## 📚 Syntax Overview
@@ -79,22 +79,22 @@ let add_one: any = (x: int) -> x + 1; // `->` defines a function
 // A recursive function using `rec`
 let fib: any = rec f: (n: int) -> 
     match n
-        | 0 => 0
-        | 1 => 1
+        | eq 0 => 0
+        | eq 1 => 1
         | _ => f(n - 1) + f(n - 2)
         | panic; // Asserts that the match is exhaustive for the input `n: int`
 ```
 
-### Constraint Checks (`<:`)
+### Constraint Checks (`is`)
 
-The `<:` operator is not traditional subtyping, but a check to see if a type fulfills the constraints of another.
+The `is` operator is not traditional subtyping, but a check to see if a type fulfills the constraints of another.
 
 ```mutica
 // A value fulfills the constraint of its general type
-1 <: int                           // true
+1 is int                           // true
 
 // A more specific record fulfills the constraint of a more general one
-{ x::1 & y::2 } <: { x::int }      // true
+{ x::1 & y::2 } is { x::int }      // true
 ```
 
 ### Namespaces and ADTs
@@ -132,57 +132,46 @@ let y_coord: any = p.y;
 ### Fibonacci
 
 ```mutica
-let fib: any = rec f: (n: int) -> 
-    match n
-        | 0 => 0
-        | 1 => 1
-        | _ => f(n - 1) + f(n - 2)
-        | panic;
+let fib: any = rec f: match
+    | eq 0 => 0
+    | eq 1 => 1
+    | n: int => f(n - 1) + f(n - 2)
+    | panic;
 
 fib(10) // Computes the 10th Fibonacci number
 ```
 
-### Hello World
+### IO Example
 
 ```mutica
-// A recursive function to print a list of characters
-let print_chars: any = rec print_chars: (chars: (() | (char, any))) ->
-    match chars
+let List: any = (T: any) -> rec list: (() | T @ list);
+let print_chars: any = rec print_chars: str: List(char) ->
+    match str
         | () => ()
-        | (head: char, tail: any) => (discard print(head); print_chars(tail))
+        | (head: char) @ (tail: any) => (discard print!(head); print_chars(tail))
         | panic;
 
 print_chars("Hello, world!\n")
 ```
 
-## 🏗️ The Constraint System
+## 🏗️ Compiler
 
-Mutica's core innovation is its **rule-based constraint validation system**. Instead of being limited by traditional set-theoretic semantics, the `<:` operator acts as a programmable predicate whose behavior is defined by a consistent set of syntactic rewrite rules.
+The Mutica compiler is written in Rust and uses the following libraries:
 
-This coinductively-defined system enables:
+- **`clap`**: for command-line argument parsing.
+- **`lalrpop`**: for parsing the Mutica grammar.
+- **`logos`**: for lexical analysis.
+- **`ariadne`**: for generating beautiful error reports.
+- **`arc-gc`**: for garbage collection.
+- **`stacksafe`**: for stack safety.
 
-- **Precise Structural Validation**: Accurately models traditional subtyping behaviors like width and depth for records, and covariance/contravariance for functions, as a subset of its capabilities.
+The compilation process consists of the following stages:
 
-- **Emergent Properties**: The orthogonal combination of these simple rules allows for the expression of complex type-level concepts like `Bottom`, `Top` types from first principles.
-
-- **Decidability by Design**: The entire system is crafted to be purely syntactic, ensuring that all constraint checks are decidable and can be efficiently executed by the compiler, avoiding the theoretical traps of semantic negation in recursive contexts.
-
-## 🛠️ Tech Stack
-
-- **Diagnostic Engine**: ariadne
-- **Parser Generator**: lalrpop
-- **Lexer Generator**: logos
-- **Garbage Collection**: rust-arc-gc
-- **Stack Safety**: stacksafe
-
-## 🎓 Design Principles
-
-Mutica's design is a synthesis of several powerful ideas:
-
-1.  **Continuation-Passing Style**: Making control flow explicit and primary.
-2.  **Coinductive Reasoning**: Providing a solid foundation for recursive types and cyclic data.
-3.  **Rule-Based Constraint System**: Offering a flexible, powerful, and decidable mechanism for static analysis.
-4.  **Structural Typing**: Defining type relationships through shape rather than name.
+1.  **Parsing**: The source code is parsed into an Abstract Syntax Tree (AST).
+2.  **Linearization**: The AST is linearized to make control flow explicit.
+3.  **Flow Analysis**: The linearized AST is analyzed to ensure that all variables are defined before they are used.
+4.  **Type Building**: The AST is converted into a `Type` representation.
+5.  **Reduction**: The `Type` is reduced to its normal form.
 
 ## 🤝 Contributing
 
@@ -191,8 +180,3 @@ Contributions are highly welcome! Please feel free to open an Issue to discuss i
 ## 📄 License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
-## 🔗 Resources
-
-- [Continuation-Passing Style (CPS)](https://en.wikipedia.org/wiki/Continuation-passing_style)
-- [Coinduction](https://en.wikipedia.org/wiki/Coinduction)

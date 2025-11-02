@@ -163,7 +163,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             (arg.clone_data(), "Tuple | List".into()).into(),
                         )),
                     })?
-                    .unwrap_or(Err(TypeError::UnresolvableType)),
+                    .unwrap_or(Err(TypeError::UnresolvableType(
+                        "Could not resolve tuple_len argument".into(),
+                    ))),
                 "as_tuple" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                         TypeRef::Tuple(_) => Ok(Some(arg.clone_data())),
@@ -189,7 +191,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 .into(),
                         )),
                     })?
-                    .unwrap_or(Err(TypeError::UnresolvableType)),
+                    .unwrap_or(Err(TypeError::UnresolvableType(
+                        "Could not resolve as_tuple argument".into(),
+                    ))),
                 // 可变状态相关
                 "alloc" => {
                     let id = self.allocated_types.alloc(arg.clone());
@@ -231,7 +235,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             ))
                         }
                     })?
-                    .unwrap_or(Err(TypeError::UnresolvableType)),
+                    .unwrap_or(Err(TypeError::UnresolvableType(
+                        "Could not resolve dealloc argument".into(),
+                    ))),
                 "get" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| {
                         if let TypeRef::Tuple(tuple) = arg {
@@ -268,7 +274,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             ))
                         }
                     })?
-                    .unwrap_or(Err(TypeError::UnresolvableType)),
+                    .unwrap_or(Err(TypeError::UnresolvableType(
+                        "Could not resolve get argument".into(),
+                    ))),
                 "set" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| {
                         if let TypeRef::Tuple(tuple) = arg {
@@ -328,19 +336,25 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                         ))
                                     }
                                 })?
-                                .unwrap_or(Err(TypeError::UnresolvableType))
+                                .unwrap_or(Err(TypeError::UnresolvableType(
+                                    "Could not resolve id in set argument".into(),
+                                )))
                         } else {
                             Err(TypeError::TypeMismatch(
                                 (arg.clone_data(), "Tuple".into()).into(),
                             ))
                         }
                     })?
-                    .unwrap_or(Err(TypeError::UnresolvableType)),
+                    .unwrap_or(Err(TypeError::UnresolvableType(
+                        "Could not resolve set argument".into(),
+                    ))),
 
                 _ => Ok(None),
             }
         })?
-        .unwrap_or(Err(TypeError::UnresolvableType))
+        .unwrap_or(Err(TypeError::UnresolvableType(
+            "Could not resolve set argument".into(),
+        )))
     }
 
     pub fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
@@ -523,7 +537,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 })
                 .unwrap_or((reduced.clone(), false))),
             })?
-            .unwrap_or(Err(TypeError::UnresolvableType))?;
+            .unwrap_or(Err(TypeError::UnresolvableType(
+                "Could not resolve continuation".into(),
+            )))?;
         self.current_type = Some(next_type);
         // println!(
         //     "-> Current type: {}",

@@ -95,12 +95,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Integ
             .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 TypeRef::IntegerValue(_) => Ok(arg.clone_data()),
                 TypeRef::CharValue(c) => Ok(IntegerValue::new(c.value() as i64)),
-                _ => Err(super::TypeError::TypeMismatch(
+                _ => Err(TypeError::TypeMismatch(
                     (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
                 )),
             })? {
             Some(v) => v,
-            None => Err(super::TypeError::UnresolvableType),
+            None => Err(TypeError::UnresolvableType(
+                "Could not resolve argument".into(),
+            )),
         }
     }
 

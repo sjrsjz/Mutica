@@ -42,4 +42,4 @@ let mytree: any =
         1
     );
 
-tree_size mytree, tree_height mytree, tree_sum mytree, mytree <: Tree(int), Tree(int) <: Tree(any)
+tree_size mytree, tree_height mytree, tree_sum mytree, mytree is Tree(int), Tree(int) is Tree(any)

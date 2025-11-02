@@ -72,7 +72,7 @@ let reverse: any = lst: List(any) -> {
 let nth: any = lst: List(any) -> n: int -> {
     loop go: (t: any, i: int) = (lst, n);
     match (t, i)
-        | ((h: any) @ _, 0) => h
+        | ((h: any) @ _, eq 0) => h
         | (_ @ (t: any), i: int) => go(t, i - 1)
         | panic
 };
@@ -80,7 +80,7 @@ let take: any = lst: List(any) -> n: int -> {
     loop go: (t: any, i: int) = (lst, n);
     match (t, i)
         | ((), _) => ()
-        | (_, 0) => ()
+        | (_, eq 0) => ()
         | ((h: any) @ (t: any), i: int) => cons(h, go(t, i - 1))
         | panic
 };
@@ -88,7 +88,7 @@ let drop: any = lst: List(any) -> n: int -> {
     loop go: (t: any, i: int) = (lst, n);
     match (t, i)
         | ((), _) => ()
-        | (l: any, 0) => l
+        | (l: any, eq 0) => l
         | (_ @ (t: any), i: int) => go(t, i - 1)
         | panic
 };

@@ -225,6 +225,8 @@ pub enum LexerToken {
     DunderOpcode,
     #[token("eq")]
     EqType,
+    #[token("type")]
+    Type,
 
     #[token("->")]
     Arrow,

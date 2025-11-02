@@ -5,4 +5,4 @@ let println: any = x: any -> {
 discard println[Option(1)];
 discard println[Option(2)];
 discard println[Option(int)];
-Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option(int), Option(1) <: Option(2)
+Option(1), Option(2), Option(int), Option(1) is Option(int), Option(2) is Option(int), Option(1) is Option(2)

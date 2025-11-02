@@ -2,39 +2,35 @@
 
 // 普通递归阶乘
 let factorial: any = 
-    rec fact: n: int ->
-        match n
-            | 0 => 1
-            | 1 => 1
-            | _ => n * fact(n - 1)
-            | panic;
+    rec fact: match
+        | eq 0 => 1
+        | eq 1 => 1
+        | n: int => n * fact(n - 1)
+        | panic;
 
 // 尾递归阶乘
 let factorial_tail: any = n: int -> [
-        let helper: any = rec h: acc: int -> n: int ->
-            match n
-                | 0 => acc
-                | 1 => acc
-                | _ => h(acc * n)(n - 1)
-                | panic;
+        let helper: any = rec h: acc: int -> match 
+            | eq 0 => acc
+            | eq 1 => acc
+            | n: int => h(acc * n)(n - 1)
+            | panic;
         helper(1)(n)
     ];
 
 // 斐波那契数列
 let fibonacci: any = 
-    rec fib: n: int ->
-        match n
-            | 0 => 0
-            | 1 => 1
-            | _ => fib(n - 1) + fib(n - 2)
-            | panic;
+    rec fib: match 
+        | eq 0 => 0
+        | eq 1 => 1
+        | n: int => fib(n - 1) + fib(n - 2)
+        | panic;
 
 // 尾递归斐波那契
 let fibonacci_tail: any = n: int -> [
-    let helper: any = rec helper: a: int -> b: int -> n: int ->
-        match n
-            | 0 => a
-            | _ => helper(b)(a + b)(n - 1)
+    let helper: any = rec helper: a: int -> b: int -> match
+            | eq 0 => a
+            | n: int => helper(b)(a + b)(n - 1)
             | panic;
         helper(0)(1)(n)
     ];

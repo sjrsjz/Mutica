@@ -354,8 +354,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     .into(),
                             )),
                         }
-                                })?.unwrap_or(Err(TypeError::UnresolvableType))
-                            })?.unwrap_or(Err(TypeError::UnresolvableType))
+                                })?.unwrap_or(Err(TypeError::UnresolvableType("Could not resolve right argument".into())))
+                            })?.unwrap_or(Err(TypeError::UnresolvableType("Could not resolve left argument".into())))
                         } else {
                             Err(TypeError::TypeMismatch(
                                 (ctx.arg.clone(), "Tuple".into()).into(),
@@ -370,7 +370,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 Opcode::Pandom(_) => {
                     unreachable!()
                 }
-            })?.unwrap_or(Err(TypeError::UnresolvableType))
+            })?.unwrap_or(Err(TypeError::UnresolvableType("Could not resolve argument".into())))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

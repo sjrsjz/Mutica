@@ -7,7 +7,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, closure::ClosureEnv, type_bound::TypeBound,
+        TypeRef, closure::ClosureEnv,
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector,
@@ -27,8 +27,7 @@ use crate::{
 ///
 /// `Min<T₁, T₂, ..., Tₙ>` 表示一个**不可约类型集合** `{T₁, T₂, ..., Tₙ}`，满足：
 ///
-/// - **互不包含性**：∀i,j. i≠j ⟹ Tᵢ ⊄ Tⱼ ∧ Tⱼ ⊄ Tᵢ
-/// - **极小性**：无法通过子类型关系进一步约简
+/// - **互不等价性**：∀i,j. i≠j ⟹ Tᵢ ≠ Tⱼ
 ///
 /// ### 子类型语义（定义性质）
 ///
@@ -58,12 +57,6 @@ use crate::{
 /// ```
 ///
 /// 这不是因为"子类型格不是布尔代数"，而是因为 `Min` 和 `Max` 根本就不是代数运算符。
-///
-/// ### 实现细节
-///
-/// 1. **扁平化**：自动展开嵌套的 `Specialize` 类型
-/// 2. **吸收律**：移除被其他类型subsume的冗余类型
-/// 3. **简化**：单个类型时直接返回该类型，空集时返回 `⊤`
 pub struct Specialize<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
     is_nf: Arc<RwLock<ThreeValuedLogic>>,
@@ -377,7 +370,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Specialize<T> {
         }
 
         let new_type = match result.len() {
-            0 => TypeBound::Top.dispatch(),
+            0 => {
+                return Err(TypeError::UnresolvableType(
+                    "Specialize with empty type set".into(),
+                ));
+            }
             1 => result.into_iter().next().unwrap(),
             _ => Specialize {
                 is_nf: {

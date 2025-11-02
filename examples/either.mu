@@ -11,7 +11,7 @@ let map_right: any = either: Either(any, any) -> f: any ->
 
 // 安全除法
 let safe_div: any = a: int -> match
-    | 0 => Left("Division by zero")
+    | eq 0 => Left("Division by zero")
     | b_val: int => Right(a / b_val)
     | panic;
 
