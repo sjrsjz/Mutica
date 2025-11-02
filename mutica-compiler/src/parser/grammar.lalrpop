@@ -72,7 +72,7 @@ extern {
         "Lte"           => LexerToken::Lte,
         "Gt"            => LexerToken::Gt,
         "Gte"           => LexerToken::Gte,
-        "Subtype"       => LexerToken::Subtype,
+        "Is"            => LexerToken::Is,
         "Plus"          => LexerToken::Plus,
         "Minus"         => LexerToken::Minus,
         "Star"          => LexerToken::Star,
@@ -177,7 +177,7 @@ LtTok: () = <l:@L> "Lt" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenC
 LteTok: () = <l:@L> "Lte" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 GtTok: () = <l:@L> "Gt" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 GteTok: () = <l:@L> "Gte" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-SubtypeTok: () = <l:@L> "Subtype" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
+IsTok: () = <l:@L> "Is" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 PlusTok: () = <l:@L> "Plus" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 MinusTok: () = <l:@L> "Minus" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 StarTok: () = <l:@L> "Star" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
@@ -243,6 +243,7 @@ Term: WithLocation<TypeAst> = {
         t
     },
     <rot: Rot> => rot,
+    <eq: EqType> => eq,
     <np: Namespace> => np,
     <a: AtomType> => a,
 }
@@ -261,6 +262,14 @@ Rot: WithLocation<TypeAst> = {
     <l:@L> RotTok <a: Term> <r:@R> => {
         WithLocation::new(TypeAst::Rot {
             value: Box::new(a),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
+EqType: WithLocation<TypeAst> = {
+    <l:@L> EqTypeTok <t: Term> <r:@R> => {
+        WithLocation::new(TypeAst::EqType {
+            value: Box::new(t),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
@@ -387,17 +396,8 @@ Literal: WithLocation<TypeAst> = {
     },
 }
 
-EqType: WithLocation<TypeAst> = {
-    <l:@L> EqTypeTok <t: Primary> <r:@R> => {
-        WithLocation::new(TypeAst::EqType {
-            value: Box::new(t),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-}
-
 Primary: WithLocation<TypeAst> = {
     <l: Literal> => l,
-    <e: EqType> => e,
     <r: RecursiveGen> => r,
     <c: Closure> => c,
     <m: Match> => m,
@@ -525,7 +525,7 @@ Compare: WithLocation<TypeAst> = {
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
         ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> <left: Compare> SubtypeTok <right: AddSub> <r:@R> => {
+    <l:@L> <left: Compare> IsTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),

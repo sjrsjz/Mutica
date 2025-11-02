@@ -47,6 +47,7 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::IntLiteral(_) => (),
             LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
+            LinearTypeAst::OrderedType(_) => (),
             LinearTypeAst::Variable(_) => (),
             LinearTypeAst::Tuple(items) => {
                 for item in items {

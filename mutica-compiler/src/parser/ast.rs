@@ -19,6 +19,7 @@ use mutica_core::types::invoke::Invoke;
 use mutica_core::types::lazy::Lazy;
 use mutica_core::types::namespace::Namespace;
 use mutica_core::types::opcode::Opcode;
+use mutica_core::types::ordered_type::OrderedType;
 use mutica_core::types::pattern::Pattern;
 use mutica_core::types::rot::Rotate;
 use mutica_core::types::specialize::Specialize;
@@ -59,6 +60,7 @@ pub enum TypeAst {
     Bottom,
     DiscardPattern,
     IntLiteral(i64),
+    OrderedType(usize),
     FloatLiteral(f64),
     CharLiteral(char),
     Variable(String),
@@ -135,6 +137,7 @@ pub enum BasicTypeAst {
     IntLiteral(i64),
     FloatLiteral(f64),
     CharLiteral(char),
+    OrderedType(usize),
     Variable(String),
     Tuple(Vec<WithLocation<BasicTypeAst>>),
     Cons {
@@ -341,6 +344,9 @@ impl BasicTypeAst {
             }
             BasicTypeAst::CharLiteral(v) => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::CharLiteral(*v), loc))
+            }
+            BasicTypeAst::OrderedType(v) => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::OrderedType(*v), loc))
             }
             BasicTypeAst::Variable(v) => LinearizeResult::new_simple(WithLocation::new(
                 LinearTypeAst::Variable(v.clone()),
@@ -558,6 +564,7 @@ pub enum LinearTypeAst<'ast> {
     IntLiteral(i64),
     FloatLiteral(f64),
     CharLiteral(char),
+    OrderedType(usize),
     Variable(String), // None 表示续体
     Tuple(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     Cons {
@@ -615,6 +622,7 @@ impl TypeAst {
             TypeAst::Int => WithLocation::new(BasicTypeAst::Int, loc),
             TypeAst::Float => WithLocation::new(BasicTypeAst::Float, loc),
             TypeAst::Char => WithLocation::new(BasicTypeAst::Char, loc),
+            TypeAst::OrderedType(v) => WithLocation::new(BasicTypeAst::OrderedType(*v), loc),
             TypeAst::Top => WithLocation::new(BasicTypeAst::Top, loc),
             TypeAst::Bottom => WithLocation::new(BasicTypeAst::Bottom, loc),
             TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // discard 只允许丢弃unit
@@ -967,6 +975,7 @@ impl TypeAst {
             | TypeAst::IntLiteral(_)
             | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
+            | TypeAst::OrderedType(_)
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => {}
             TypeAst::Tuple(elements)
@@ -1068,6 +1077,7 @@ impl TypeAst {
             | TypeAst::IntLiteral(_)
             | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
+            | TypeAst::OrderedType(_)
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => ast,
             TypeAst::Tuple(elements) => {
@@ -1269,6 +1279,10 @@ impl<'ast> LinearTypeAst<'ast> {
             ),
             LinearTypeAst::Char => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Char, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            ),
+            LinearTypeAst::OrderedType(v) => FlowResult::simple(
+                WithLocation::new(LinearTypeAst::OrderedType(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
             LinearTypeAst::Top => FlowResult::simple(
@@ -1755,6 +1769,7 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
             LinearTypeAst::Float => Ok(BuildResult::simple(Float::new())),
             LinearTypeAst::Char => Ok(BuildResult::simple(Character::new())),
+            LinearTypeAst::OrderedType(v) => Ok(BuildResult::simple(OrderedType::new(*v))),
             LinearTypeAst::Top => Ok(BuildResult::simple(TypeBound::top())),
             LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom())),
             LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(*v))),

@@ -42,11 +42,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> OrderedType<T> {
         self.level
     }
 
-    pub fn new(level: usize) -> Self {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(level: usize) -> Type<T> {
         Self {
             level,
             _phantom: std::marker::PhantomData,
-        }
+        }.dispatch()
     }
 }
 

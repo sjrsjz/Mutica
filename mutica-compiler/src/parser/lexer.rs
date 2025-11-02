@@ -262,8 +262,8 @@ pub enum LexerToken {
     Gt,
     #[token(">=")]
     Gte,
-    #[token("<:")]
-    Subtype,
+    #[token("is")]
+    Is,
     #[token("+")]
     Plus,
     #[token("-")]
