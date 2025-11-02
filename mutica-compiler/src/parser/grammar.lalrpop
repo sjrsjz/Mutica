@@ -54,6 +54,8 @@ extern {
         "DunderOpcode"  => LexerToken::DunderOpcode,
         "EqType"        => LexerToken::EqType,
         "Type"          => LexerToken::Type,
+        "For"           => LexerToken::For,
+        "In"            => LexerToken::In,
 
         "Arrow"         => LexerToken::Arrow,
         "FatArrow"      => LexerToken::FatArrow,
@@ -163,6 +165,8 @@ RotTok: () = <l:@L> "Rot" <r:@R> => { TokenColor::fill_colors(colors, l..r, Toke
 HandleTok: () = <l:@L> "Handle" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 EqTypeTok: () = <l:@L> "EqType" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 TypeTok: () = <l:@L> "Type" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+ForTok: () = <l:@L> "For" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+InTok: () = <l:@L> "In" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 
 // Individual operator tokens with centralized coloring
 DotTok: () = <l:@L> "Dot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
@@ -349,6 +353,17 @@ Match: WithLocation<TypeAst> = {
     },
 }
 
+ForIn: WithLocation<TypeAst> = {
+    <l:@L> ForTok <binding: Binding> InTok <expr: Primary> <r:@R> => {
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(binding.1),
+            arg: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(binding.0, expr)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()))
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
 MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     PipeTok <pattern: Primary> DoubleArrowTok <t: Primary> => {
         (pattern, t)
@@ -406,6 +421,7 @@ Primary: WithLocation<TypeAst> = {
     <r: RecursiveGen> => r,
     <c: Closure> => c,
     <m: Match> => m,
+    <f: ForIn> => f,
     <i: IfElse> => i,
     <c: Calculate> => c,
     ! => {
@@ -591,9 +607,13 @@ Construct: WithLocation<TypeAst> = {
     <f: Factor> => f,
 }
 
+Binding: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
+    <id: Type> AssignTok <value: Type> => (id, value),
+};
+
 Let: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    <l:@L> LetTok <id: Primary> AssignTok <value: Type> SemicolonTok <r:@R> => {
-        (id, value)
+    <l:@L> LetTok <binding: Binding> SemicolonTok <r:@R> => {
+        binding
     },
 }
 
@@ -605,8 +625,8 @@ Discard: WithLocation<TypeAst> = {
 
 Recursive: (String, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     // loop label: pattern = initialize_value;
-    <l:@L> LoopTok <id: Ident> ColonTok <t: Type> AssignTok <expr: Type> SemicolonTok <r:@R> => {
-        (id, t, expr)
+    <l:@L> LoopTok <id: Ident> ColonTok <binding: Binding> SemicolonTok <r:@R> => {
+        (id, binding.0, binding.1)
     },
 }
 
@@ -681,12 +701,13 @@ Loop: WithLocation<TypeAst> = {
 }
 
 HandleWith: WithLocation<TypeAst> = {
-    <l:@L> HandleTok <id: Primary> AssignTok <value: Type> WithTok <handler: Type> SemicolonTok <expr: Type> <r:@R> => {
+    <l:@L> HandleTok <binding: Binding> WithTok <handler: Type> SemicolonTok <expr: Type> <r:@R> => {
+        let (binding_pattern, binding_value) = binding;
         WithLocation::new(TypeAst::HandleWith {
             closure: Box::new(WithLocation::new(TypeAst::Match {
-                branches: vec![(id, expr)],
+                branches: vec![(binding_pattern, expr)],
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            init_val: Box::new(value),
+            init_val: Box::new(binding_value),
             handler: Box::new(handler),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },

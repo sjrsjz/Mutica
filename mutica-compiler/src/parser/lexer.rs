@@ -205,6 +205,14 @@ pub enum LexerToken {
     Rot,
     #[token("handle")]
     Handle,
+    #[token("eq")]
+    EqType,
+    #[token("type")]
+    Type,
+    #[token("for")]
+    For,
+    #[token("in")]
+    In,
     #[token("__add")]
     DunderAdd,
     #[token("__sub")]
@@ -223,10 +231,6 @@ pub enum LexerToken {
     DunderIs,
     #[token("__opcode")]
     DunderOpcode,
-    #[token("eq")]
-    EqType,
-    #[token("type")]
-    Type,
 
     #[token("->")]
     Arrow,
