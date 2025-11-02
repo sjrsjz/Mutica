@@ -148,8 +148,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
             return Ok(false);
         }
         let base_type = &types[0];
+        let mut assumptions = smallvec::smallvec![];
+        let mut pattern_env_disabled = Collector::new_disabled();
+        let mut ctx = TypeCheckContext::new(
+            &mut assumptions,
+            (&empty_closure_env, &empty_closure_env),
+            &mut pattern_env_disabled,
+            false,
+        );
         for ty in types.iter().skip(1) {
-            if !ty.equals(&empty_closure_env, &empty_closure_env, base_type)? {
+            if !ty.equals(base_type.as_ref_dispatcher(), &mut ctx)? {
                 return Ok(false);
             }
         }
@@ -259,7 +267,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Closure<
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closure<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -273,6 +281,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Closure(v) => {
@@ -301,7 +310,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
                         if !self_inner
                             .expr
-                            .fulfill(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
+                            .check(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
                         {
                             return Ok(false);
                         }
@@ -317,7 +326,73 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
                         if !other_inner
                             .pattern
-                            .fulfill(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
+                            .check(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
+                        {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut super::TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Closure(v) => {
+                    if self.inner.0.len() != v.inner.0.len() {
+                        return Ok(false);
+                    }
+
+                    for ((self_inner, self_idx), (other_inner, other_idx)) in
+                        self.inner.0.iter().zip(v.inner.0.iter())
+                    {
+                        // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
+                        // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
+                        // 因此所有的pattern_env都应当被禁用
+
+                        // 创建用于表达式比较的上下文
+                        if *self_idx >= self.inner.1.len() || *other_idx >= v.inner.1.len() {
+                            panic!("CRITICAL: Closure branch environment index out of bounds");
+                        }
+                        let mut pattern_env_disabled = Collector::new_disabled();
+                        let mut pattern_ctx = TypeCheckContext::new(
+                            ctx.assumptions,
+                            (&self.inner.1[*self_idx], &v.inner.1[*other_idx]),
+                            &mut pattern_env_disabled,
+                            ctx.rhs,
+                        );
+
+                        if !self_inner
+                            .expr
+                            .equals(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
+                        {
+                            return Ok(false);
+                        }
+
+                        // 创建用于模式比较的上下文
+                        let mut pattern_env_disabled = Collector::new_disabled();
+                        let mut pattern_ctx = TypeCheckContext::new(
+                            ctx.assumptions,
+                            (ctx.closure_env.1, ctx.closure_env.0), // 逆变
+                            &mut pattern_env_disabled,
+                            !ctx.rhs,
+                        );
+
+                        if !other_inner
+                            .pattern
+                            .equals(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
                         {
                             return Ok(false);
                         }
@@ -376,7 +451,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
             if ctx
                 .arg
-                .fulfill(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
+                .check(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
                 && let Some(param_env) = ParamEnv::from_collector(&mut matched_pattern)?
             {
                 // 模式匹配成功，构造用于表达式求值的上下文

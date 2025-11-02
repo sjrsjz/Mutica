@@ -169,7 +169,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     /// ```
     ///
     /// 即：在假设 μX.S <: μY.T 的前提下，检查展开后的类型关系。
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -208,7 +208,53 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         }
 
                         inner_ctx.assumptions.push(assumption_pair.clone());
-                        let result = inner.fulfill(other, &mut inner_ctx);
+                        let result = inner.check(other, &mut inner_ctx);
+                        inner_ctx.assumptions.pop();
+                        result
+                    }
+                    None => Err(TypeError::UnresolvableType), // reference is dead
+                },
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: TypeRef<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => {
+                    let l: Weak<_> = self.reference.clone().into();
+                    let r: Weak<_> = v.reference.clone().into();
+                    if l.ptr_eq(&r) {
+                        // 相同引用，协归纳假设成立
+                        return Ok(true);
+                    }
+                    v.accept(self.as_ref_dispatcher(), &mut inner_ctx)
+                }
+                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                _ => match self.reference.upgrade() {
+                    Some(inner) => {
+                        let inner = match inner.as_ref().get_value() {
+                            Some(t) => t,
+                            None => return Ok(false), // 未初始化（实际上这个可能需要更精细的处理）
+                        };
+                        let self_ptr = inner.tagged_ptr();
+                        let other_ptr = other.tagged_ptr();
+                        let assumption_pair = (self_ptr, other_ptr);
+                        // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
+                        let already_assumed =
+                            inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
+                        if already_assumed {
+                            return Ok(true); // already assumed
+                        }
+
+                        inner_ctx.assumptions.push(assumption_pair.clone());
+                        let result = inner.equals(other, &mut inner_ctx);
                         inner_ctx.assumptions.pop();
                         result
                     }
@@ -325,7 +371,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match self.reference.upgrade() {
-                Some(inner) => other.fullfill(
+                Some(inner) => other.check(
+                    match inner.as_ref().get_value() {
+                        Some(t) => t.as_ref_dispatcher(),
+                        None => return Ok(false), // 未初始化
+                    },
+                    &mut inner_ctx,
+                ),
+                None => Err(TypeError::UnresolvableType), // reference is dead
+            }
+        })
+    }
+
+    #[stacksafe::stacksafe]
+    fn equals_any(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match self.reference.upgrade() {
+                Some(inner) => other.equals(
                     match inner.as_ref().get_value() {
                         Some(t) => t.as_ref_dispatcher(),
                         None => return Ok(false), // 未初始化

@@ -61,7 +61,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Rotate<T
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotate<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
@@ -75,6 +75,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Rot(v) => {
@@ -86,8 +87,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
                         !ctx.rhs,
                     );
                     v.value
-                        .fulfill(self.value.as_ref_dispatcher(), &mut inner_ctx)
+                        .check(self.value.as_ref_dispatcher(), &mut inner_ctx)
                 }
+                _ => Ok(false),
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, super::TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Rot(v) => self
+                    .value
+                    .equals(v.value.as_ref_dispatcher(), &mut inner_ctx),
                 _ => Ok(false),
             }
         })

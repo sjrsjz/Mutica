@@ -104,7 +104,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Invoke<T
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invoke<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -118,20 +118,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Invoke(v) => {
                     let func_eq = self
                         .inner
                         .0
-                        .fulfill(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
+                        .check(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
                     if !func_eq {
                         return Ok(false);
                     }
                     let arg_eq = self
                         .inner
                         .1
-                        .fulfill(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
+                        .check(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
                     if !arg_eq {
                         return Ok(false);
                     }
@@ -143,20 +144,86 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                         (
                             InvokeCountinuationStyle::WithContinuation(c1),
                             InvokeCountinuationStyle::WithContinuation(c2),
-                        ) => c1.fulfill(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                        ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
                         (
                             InvokeCountinuationStyle::WithPerformHandler(c1),
                             InvokeCountinuationStyle::WithPerformHandler(c2),
-                        ) => c1.fulfill(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                        ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
                         (
                             InvokeCountinuationStyle::WithBoth(c1a, c1b),
                             InvokeCountinuationStyle::WithBoth(c2a, c2b),
                         ) => {
-                            let res_a = c1a.fulfill(c2a.as_ref_dispatcher(), &mut inner_ctx)?;
+                            let res_a = c1a.check(c2a.as_ref_dispatcher(), &mut inner_ctx)?;
                             if !res_a {
                                 return Ok(false);
                             }
-                            let res_b = c1b.fulfill(c2b.as_ref_dispatcher(), &mut inner_ctx)?;
+                            let res_b = c1b.check(c2b.as_ref_dispatcher(), &mut inner_ctx)?;
+                            if !res_b {
+                                return Ok(false);
+                            }
+                            true
+                        }
+                        _ => false,
+                    };
+                    if !cont_eq {
+                        return Ok(false);
+                    }
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut super::TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Invoke(v) => {
+                    let func_eq = self
+                        .inner
+                        .0
+                        .equals(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
+                    if !func_eq {
+                        return Ok(false);
+                    }
+                    let arg_eq = self
+                        .inner
+                        .1
+                        .equals(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
+                    if !arg_eq {
+                        return Ok(false);
+                    }
+                    let cont_eq = match (&self.inner.2, &v.inner.2) {
+                        (
+                            InvokeCountinuationStyle::TailCall,
+                            InvokeCountinuationStyle::TailCall,
+                        ) => true,
+                        (
+                            InvokeCountinuationStyle::WithContinuation(c1),
+                            InvokeCountinuationStyle::WithContinuation(c2),
+                        ) => c1.equals(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                        (
+                            InvokeCountinuationStyle::WithPerformHandler(c1),
+                            InvokeCountinuationStyle::WithPerformHandler(c2),
+                        ) => c1.equals(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                        (
+                            InvokeCountinuationStyle::WithBoth(c1a, c1b),
+                            InvokeCountinuationStyle::WithBoth(c2a, c2b),
+                        ) => {
+                            let res_a = c1a.equals(c2a.as_ref_dispatcher(), &mut inner_ctx)?;
+                            if !res_a {
+                                return Ok(false);
+                            }
+                            let res_b = c1b.equals(c2b.as_ref_dispatcher(), &mut inner_ctx)?;
                             if !res_b {
                                 return Ok(false);
                             }

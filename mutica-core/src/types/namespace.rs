@@ -61,7 +61,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Namespac
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Namespace<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -79,8 +79,33 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Namespace(v) => {
                     if self.tag == v.tag {
-                        self.expr
-                            .fulfill(v.expr.as_ref_dispatcher(), &mut inner_ctx)
+                        self.expr.check(v.expr.as_ref_dispatcher(), &mut inner_ctx)
+                    } else {
+                        Ok(false)
+                    }
+                }
+                _ => Ok(false),
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut super::TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Namespace(v) => {
+                    if self.tag == v.tag {
+                        self.expr.equals(v.expr.as_ref_dispatcher(), &mut inner_ctx)
                     } else {
                         Ok(false)
                     }

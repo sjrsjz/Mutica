@@ -111,7 +111,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Generali
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Generalize<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -126,12 +126,54 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     for sub in self.types.iter() {
-                        if !sub.fulfill(other, &mut inner_ctx)? {
+                        if !sub.check(other, &mut inner_ctx)? {
                             return Ok(false);
                         }
                     }
                     Ok(true)
                 }
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut super::TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Generalize(v) => {
+                    if self.types.len() != v.types.len() {
+                        return Ok(false);
+                    }
+                    let mut checked = vec![false; v.types.len()];
+                    for sub in self.types.iter() {
+                        let mut found = false;
+                        for (i, other_sub) in v.types.iter().enumerate() {
+                            if checked[i] {
+                                continue;
+                            }
+                            if sub.equals(other_sub.as_ref_dispatcher(), &mut inner_ctx)? {
+                                found = true;
+                                checked[i] = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                }
+                _ => Ok(false),
             }
         })
     }
@@ -199,7 +241,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             );
             for sub in self.types.iter() {
                 // 我们传入 false 是因为generalize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
-                if other.fullfill(sub.as_ref_dispatcher(), &mut inner_ctx)? {
+                if other.check(sub.as_ref_dispatcher(), &mut inner_ctx)? {
                     return Ok(true); // 由于不需要匹配子模式,短路返回不会影响正确性
                 }
             }
@@ -307,7 +349,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Generalize<T> {
                         &mut pattern_env_temp,
                         false,
                     );
-                    if collected[i].fulfill(collected[j].as_ref_dispatcher(), &mut check_ctx)? {
+                    if collected[i].check(collected[j].as_ref_dispatcher(), &mut check_ctx)? {
                         absorbed[i] = true;
                         break;
                     }

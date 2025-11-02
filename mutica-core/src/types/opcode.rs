@@ -73,7 +73,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Opcode<T
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcode<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -87,30 +87,66 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
-                TypeRef::Opcode(Opcode::Opcode) => Ok(true),
                 TypeRef::Opcode(v) => match (self, v) {
-                    (Opcode::Opcode, _) => Ok(true),
-                    (_, Opcode::Opcode) => Ok(true),
-                    (Opcode::Add, Opcode::Add)
-                    | (Opcode::Sub, Opcode::Sub)
-                    | (Opcode::Mul, Opcode::Mul)
-                    | (Opcode::Div, Opcode::Div)
-                    | (Opcode::Mod, Opcode::Mod)
-                    | (Opcode::Less, Opcode::Less)
-                    | (Opcode::Greater, Opcode::Greater)
-                    | (Opcode::Neg, Opcode::Neg)
-                    | (Opcode::Set, Opcode::Set)
-                    | (Opcode::BuildFixPoint, Opcode::BuildFixPoint)
-                    | (Opcode::Is, Opcode::Is) => Ok(true),
-                    (Opcode::IO(a), Opcode::IO(b)) => Ok(a == b),
+                    (Opcode::Add, Opcode::Opcode) |
+                    (Opcode::Sub, Opcode::Opcode) |
+                    (Opcode::Mul, Opcode::Opcode) |
+                    (Opcode::Div, Opcode::Opcode) |
+                    (Opcode::Mod, Opcode::Opcode) |
+                    (Opcode::Less, Opcode::Opcode) |
+                    (Opcode::Greater, Opcode::Opcode) |
+                    (Opcode::Is, Opcode::Opcode) |
+                    (Opcode::Neg, Opcode::Opcode) |
+                    (Opcode::Set, Opcode::Opcode) |
+                    (Opcode::BuildFixPoint, Opcode::Opcode) |
+                    (Opcode::IO(_), Opcode::Opcode) |
+                    (Opcode::Pandom(_), Opcode::Opcode) => Ok(true),
                     _ => Ok(false),
                 },
+                TypeRef::OrderedType(v) if matches!(self, Opcode::Opcode) => Ok(v.level() == 0),
                 _ => Ok(false),
             }
         })
     }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut super::TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Opcode(v) => Ok(match (self, v) {
+                    (Opcode::Opcode, Opcode::Opcode) |
+                    (Opcode::Add, Opcode::Add) |
+                    (Opcode::Sub, Opcode::Sub) |
+                    (Opcode::Mul, Opcode::Mul) |
+                    (Opcode::Div, Opcode::Div) |
+                    (Opcode::Mod, Opcode::Mod) |
+                    (Opcode::Less, Opcode::Less) |
+                    (Opcode::Greater, Opcode::Greater) |
+                    (Opcode::Is, Opcode::Is) |
+                    (Opcode::Neg, Opcode::Neg) |
+                    (Opcode::Set, Opcode::Set) |
+                    (Opcode::BuildFixPoint, Opcode::BuildFixPoint) => true,
+                    (Opcode::IO(a), Opcode::IO(b)) => a == b,
+                    (Opcode::Pandom(_), Opcode::Pandom(_)) => true,
+                    _ => false,
+                }),
+                _ => Ok(false),
+            }
+        })
+    }
+
+
 
     fn reduce(
         self,
@@ -193,7 +229,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 &mut pattern_env,
                                 false,
                             );
-                            match left.fulfill(right.as_ref_dispatcher(), &mut type_check_ctx) {
+                            match left.check(right.as_ref_dispatcher(), &mut type_check_ctx) {
                                 Ok(res) => Ok(if res {
                                     TypeBound::top()
                                 } else {

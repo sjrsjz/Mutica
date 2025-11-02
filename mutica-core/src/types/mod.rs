@@ -4,6 +4,7 @@ pub mod character;
 pub mod character_value;
 pub mod closure;
 pub mod construct;
+pub mod eq_type;
 pub mod fixpoint;
 pub mod float;
 pub mod float_value;
@@ -14,6 +15,7 @@ pub mod invoke;
 pub mod lazy;
 pub mod namespace;
 pub mod opcode;
+pub mod ordered_type;
 pub mod pattern;
 pub mod rot;
 pub mod specialize;
@@ -36,6 +38,7 @@ use crate::{
         character_value::CharacterValue,
         closure::{Closure, ClosureEnv, ParamEnv},
         construct::Construct,
+        eq_type::EqType,
         fixpoint::FixPoint,
         float::Float,
         float_value::FloatValue,
@@ -46,6 +49,7 @@ use crate::{
         lazy::Lazy,
         namespace::Namespace,
         opcode::Opcode,
+        ordered_type::OrderedType,
         pattern::Pattern,
         rot::Rotate,
         specialize::Specialize,
@@ -84,6 +88,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
             Type::Rot(v) => Type::<T>::Rot(v.clone()),
             Type::Construct(v) => Type::<T>::Construct(v.clone()),
+            Type::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
+            Type::EqType(v) => Type::<T>::EqType(v.clone()),
         }
     }
 }
@@ -129,6 +135,10 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Rot(Rotate<T>),
     // Construct类型
     Construct(Construct<T>),
+    // 高阶类型
+    OrderedType(OrderedType<T>),
+    // 单例等价类型
+    EqType(EqType<T>),
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
@@ -152,6 +162,8 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Lazy(&'a Lazy<T>),
     Rot(&'a Rotate<T>),
     Construct(&'a Construct<T>),
+    OrderedType(&'a OrderedType<T>),
+    EqType(&'a EqType<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
@@ -185,6 +197,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Lazy(v) => Type::<T>::Lazy(v.clone()),
             TypeRef::Rot(v) => Type::<T>::Rot(v.clone()),
             TypeRef::Construct(v) => Type::<T>::Construct(v.clone()),
+            TypeRef::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
+            TypeRef::EqType(v) => Type::<T>::EqType(v.clone()),
         }
     }
 }
@@ -212,6 +226,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
             TypeRef::Lazy(v) => v.tagged_ptr(),
             TypeRef::Rot(v) => v.tagged_ptr(),
             TypeRef::Construct(v) => v.tagged_ptr(),
+            TypeRef::OrderedType(v) => v.tagged_ptr(),
+            TypeRef::EqType(v) => v.tagged_ptr(),
         }
     }
 
@@ -230,32 +246,65 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         }
     }
 
-    pub fn fullfill(
+    pub fn check(
         self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
         match self {
-            TypeRef::Bound(v) => v.fulfill(other, ctx),
-            TypeRef::Integer(v) => v.fulfill(other, ctx),
-            TypeRef::IntegerValue(v) => v.fulfill(other, ctx),
-            TypeRef::Float(v) => v.fulfill(other, ctx),
-            TypeRef::FloatValue(v) => v.fulfill(other, ctx),
-            TypeRef::Char(v) => v.fulfill(other, ctx),
-            TypeRef::CharValue(v) => v.fulfill(other, ctx),
-            TypeRef::Tuple(v) => v.fulfill(other, ctx),
-            TypeRef::Generalize(v) => v.fulfill(other, ctx),
-            TypeRef::Specialize(v) => v.fulfill(other, ctx),
-            TypeRef::FixPoint(v) => v.fulfill(other, ctx),
-            TypeRef::Invoke(v) => v.fulfill(other, ctx),
-            TypeRef::Variable(v) => v.fulfill(other, ctx),
-            TypeRef::Closure(v) => v.fulfill(other, ctx),
-            TypeRef::Opcode(v) => v.fulfill(other, ctx),
-            TypeRef::Namespace(v) => v.fulfill(other, ctx),
-            TypeRef::Pattern(v) => v.fulfill(other, ctx),
-            TypeRef::Lazy(v) => v.fulfill(other, ctx),
-            TypeRef::Rot(v) => v.fulfill(other, ctx),
-            TypeRef::Construct(v) => v.fulfill(other, ctx),
+            TypeRef::Bound(v) => v.check(other, ctx),
+            TypeRef::Integer(v) => v.check(other, ctx),
+            TypeRef::IntegerValue(v) => v.check(other, ctx),
+            TypeRef::Float(v) => v.check(other, ctx),
+            TypeRef::FloatValue(v) => v.check(other, ctx),
+            TypeRef::Char(v) => v.check(other, ctx),
+            TypeRef::CharValue(v) => v.check(other, ctx),
+            TypeRef::Tuple(v) => v.check(other, ctx),
+            TypeRef::Generalize(v) => v.check(other, ctx),
+            TypeRef::Specialize(v) => v.check(other, ctx),
+            TypeRef::FixPoint(v) => v.check(other, ctx),
+            TypeRef::Invoke(v) => v.check(other, ctx),
+            TypeRef::Variable(v) => v.check(other, ctx),
+            TypeRef::Closure(v) => v.check(other, ctx),
+            TypeRef::Opcode(v) => v.check(other, ctx),
+            TypeRef::Namespace(v) => v.check(other, ctx),
+            TypeRef::Pattern(v) => v.check(other, ctx),
+            TypeRef::Lazy(v) => v.check(other, ctx),
+            TypeRef::Rot(v) => v.check(other, ctx),
+            TypeRef::Construct(v) => v.check(other, ctx),
+            TypeRef::OrderedType(v) => v.check(other, ctx),
+            TypeRef::EqType(v) => v.check(other, ctx),
+        }
+    }
+
+    pub fn equals(
+        self,
+        other: Self,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        match self {
+            TypeRef::Bound(v) => v.equals(other, ctx),
+            TypeRef::Integer(v) => v.equals(other, ctx),
+            TypeRef::IntegerValue(v) => v.equals(other, ctx),
+            TypeRef::Float(v) => v.equals(other, ctx),
+            TypeRef::FloatValue(v) => v.equals(other, ctx),
+            TypeRef::Char(v) => v.equals(other, ctx),
+            TypeRef::CharValue(v) => v.equals(other, ctx),
+            TypeRef::Tuple(v) => v.equals(other, ctx),
+            TypeRef::Generalize(v) => v.equals(other, ctx),
+            TypeRef::Specialize(v) => v.equals(other, ctx),
+            TypeRef::FixPoint(v) => v.equals(other, ctx),
+            TypeRef::Invoke(v) => v.equals(other, ctx),
+            TypeRef::Variable(v) => v.equals(other, ctx),
+            TypeRef::Closure(v) => v.equals(other, ctx),
+            TypeRef::Opcode(v) => v.equals(other, ctx),
+            TypeRef::Namespace(v) => v.equals(other, ctx),
+            TypeRef::Pattern(v) => v.equals(other, ctx),
+            TypeRef::Lazy(v) => v.equals(other, ctx),
+            TypeRef::Rot(v) => v.equals(other, ctx),
+            TypeRef::Construct(v) => v.equals(other, ctx),
+            TypeRef::OrderedType(v) => v.equals(other, ctx),
+            TypeRef::EqType(v) => v.equals(other, ctx),
         }
     }
 }
@@ -351,6 +400,8 @@ macro_rules! type_dispatch {
             Type::Lazy(v) => v.$method($($args),*),
             Type::Rot(v) => v.$method($($args),*),
             Type::Construct(v) => v.$method($($args),*),
+            Type::OrderedType(v) => v.$method($($args),*),
+            Type::EqType(v) => v.$method($($args),*),
         }
     };
 }
@@ -400,12 +451,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Type<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<T> {
     #[stacksafe::stacksafe]
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
-        type_dispatch!(self, fulfill, other, ctx)
+        type_dispatch!(self, check, other, ctx)
     }
 
     #[stacksafe::stacksafe]
@@ -451,12 +502,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Lazy(v) => v.is_normal_form(),
             Type::Rot(v) => v.is_normal_form(),
             Type::Construct(v) => v.is_normal_form(),
+            Type::OrderedType(v) => v.is_normal_form(),
+            Type::EqType(v) => v.is_normal_form(),
         }
     }
 
     #[stacksafe::stacksafe]
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
         type_dispatch!(self, recalculate_normal_form, cycle_detector)
+    }
+
+    #[stacksafe::stacksafe]
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        type_dispatch!(self, equals, other, ctx)
     }
 }
 
@@ -539,6 +601,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::Rot(v) => TypeRef::Rot(v),
             Type::Construct(v) => TypeRef::Construct(v),
+            Type::OrderedType(v) => TypeRef::OrderedType(v),
+            Type::EqType(v) => TypeRef::EqType(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -576,6 +640,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::Rot(v) => TypeRef::Rot(v),
             Type::Construct(v) => TypeRef::Construct(v),
+            Type::OrderedType(v) => TypeRef::OrderedType(v),
+            Type::EqType(v) => TypeRef::EqType(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -610,13 +676,12 @@ impl<T> TaggedPtr<T> {
     }
 }
 
-/// 类型检查上下文，用于 `is` 和 `has` 方法
+/// 类型检查上下文，用于 `check` 方法
 pub struct TypeCheckContext<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
     pub closure_env: (&'a ClosureEnv<U, V>, &'a ClosureEnv<U, V>),
     pub pattern_env: &'a mut Collector<(usize, U)>,
     pub rhs: bool,
-    pandom: std::marker::PhantomData<V>,
 }
 
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, V> {
@@ -631,7 +696,6 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, 
             closure_env,
             pattern_env,
             rhs,
-            pandom: std::marker::PhantomData,
         }
     }
 }
@@ -695,7 +759,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     Clone + Rootable<V> + Representable + AsDispatcher<U, V> + GCTraceable<V> + 'static + Sized
 {
-    fn fulfill(
+    fn check(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<U, V>,
@@ -715,29 +779,9 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
 
     fn equals(
         &self,
-        closure_env_l: &ClosureEnv<U, V>,
-        closure_env_r: &ClosureEnv<U, V>,
-        other: &Self,
-    ) -> Result<bool, TypeError<U, V>> {
-        let mut assumptions_l = SmallVec::new();
-        let mut assumptions_r = SmallVec::new();
-        let mut pattern_env_l = Collector::new_disabled();
-        let mut pattern_env_r = Collector::new_disabled();
-        let type_check_ctx_l = &mut TypeCheckContext::new(
-            &mut assumptions_l,
-            (closure_env_l, closure_env_r),
-            &mut pattern_env_l,
-            false,
-        );
-        let type_check_ctx_r = &mut TypeCheckContext::new(
-            &mut assumptions_r,
-            (closure_env_r, closure_env_l),
-            &mut pattern_env_r,
-            true,
-        );
-        Ok(self.fulfill(other.as_ref_dispatcher(), type_check_ctx_l)?
-            && other.fulfill(self.as_ref_dispatcher(), type_check_ctx_r)?)
-    }
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<bool, TypeError<U, V>>;
 
     fn dispatch(self) -> U {
         <Self as AsDispatcher<U, V>>::into_dispatcher(self)
@@ -756,11 +800,22 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
 pub trait CoinductiveTypeWithAny<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     AsDispatcher<U, V>
 {
+    /// 检查当前类型是否接受另一个类型
     fn accept(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<U, V>,
     ) -> Result<bool, TypeError<U, V>>;
+
+    /// 检查两个类型是否相等
+    #[allow(unused_variables)]
+    fn equals_any(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<bool, TypeError<U, V>> {
+        unimplemented!()
+    }
 }
 
 pub trait Representable {

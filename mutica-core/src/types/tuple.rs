@@ -82,7 +82,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Tuple<T>
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -96,6 +96,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Tuple(v) => {
@@ -103,7 +104,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                         return Ok(false);
                     }
                     for (a, b) in self.iter().zip(v.iter()) {
-                        if !a.fulfill(b.as_ref_dispatcher(), &mut inner_ctx)? {
+                        if !a.check(b.as_ref_dispatcher(), &mut inner_ctx)? {
                             return Ok(false);
                         }
                     }
@@ -120,13 +121,60 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     let head_result = self
                         .head()
                         .unwrap()
-                        .fulfill(head.as_ref_dispatcher(), &mut inner_ctx)?;
+                        .check(head.as_ref_dispatcher(), &mut inner_ctx)?;
                     if !head_result {
                         return Ok(false);
                     }
                     self.tail()
                         .unwrap()
-                        .fulfill(tail.as_ref_dispatcher(), &mut inner_ctx)
+                        .check(tail.as_ref_dispatcher(), &mut inner_ctx)
+                }
+                _ => Ok(false),
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Tuple(v) => {
+                    if self.len() != v.len() {
+                        return Ok(false);
+                    }
+                    for (a, b) in self.iter().zip(v.iter()) {
+                        if !a.equals(b.as_ref_dispatcher(), &mut inner_ctx)? {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                }
+                TypeRef::Construct(cons) => {
+                    if self.is_empty() {
+                        // 空元组无法匹配任何构造
+                        return Ok(false);
+                    }
+                    let head = cons.head();
+                    let tail = cons.tail();
+                    // 多元素元组匹配构造
+                    let head_result = self
+                        .head()
+                        .unwrap()
+                        .equals(head.as_ref_dispatcher(), &mut inner_ctx)?;
+                    if !head_result {
+                        return Ok(false);
+                    }
+                    self.tail()
+                        .unwrap()
+                        .equals(tail.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => Ok(false),
             }

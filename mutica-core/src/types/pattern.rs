@@ -66,7 +66,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Pattern<
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Pattern<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -75,7 +75,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                if self.expr.fulfill(other, &mut inner_ctx)? {
+                if self.expr.check(other, &mut inner_ctx)? {
                     pattern_env.push((self.debruijn_index, other.clone_data()));
                     Ok(true)
                 } else {
@@ -83,7 +83,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                 }
             })
         } else {
-            self.expr.fulfill(other, ctx)
+            self.expr.check(other, ctx)
+        }
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        if ctx.rhs {
+            ctx.pattern_env.collect(|pattern_env| {
+                let mut inner_ctx =
+                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+                if self.expr.equals(other, &mut inner_ctx)? {
+                    pattern_env.push((self.debruijn_index, other.clone_data()));
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            })
+        } else {
+            self.expr.equals(other, ctx)
         }
     }
 
@@ -132,12 +153,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
         if ctx.rhs {
-            other.fullfill(self.expr.as_ref_dispatcher(), ctx)
+            other.check(self.expr.as_ref_dispatcher(), ctx)
         } else {
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                if other.fullfill(self.expr.as_ref_dispatcher(), &mut inner_ctx)? {
+                if other.check(self.expr.as_ref_dispatcher(), &mut inner_ctx)? {
+                    pattern_env.push((self.debruijn_index, other.clone_data()));
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            })
+        }
+    }
+
+    #[stacksafe::stacksafe]
+    fn equals_any(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        if ctx.rhs {
+            other.equals(self.expr.as_ref_dispatcher(), ctx)
+        } else {
+            ctx.pattern_env.collect(|pattern_env| {
+                let mut inner_ctx =
+                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+                if other.equals(self.expr.as_ref_dispatcher(), &mut inner_ctx)? {
                     pattern_env.push((self.debruijn_index, other.clone_data()));
                     Ok(true)
                 } else {

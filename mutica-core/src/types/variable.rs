@@ -43,7 +43,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Variable
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Variable<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
@@ -56,6 +56,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Variable(v) => {
                     let self_idx = self.debruijn_index;
@@ -70,16 +71,57 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
 
                     let value_l = ctx.closure_env.0.get(l)?;
                     let value_r = ctx.closure_env.1.get(r)?;
-                    value_l.fulfill(value_r.as_ref_dispatcher(), &mut inner_ctx)
+                    value_l.check(value_r.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => {
                     if self.debruijn_index >= 0 {
                         // 如果是正数,说明是参数变量,无法确定
+                        // 实际上新模型允许通过上下文推导出参数变量的类型，进而使用Eq来判断
                         return Ok(false);
                     }
                     let r = (-1 - self.debruijn_index) as usize;
                     let value = ctx.closure_env.1.get(r)?;
-                    value.fulfill(other, &mut inner_ctx)
+                    value.check(other, &mut inner_ctx)
+                }
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => {
+                    let self_idx = self.debruijn_index;
+                    let v_idx = v.debruijn_index;
+                    if self_idx >= 0 || v_idx >= 0 {
+                        return Ok(self_idx == v_idx);
+                    }
+                    // 如果都是负数,说明都是闭包内的变量
+                    // 需要从闭包环境中取出对应的类型进行比较
+                    let l = (-1 - self_idx) as usize;
+                    let r = (-1 - v_idx) as usize;
+
+                    let value_l = ctx.closure_env.0.get(l)?;
+                    let value_r = ctx.closure_env.1.get(r)?;
+                    value_l.equals(value_r.as_ref_dispatcher(), &mut inner_ctx)
+                }
+                _ => {
+                    if self.debruijn_index >= 0 {
+                        // 如果是正数,说明是参数变量,无法确定
+                        // 实际上新模型允许通过上下文推导出参数变量的类型，进而使用Eq来判断
+                        return Ok(false);
+                    }
+                    let r = (-1 - self.debruijn_index) as usize;
+                    let value = ctx.closure_env.1.get(r)?;
+                    value.equals(other, &mut inner_ctx)
                 }
             }
         })
@@ -130,7 +172,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 let value = ctx.closure_env.1.get(r)?;
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                other.fullfill(value.as_ref_dispatcher(), &mut inner_ctx)
+                other.check(value.as_ref_dispatcher(), &mut inner_ctx)
             }
         })
     }

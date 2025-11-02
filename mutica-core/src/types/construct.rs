@@ -69,7 +69,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Construc
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Construct<T> {
-    fn fulfill(
+    fn check(
         &self,
         other: TypeRef<T>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
@@ -87,10 +87,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Construct(v) => Ok(self
                     .head
-                    .fulfill(v.head.as_ref_dispatcher(), &mut inner_ctx)?
+                    .check(v.head.as_ref_dispatcher(), &mut inner_ctx)?
                     && self
                         .tail
-                        .fulfill(v.tail.as_ref_dispatcher(), &mut inner_ctx)?),
+                        .check(v.tail.as_ref_dispatcher(), &mut inner_ctx)?),
                 TypeRef::Tuple(v) => {
                     if v.is_empty() {
                         // 空元组无法匹配任何构造
@@ -98,12 +98,43 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                     }
                     let head = v.get(0).unwrap();
                     let tail = v.tail().unwrap();
-                    Ok(self
-                        .head
-                        .fulfill(head.as_ref_dispatcher(), &mut inner_ctx)?
-                        && self
-                            .tail
-                            .fulfill(tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    Ok(self.head.check(head.as_ref_dispatcher(), &mut inner_ctx)?
+                        && self.tail.check(tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                }
+                _ => Ok(false),
+            }
+        })
+    }
+
+    fn equals(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut super::TypeCheckContext<Type<T>, T>,
+    ) -> Result<bool, super::TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+            match other {
+                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Construct(v) => Ok(self
+                    .head
+                    .equals(v.head.as_ref_dispatcher(), &mut inner_ctx)?
+                    && self
+                        .tail
+                        .equals(v.tail.as_ref_dispatcher(), &mut inner_ctx)?),
+                TypeRef::Tuple(v) => {
+                    if v.is_empty() {
+                        // 空元组无法匹配任何构造
+                        return Ok(false);
+                    }
+                    let head = v.get(0).unwrap();
+                    let tail = v.tail().unwrap();
+                    Ok(self.head.equals(head.as_ref_dispatcher(), &mut inner_ctx)?
+                        && self.tail.equals(tail.as_ref_dispatcher(), &mut inner_ctx)?)
                 }
                 _ => Ok(false),
             }
