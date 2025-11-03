@@ -74,10 +74,10 @@ let _ = 42;             // An underscore can be used directly to assert a type c
 
 ```mutica
 // A function that accepts an integer
-let add_one: any = (x: int) -> x + 1; // `->` defines a function
+let add_one: any = (x: int) => x + 1; // `=>` defines a function
 
 // A recursive function using `rec`
-let fib: any = rec f: (n: int) -> 
+let fib: any = rec f: (n: int) => 
     match n
         | eq 0 => 0
         | eq 1 => 1
@@ -101,11 +101,11 @@ The `is` operator is not traditional subtyping, but a check to see if a type ful
 
 ```mutica
 // Define labeled constructors
-let Just: any = T: any -> Just::T;
+let Just: any = T: any => Just::T;
 let Nothing: any = Nothing::();
 
 // Define the Maybe type using a union
-let Maybe: any = T: any -> (Just T | Nothing);
+let Maybe: any = T: any => (Just T | Nothing);
 
 // Use pattern matching on labeled types
 match some_maybe_value
@@ -118,13 +118,13 @@ match some_maybe_value
 
 ```mutica
 // Use intersection types to simulate a struct
-let Point: any = (x_val: int, y_val: int) -> { x::x_val & y::y_val };
+let Point: any = (x_val: int, y_val: int) => { x::x_val & y::y_val };
 
 let p: any = Point(3, 4);
 
-// Access fields using labels
-let x_coord: any = p.x;
-let y_coord: any = p.y;
+// Deconstructuring
+let x::(x_value: int) = p;
+let y::(y_value: int) = p;
 ```
 
 ## 🎯 Example Programs
@@ -144,8 +144,8 @@ fib(10) // Computes the 10th Fibonacci number
 ### IO Example
 
 ```mutica
-let List: any = (T: any) -> rec list: (() | T @ list);
-let print_chars: any = rec print_chars: str: List(char) ->
+let List: any = (T: any) => rec list: (() | T @ list);
+let print_chars: any = rec print_chars: str: List(char) =>
     match str
         | () => ()
         | (head: char) @ (tail: any) => (discard print!(head); print_chars(tail))
