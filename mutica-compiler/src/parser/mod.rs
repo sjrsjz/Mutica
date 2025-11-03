@@ -1009,3 +1009,120 @@ impl SyntaxError {
         .finish()
     }
 }
+
+pub fn inject_std_library(
+    ast: WithLocation<BasicTypeAst>,
+    errors: &mut Vec<WithLocation<MultiFileBuilderError>>,
+) -> WithLocation<BasicTypeAst> {
+    let std_lib_code = r##"
+    let $"+": any = (x: any, y: any) => __add!(x, y);
+    let $"-": any = (x: any, y: any) => __sub!(x, y);
+    let $"*": any = (x: any, y: any) => __mul!(x, y);
+    let $"/": any = (x: any, y: any) => __div!(x, y);
+    let $"%": any = (x: any, y: any) => __mod!(x, y);
+    let $">": any = (x: any, y: any) => __greater!(x, y);
+    let $"<": any = (x: any, y: any) => __less!(x, y);
+    let $">=": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __greater!(x, y) | panic;
+    let $"<=": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __less!(x, y) | panic;
+    let $"#neg": any = (x: any) => __neg!(x);
+    let $"#is": any = (x: any, y: any) => __is!(x, y);
+    let $"#set": any = (x: any, y: any) => __set!(x, y);
+    let $"#build_fixpoint": any = (f: any) => __build_fixpoint!(f);
+    $"<placeholder>"
+    "##;
+    let mut import_ast = HashMap::new();
+    let mut path = FastCycleDetector::new();
+    let mut builder = MultiFileBuilder::new(&mut import_ast, &mut path, errors);
+    let (std_ast_opt, _std_source) =
+        builder.build(PathBuf::from("<std>"), std_lib_code.to_string());
+    // 合并 AST, 把 Variable("<placeholder>") 替换为实际的 ast
+    if let Some((std_ast, _)) = std_ast_opt {
+        fn replace_placeholder(
+            std_ast: WithLocation<BasicTypeAst>,
+            ast: &BasicTypeAst,
+        ) -> WithLocation<BasicTypeAst> {
+            std_ast.map(|std_ast| match std_ast {
+                BasicTypeAst::Variable(name) if name == "<placeholder>" => ast.clone(),
+                BasicTypeAst::Variable(_) => std_ast,
+                BasicTypeAst::Int => std_ast,
+                BasicTypeAst::Float => std_ast,
+                BasicTypeAst::Char => std_ast,
+                BasicTypeAst::Top => std_ast,
+                BasicTypeAst::Bottom => std_ast,
+                BasicTypeAst::IntLiteral(_) => std_ast,
+                BasicTypeAst::FloatLiteral(_) => std_ast,
+                BasicTypeAst::CharLiteral(_) => std_ast,
+                BasicTypeAst::OrderedType(_) => std_ast,
+                BasicTypeAst::Tuple(items) => BasicTypeAst::Tuple(
+                    items
+                        .into_iter()
+                        .map(|s| replace_placeholder(s, ast))
+                        .collect(),
+                ),
+                BasicTypeAst::Cons { head, tail } => BasicTypeAst::Cons {
+                    head: replace_placeholder(*head, ast).into(),
+                    tail: replace_placeholder(*tail, ast).into(),
+                },
+                BasicTypeAst::Generalize(items) => BasicTypeAst::Generalize(
+                    items
+                        .into_iter()
+                        .map(|item| replace_placeholder(item, ast))
+                        .collect(),
+                ),
+                BasicTypeAst::Specialize(items) => BasicTypeAst::Specialize(
+                    items
+                        .into_iter()
+                        .map(|item| replace_placeholder(item, ast))
+                        .collect(),
+                ),
+                BasicTypeAst::Invoke {
+                    func,
+                    arg,
+                    continuation,
+                    perform_handler,
+                } => BasicTypeAst::Invoke {
+                    func: replace_placeholder(*func, ast).into(),
+                    arg: replace_placeholder(*arg, ast).into(),
+                    continuation: continuation.map(|c| replace_placeholder(*c, ast).into()),
+                    perform_handler: perform_handler.map(|h| replace_placeholder(*h, ast).into()),
+                },
+                BasicTypeAst::Match { branches } => BasicTypeAst::Match {
+                    branches: branches
+                        .into_iter()
+                        .map(|(pat, expr)| {
+                            let new_pat = replace_placeholder(pat, ast);
+                            let new_expr = replace_placeholder(expr, ast);
+                            (new_pat, new_expr)
+                        })
+                        .collect(),
+                },
+                BasicTypeAst::Apply { func, arg, handler } => BasicTypeAst::Apply {
+                    func: replace_placeholder(*func, ast).into(),
+                    arg: replace_placeholder(*arg, ast).into(),
+                    handler: handler.map(|h| replace_placeholder(*h, ast).into()),
+                },
+                BasicTypeAst::AtomicOpcode(_) => std_ast,
+                BasicTypeAst::Namespace { tag, expr } => BasicTypeAst::Namespace {
+                    tag,
+                    expr: replace_placeholder(*expr, ast).into(),
+                },
+                BasicTypeAst::Pattern { name, expr } => BasicTypeAst::Pattern {
+                    name,
+                    expr: replace_placeholder(*expr, ast).into(),
+                },
+                BasicTypeAst::Literal(v) => {
+                    BasicTypeAst::Literal(replace_placeholder(*v, ast).into())
+                }
+                BasicTypeAst::Rot { value } => BasicTypeAst::Rot {
+                    value: replace_placeholder(*value, ast).into(),
+                },
+                BasicTypeAst::EqType { value } => BasicTypeAst::EqType {
+                    value: replace_placeholder(*value, ast).into(),
+                },
+            })
+        }
+        replace_placeholder(std_ast, ast.value())
+    } else {
+        ast
+    }
+}

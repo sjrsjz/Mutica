@@ -213,24 +213,6 @@ pub enum LexerToken {
     For,
     #[token("in")]
     In,
-    #[token("__add")]
-    DunderAdd,
-    #[token("__sub")]
-    DunderSub,
-    #[token("__mul")]
-    DunderMul,
-    #[token("__div")]
-    DunderDiv,
-    #[token("__mod")]
-    DunderMod,
-    #[token("__greater")]
-    DunderGreater,
-    #[token("__less")]
-    DunderLess,
-    #[token("__is")]
-    DunderIs,
-    #[token("__opcode")]
-    DunderOpcode,
 
     #[token("->")]
     Arrow,
@@ -304,4 +286,6 @@ pub enum LexerToken {
     PipeGreaterThan,
     #[token("..")]
     Range,
+    #[token("$")]
+    Dollar,
 }

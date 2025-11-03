@@ -43,15 +43,6 @@ extern {
         "Else"          => LexerToken::Else,
         "Rot"           => LexerToken::Rot,
         "Handle"        => LexerToken::Handle,
-        "DunderAdd"     => LexerToken::DunderAdd,
-        "DunderSub"     => LexerToken::DunderSub,
-        "DunderMul"     => LexerToken::DunderMul,
-        "DunderDiv"     => LexerToken::DunderDiv,
-        "DunderMod"     => LexerToken::DunderMod,
-        "DunderGreater" => LexerToken::DunderGreater,
-        "DunderLess"    => LexerToken::DunderLess,
-        "DunderIs"      => LexerToken::DunderIs,
-        "DunderOpcode"  => LexerToken::DunderOpcode,
         "EqType"        => LexerToken::EqType,
         "Type"          => LexerToken::Type,
         "For"           => LexerToken::For,
@@ -93,6 +84,7 @@ extern {
         "RBrace"        => LexerToken::RBrace,
         "PipeGreaterThan" => LexerToken::PipeGreaterThan,
         "Range"         => LexerToken::Range,
+        "Dollar"       => LexerToken::Dollar,
     }
 }
 
@@ -106,9 +98,15 @@ Float: f64 = <l:@L> <s:"FloatNum"> <r:@R> => {
     s
 };
 
-Ident: String = <l:@L> <s:"Ident"> <r:@R> => {
-    TokenColor::fill_colors(colors, l..r, TokenColor::Identifier);
-    s
+Ident: String = {
+    <l:@L> <s:"Ident"> <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Identifier);
+        s
+    },
+    <l:@L> DollarTok <s:"StringLit"> <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Identifier);
+        s
+    }
 };
 
 StringLiteral: String = {
@@ -135,19 +133,6 @@ FalseTok: () = <l:@L> "False" <r:@R> => { TokenColor::fill_colors(colors, l..r, 
 AnyTok: () = <l:@L> "Any" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
 WildcardTok: () = <l:@L> "Wildcard" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
 NoneTok: () = <l:@L> "None" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
-
-// Opcode token returns the corresponding AtomicOpcode value
-OpcodeToken: crate::parser::ast::AtomicOpcode = {
-    <l:@L> "DunderAdd" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Add },
-    <l:@L> "DunderSub" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Sub },
-    <l:@L> "DunderMul" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Mul },
-    <l:@L> "DunderDiv" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Div },
-    <l:@L> "DunderMod" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Mod },
-    <l:@L> "DunderIs" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Is },
-    <l:@L> "DunderGreater" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Greater },
-    <l:@L> "DunderLess" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Less },
-    <l:@L> "DunderOpcode" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); crate::parser::ast::AtomicOpcode::Opcode },
-};
 
 // Individual keyword tokens (keeps locations simple and centralizes coloring)
 LetTok: () = <l:@L> "Let" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
@@ -197,6 +182,7 @@ DoubleArrowTok: () = <l:@L> "DoubleArrow" <r:@R> => { TokenColor::fill_colors(co
 RangeTok: () = <l:@L> "Range" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 HashTok: () = <l:@L> "Hash" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 BackslashTok: () = <l:@L> "Backslash" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
+DollarTok: () = <l:@L> "Dollar" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
 
 // Punctuation tokens
 LParenTok: () = <l:@L> "LParen" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
@@ -220,7 +206,6 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> AnyTok <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> WildcardTok <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> NoneTok <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <op: OpcodeToken> <r:@R> => WithLocation::new(TypeAst::AtomicOpcode(op), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <f: Float> <r:@R> => WithLocation::new(TypeAst::FloatLiteral(f), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(n), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(id), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -231,7 +216,22 @@ AtomType: WithLocation<TypeAst> = {
     },
     <l:@L> <io: Ident> BangTok <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Function);
-        WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        let op = match io.as_ref() {
+            "__add" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add),
+            "__sub" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub),
+            "__mul" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul),
+            "__div" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div),
+            "__mod" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod),
+            "__greater" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater),
+            "__less" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less),
+            "__is" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is),
+            "__opcode" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode),
+            "__neg" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Neg),
+            "__build_fixpoint" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::BuildFixPoint),
+            "__set" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Set),
+            _ => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)),
+        };
+        WithLocation::new(op, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> TypeTok <n:Num> <r:@R> => {
         WithLocation::new(TypeAst::OrderedType(n as usize), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
@@ -338,7 +338,6 @@ IfElse: WithLocation<TypeAst> = {
 
 Match: WithLocation<TypeAst> = {
     <l:@L> MatchTok <value: Primary?> <branches: MatchBranch*> PipeTok PanicTok? <r:@R> => {
-        TokenColor::fill_colors(colors, r-5..r, TokenColor::Keyword);
         match value {
             Some(v) => WithLocation::new(TypeAst::Apply {
                 func: Box::new(WithLocation::new(TypeAst::Match {
@@ -364,10 +363,14 @@ ForIn: WithLocation<TypeAst> = {
     },
 }
 
-MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    PipeTok <pattern: Primary> DoubleArrowTok <t: Primary> => {
+FnDef: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
+    <l:@L> <pattern: Calculate> DoubleArrowTok <t: Primary> <r:@R> => {
         (pattern, t)
     },
+}
+
+MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
+    PipeTok <branch: FnDef> => branch,
 }
 
 
@@ -381,9 +384,9 @@ RecursiveGen: WithLocation<TypeAst> = {
 }
 
 Closure: WithLocation<TypeAst> = {
-    <l:@L> <pattern: Factor> ArrowTok <body: Primary> <r:@R> => {
+    <l:@L> <fn_def: FnDef> <r:@R> => {
         WithLocation::new(TypeAst::Match {
-            branches: vec![(pattern, body)],
+            branches: vec![fn_def],
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
@@ -419,8 +422,8 @@ Literal: WithLocation<TypeAst> = {
 Primary: WithLocation<TypeAst> = {
     <l: Literal> => l,
     <r: RecursiveGen> => r,
-    <c: Closure> => c,
     <m: Match> => m,
+    <c: Closure> => c,
     <f: ForIn> => f,
     <i: IfElse> => i,
     <c: Calculate> => c,
@@ -440,7 +443,7 @@ Factor: WithLocation<TypeAst> = {
     },
     <l:@L> MinusTok <n: Factor> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Neg), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable("#neg".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(n),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
@@ -512,43 +515,31 @@ Compare: WithLocation<TypeAst> = {
     },
     <l:@L> <left: Compare> LtTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable("<".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: Compare> LteTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Generalize(vec![
-            WithLocation::new(TypeAst::Apply {
-                func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Less), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left.clone(), right.clone()]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-            WithLocation::new(TypeAst::Eq {
-                left: Box::new(left),
-                right: Box::new(right),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-        ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::Variable("<=".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: Compare> GtTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable(">".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: Compare> GteTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Generalize(vec![
-            WithLocation::new(TypeAst::Apply {
-                func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Greater), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left.clone(), right.clone()]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-            WithLocation::new(TypeAst::Eq {
-                left: Box::new(left),
-                right: Box::new(right),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-        ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::Variable(">=".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: Compare> IsTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable("#is".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
@@ -558,13 +549,13 @@ Compare: WithLocation<TypeAst> = {
 AddSub: WithLocation<TypeAst> = {
     <l:@L> <left: AddSub> <op_l:@L> PlusTok <op_r:@R> <right: Mod> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Add), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable("+".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: AddSub> MinusTok <right: Mod> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Sub), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable("-".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
@@ -574,7 +565,7 @@ AddSub: WithLocation<TypeAst> = {
 Mod: WithLocation<TypeAst> = {
     <l:@L> <left: Mod> PercentTok <right: MulDiv> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mod), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable("%".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
@@ -584,13 +575,13 @@ Mod: WithLocation<TypeAst> = {
 MulDiv: WithLocation<TypeAst> = {
     <l:@L> <left: MulDiv> StarTok <right: Factor> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Mul), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable("*".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: MulDiv> SlashTok <right: Factor> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Div), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            func: Box::new(WithLocation::new(TypeAst::Variable("/".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },

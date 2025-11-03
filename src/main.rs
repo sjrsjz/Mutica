@@ -5,7 +5,7 @@ use mutica_compiler::{
     ariadne,
     parser::{
         BuildContext, MultiFileBuilder, MultiFileBuilderError, ParseContext, PatternCounter,
-        SyntaxError, ast::LinearizeContext,
+        SyntaxError, ast::LinearizeContext, inject_std_library,
     },
 };
 use mutica_core::{
@@ -113,7 +113,10 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
     let mut builder_errors = Vec::new();
     let mut multifile_builder =
         MultiFileBuilder::new(&mut imported_ast, &mut cycle_detector, &mut builder_errors);
-    let (ast, source) = multifile_builder.build(path.clone(), expr.to_string());
+    let (mut ast, source) = multifile_builder.build(path.clone(), expr.to_string());
+    // if let Some((ast, _)) = ast.as_mut() {
+    //     *ast = inject_std_library(ast.clone(), &mut builder_errors);
+    // }
     // 直接使用 MultiFileBuilder 构建
     let basic = match ast {
         Some(ast) if builder_errors.is_empty() => ast,
