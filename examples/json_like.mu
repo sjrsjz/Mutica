@@ -13,16 +13,16 @@ let Json: any = rec object: (
     String |
     int |
     float |
-    True::() |
-    False::()
+    true |
+    false
 );
 
 let print_json: any =  rec go: spacing: String => match
-    | False::() => {
+    | false => {
         discard print(spacing);
         println("false")
     }
-    | True::() => {
+    | true => {
         discard print(spacing);
         println("true")
     }
@@ -52,8 +52,8 @@ let my_json: Json = (
     (rot "name", "Mutica"),
     (rot "version",  "0.1.0"),
     (rot "features", (
-        (rot "json-like", True::()),
-        (rot "fixpoint", False::())
+        (rot "json-like", true),
+        (rot "fixpoint", false)
     )),
     (rot "dependencies", (
         "A", "B", "C"
