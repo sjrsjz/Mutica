@@ -1,8 +1,11 @@
 let list_pkg: any = import "list.mu";
-let List: any = list_pkg.List;
-let cons: any = list_pkg.cons;
+let List::(List: any) = list_pkg;
+let cons::(cons: any) = list_pkg;
+let len::(len: any) = list_pkg;
+let drop::(drop: any) = list_pkg;
+let take::(take: any) = list_pkg;
 // 归并两个已排序的列表
-let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) -> {
+let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) => {
     loop go: t: any = (lst1, lst2);
     match t
         | ((), l2: any) => l2
@@ -14,16 +17,16 @@ let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) -> {
 };
 
 // 将列表分为两半
-let split: any = lst: List(any) -> {
-    let len: any = list_pkg.len lst;
+let split: any = lst: List(any) => {
+    let len: any = len lst;
     let mid: int = len / 2;
-    let first_half: any = list_pkg.take lst mid;
-    let second_half: any = list_pkg.drop lst mid;
+    let first_half: any = take lst mid;
+    let second_half: any = drop lst mid;
     (first_half, second_half)
 };
 
 // 归并排序主函数
-let merge_sort: any = cmp: any -> lst: List(any) -> {
+let merge_sort: any = cmp: any => lst: List(any) => {
     loop go: t: any = lst;
     match t
         | () => ()

@@ -1,19 +1,35 @@
 let string_pkg: any = import "lib/string.mu";
-let String: any = string_pkg.String;
-let classA: any = v: String -> f: any -> {
-    let obj: any = rec self: {
-        data::(alloc! v) &
-        get::(() -> get!(self.data)) &
-        set::((value: String) -> set!(self.data, value))
+let String::(String: any) = string_pkg;
+let println::(println: any) = string_pkg;
+
+let get: any = match | panic;
+let set: any = match | panic;
+
+extend get: ClassA::(self: any) => () => {
+    let data::(v: any) = self;
+    get!(v)
+};
+
+extend set: ClassA::(self: any) => value: String => {
+    set!((let data::(v: any) = self; v), value)
+};
+
+
+let classA: any = v: String => f: any => {
+    let obj: any = ClassA::{
+        data::(alloc! v)
     };
     let result: any = f(obj);
-    discard dealloc!(obj.data);
+    discard dealloc!(
+        let ClassA::data::(v: any) = obj;
+        v
+    );
     result    
 };
 
 classA "Hello, world!" {
     let my_obj: any;
-    discard string_pkg.println(my_obj.get());
+    discard println(my_obj.get());
     discard my_obj.set("Goodbye, world!");
-    discard string_pkg.println(my_obj.get());
+    discard println(my_obj.get());
 }

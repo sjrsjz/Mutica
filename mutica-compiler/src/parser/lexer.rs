@@ -213,7 +213,9 @@ pub enum LexerToken {
     For,
     #[token("in")]
     In,
-
+    #[token("extend")]
+    Extend,
+    
     #[token("->")]
     Arrow,
     #[token("|->")]
@@ -228,6 +230,8 @@ pub enum LexerToken {
     At,
     #[token("|")]
     Pipe,
+    #[token("||")]
+    DoublePipe,
     #[token("!")]
     Bang,
     #[token(":")]
@@ -238,6 +242,8 @@ pub enum LexerToken {
     Comma,
     #[token("&")]
     Ampersand,
+    #[token("&&")]
+    DoubleAmpersand,
     #[token("==")]
     Eq,
     #[token("!=")]

@@ -780,11 +780,17 @@ impl TypeAst {
                                         ]),
                                         loc,
                                     ),
-                                    WithLocation::new(BasicTypeAst::Top, loc),
+                                    WithLocation::new(
+                                        BasicTypeAst::Variable("op#true".to_string()),
+                                        loc,
+                                    ),
                                 ),
                                 (
                                     WithLocation::new(BasicTypeAst::Top, loc),
-                                    WithLocation::new(BasicTypeAst::Bottom, loc),
+                                    WithLocation::new(
+                                        BasicTypeAst::Variable("op#false".to_string()),
+                                        loc,
+                                    ),
                                 ),
                             ],
                         },
@@ -832,11 +838,17 @@ impl TypeAst {
                                         ]),
                                         loc,
                                     ),
-                                    WithLocation::new(BasicTypeAst::Bottom, loc),
+                                    WithLocation::new(
+                                        BasicTypeAst::Variable("op#false".to_string()),
+                                        loc,
+                                    ),
                                 ),
                                 (
                                     WithLocation::new(BasicTypeAst::Top, loc),
-                                    WithLocation::new(BasicTypeAst::Top, loc),
+                                    WithLocation::new(
+                                        BasicTypeAst::Variable("op#true".to_string()),
+                                        loc,
+                                    ),
                                 ),
                             ],
                         },
@@ -855,22 +867,8 @@ impl TypeAst {
             ),
             TypeAst::Not { value } => WithLocation::new(
                 BasicTypeAst::Apply {
-                    func: WithLocation::new(
-                        BasicTypeAst::Match {
-                            branches: vec![
-                                (
-                                    WithLocation::new(BasicTypeAst::Bottom, loc),
-                                    WithLocation::new(BasicTypeAst::Top, loc),
-                                ),
-                                (
-                                    WithLocation::new(BasicTypeAst::Top, loc),
-                                    WithLocation::new(BasicTypeAst::Bottom, loc),
-                                ),
-                            ],
-                        },
-                        loc,
-                    )
-                    .into(),
+                    func: WithLocation::new(BasicTypeAst::Variable("op#not".to_string()), loc)
+                        .into(),
                     arg: value.into_basic(multifile_builder, value.location()).into(),
                     handler: None,
                 },

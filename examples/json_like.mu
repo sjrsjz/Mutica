@@ -1,7 +1,11 @@
 let list_pkg: any = import "lib/list.mu";
 let string_pkg: any = import "lib/string.mu";
-let List: any = list_pkg.List;
-let String: any = string_pkg.String;
+let List::(List: any) = list_pkg;
+let iter::(iter: any) = list_pkg;
+let String::(String: any) = string_pkg;
+let println::(println: any) = string_pkg;
+let print::(print: any) = string_pkg;
+
 
 let Json: any = rec object: (
     List(object) |
@@ -13,34 +17,34 @@ let Json: any = rec object: (
     False::()
 );
 
-let print_json: any =  rec go: spacing: String -> match
+let print_json: any =  rec go: spacing: String => match
     | False::() => {
-        discard string_pkg.print(spacing);
-        string_pkg.println("false")
+        discard print(spacing);
+        println("false")
     }
     | True::() => {
-        discard string_pkg.print(spacing);
-        string_pkg.println("true")
+        discard print(spacing);
+        println("true")
     }
     | v: int => {
-        discard string_pkg.print(spacing);
+        discard print(spacing);
         println! v
     }
     | v: float => {
-        discard string_pkg.print(spacing);
+        discard print(spacing);
         println! v
     }
     | v: String => {
-        discard string_pkg.print(spacing);
-        string_pkg.println(v)
+        discard print(spacing);
+        println(v)
     }
     | (rot (k: [rec t: [() & (none @ t)]]), v: Json) => {
-        discard string_pkg.print(spacing);
-        discard string_pkg.println("> " + k);
+        discard print(spacing);
+        discard println("> " + k);
         go(spacing + "  ")(v)
     }
     | vs: List(Json) => {
-        list_pkg.iter(vs)(go(spacing))
+        iter(vs)(go(spacing))
     }
     | panic;
 

@@ -128,13 +128,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for TypeBound<T> {
             TypeBound::PandomData(_) => "<?>".to_string(),
         }
     }
-    fn display(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        match self {
-            TypeBound::Top => "true".to_string(),
-            TypeBound::Bottom => "false".to_string(),
-            TypeBound::PandomData(_) => "<?>".to_string(),
-        }
-    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeBound<T> {

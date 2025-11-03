@@ -74,6 +74,8 @@ impl<T> Collector<T> {
     pub fn clear(&mut self) {
         if let Some(items) = &mut self.items {
             items.clear();
+        } else {
+            self.items = Some(smallvec::SmallVec::new());
         }
     }
 }

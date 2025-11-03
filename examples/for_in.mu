@@ -1,6 +1,8 @@
 let list_pkg: any = import "lib/list.mu";
-let List: any = list_pkg.List;
-let iter: any = lst: List(any) -> f: any -> {
+let List::(List: any) = list_pkg;
+
+let List: any = List;
+let iter: any = lst: List(any) => f: any => {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -11,9 +13,9 @@ let iter: any = lst: List(any) -> f: any -> {
         | panic
 };
 
-// We can rewrite `f(v)(pattern -> expr)` to `for pattern = f(v) in expr`
+// We can rewrite `f(v)(pattern => expr)` to `for pattern = f(v) in expr`
 
-// iter(1, 2, 3)(x: int -> {
+// iter(1, 2, 3)(x: int => {
 //     discard print!(x);
 // })
 

@@ -371,7 +371,7 @@ impl ParseContext {
             let unused_vars: Vec<WithLocation<String>> = current_scope
                 .iter()
                 .filter_map(|(name, (count, loc))| {
-                    if *count == Self::NOT_USED && !name.starts_with("_") {
+                    if *count == Self::NOT_USED && !name.starts_with("_") && !name.contains("#") {
                         Some(loc.clone().map(|_| name.clone()))
                     } else {
                         None
@@ -398,6 +398,7 @@ impl ParseContext {
             if current_scope.contains_key(&name)
                 && current_scope[&name].0 == Self::NOT_USED
                 && !name.starts_with("_")
+                && !name.contains("#")
             // 允许以 _ 开头的变量不被使用
             {
                 let unused_vars = vec![current_scope[&name].1.clone().map(|_| name.clone())];
@@ -1015,19 +1016,37 @@ pub fn inject_std_library(
     errors: &mut Vec<WithLocation<MultiFileBuilderError>>,
 ) -> WithLocation<BasicTypeAst> {
     let std_lib_code = r##"
-    let $"+": any = (x: any, y: any) => __add!(x, y);
-    let $"-": any = (x: any, y: any) => __sub!(x, y);
-    let $"*": any = (x: any, y: any) => __mul!(x, y);
-    let $"/": any = (x: any, y: any) => __div!(x, y);
-    let $"%": any = (x: any, y: any) => __mod!(x, y);
-    let $">": any = (x: any, y: any) => __greater!(x, y);
-    let $"<": any = (x: any, y: any) => __less!(x, y);
-    let $">=": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __greater!(x, y) | panic;
-    let $"<=": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __less!(x, y) | panic;
-    let $"#neg": any = (x: any) => __neg!(x);
-    let $"#is": any = (x: any, y: any) => __is!(x, y);
-    let $"#set": any = (x: any, y: any) => __set!(x, y);
-    let $"#build_fixpoint": any = (f: any) => __build_fixpoint!(f);
+    let $"op#true": any = True::();
+    let $"op#false": any = False::();
+    let $"op#and": any = match
+        | ($"op#true", $"op#true") => $"op#true"
+        | ($"op#true", $"op#false") => $"op#false"
+        | ($"op#false", $"op#true") => $"op#false"
+        | ($"op#false", $"op#false") => $"op#false"
+        | panic;
+    let $"op#or": any = match
+        | ($"op#true", $"op#true") => $"op#true"
+        | ($"op#true", $"op#false") => $"op#true"
+        | ($"op#false", $"op#true") => $"op#true"
+        | ($"op#false", $"op#false") => $"op#false"
+        | panic;
+    let $"op#not": any = match
+        | $"op#true" => $"op#false"
+        | $"op#false" => $"op#true"
+        | panic;
+    let $"op#add": any = (x: any, y: any) => __add!(x, y);
+    let $"op#sub": any = (x: any, y: any) => __sub!(x, y);
+    let $"op#mul": any = (x: any, y: any) => __mul!(x, y);
+    let $"op#div": any = (x: any, y: any) => __div!(x, y);
+    let $"op#mod": any = (x: any, y: any) => __mod!(x, y);
+    let $"op#gt": any = (x: any, y: any) => __greater!(x, y, true, false);
+    let $"op#lt": any = (x: any, y: any) => __less!(x, y, true, false);
+    let $"op#gte": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __greater!(x, y, true, false) | panic;
+    let $"op#lte": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __less!(x, y, true, false) | panic;
+    let $"op#neg": any = (x: any) => __neg!(x);
+    let $"op#is": any = (x: any, y: any) => __is!(x, y, true, false);
+    let $"op#set": any = (x: any, y: any) => __set!(x, y);
+    let $"op#build_fixpoint": any = (f: any) => __build_fixpoint!(f);
     $"<placeholder>"
     "##;
     let mut import_ast = HashMap::new();

@@ -9,8 +9,8 @@ let factorial: any =
         | panic;
 
 // 尾递归阶乘
-let factorial_tail: any = n: int -> [
-        let helper: any = rec h: acc: int -> match 
+let factorial_tail: any = n: int => [
+        let helper: any = rec h: acc: int => match 
             | eq 0 => acc
             | eq 1 => acc
             | n: int => h(acc * n)(n - 1)
@@ -27,8 +27,8 @@ let fibonacci: any =
         | panic;
 
 // 尾递归斐波那契
-let fibonacci_tail: any = n: int -> [
-    let helper: any = rec helper: a: int -> b: int -> match
+let fibonacci_tail: any = n: int => [
+    let helper: any = rec helper: a: int => b: int => match
             | eq 0 => a
             | n: int => helper(b)(a + b)(n - 1)
             | panic;
