@@ -432,18 +432,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let mut reduced_branches = Vec::with_capacity(branches.len());
-            for (inner, closure_idx) in branches.into_iter() {
-                let reduced_pattern = inner.pattern.reduce(ctx)?;
-                reduced_branches.push((
-                    ClosureBranch {
-                        pattern: reduced_pattern,
-                        expr: inner.expr,
-                        _pantom: PhantomData,
-                    },
-                    closure_idx,
-                ));
-            }
+            let reduced_branches = branches
+                .into_iter()
+                .map(|(inner, closure_idx)| {
+                    inner.pattern.reduce(ctx).map(|reduced_pattern| {
+                        (
+                            ClosureBranch {
+                                pattern: reduced_pattern,
+                                expr: inner.expr,
+                                _pantom: PhantomData,
+                            },
+                            closure_idx,
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
 
             // 重新计算 is_nf
             let mut new_nf = ThreeValuedLogic::True;
