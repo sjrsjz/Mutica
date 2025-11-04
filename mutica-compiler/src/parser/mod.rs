@@ -515,6 +515,14 @@ impl PatternCounter {
         self.index_mapping.insert(name, index);
         index
     }
+
+    pub fn len(&self) -> usize {
+        self.index_mapping.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.index_mapping.is_empty()
+    }
 }
 
 pub struct BuildContext<T: GcAllocObject<T, Inner = Type<T>>> {

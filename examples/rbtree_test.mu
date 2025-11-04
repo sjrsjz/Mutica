@@ -1,12 +1,16 @@
 let rbtree_pkg: any = import "lib/rbtree.mu";
 let string_pkg: any = import "lib/string.mu";
-let insert::(insert: any) = rbtree_pkg;
-let lookup::(lookup: any) = rbtree_pkg;
-let inorder::(inorder: any) = rbtree_pkg;
-let size::(size: any) = rbtree_pkg;
-let empty::(empty: any) = rbtree_pkg;
-let println::(println: any) = string_pkg;
-let print::(print: any) = string_pkg;
+let {
+    insert::(insert: any) &
+    lookup::(lookup: any) &
+    inorder::(inorder: any) &
+    size::(size: any) &
+    empty::(empty: any)
+} = rbtree_pkg;
+let {
+    println::(println: any) &
+    print::(print: any)
+} = string_pkg;
 
 // 整数比较函数
 let int_cmp: any = (a: int, b: int) => {

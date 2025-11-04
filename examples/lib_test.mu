@@ -3,34 +3,40 @@ let string_pkg: any = import "lib/string.mu";
 let maybe_pkg: any = import "lib/maybe.mu";
 let sort_pkg: any = import "lib/sort.mu";
 
-let List::(List: any) = list_pkg;
-let Nil::(Nil: any) = list_pkg;
-let String::(String: any) = string_pkg;
+let {
+    List::(List: any) &
+    Nil::(Nil: any) &
+    cons::(cons: any) &
+    filter::(filter: any) &
+    iter::(iter: any) &
+    fold::(fold: any) &
+    foldr::(foldr: any) &
+    append::(append: any) &
+    reverse::(reverse: any) &
+    nth::(nth: any) &
+    take::(take: any) &
+    drop::(drop: any) &
+    find::(find: any) &
+    list_all::(list_all: any) &
+    list_any::(list_any: any) &
+    map::(list_map: any) &
+    len::(len: any)
+} = list_pkg;
 
-let cons::(cons: any) = list_pkg;
-let filter::(filter: any) = list_pkg;
-let iter::(iter: any) = list_pkg;
-let fold::(fold: any) = list_pkg;
-let foldr::(foldr: any) = list_pkg;
-let append::(append: any) = list_pkg;
-let reverse::(reverse: any) = list_pkg;
-let nth::(nth: any) = list_pkg;
-let take::(take: any) = list_pkg;
-let drop::(drop: any) = list_pkg;
-let find::(find: any) = list_pkg;
-let list_all::(list_all: any) = list_pkg;
-let list_any::(list_any: any) = list_pkg;
-let map::(list_map: any) = list_pkg;
-let len::(len: any) = list_pkg;
+let {
+    unwrap::(unwrap: any) &
+    map::(maybe_map: any)
+} = maybe_pkg;
 
-let unwrap::(unwrap: any) = maybe_pkg;
-let map::(maybe_map: any) = maybe_pkg;
+let {
+    slice::(slice: any) &
+    String::(String: any) &
+    println::(println: any)
+} = string_pkg;
 
-let slice::(slice: any) = string_pkg;
-let println::(println: any) = string_pkg;
-
-let merge_sort::(merge_sort: any) = sort_pkg;
-
+let {
+    merge_sort::(merge_sort: any)
+} = sort_pkg;
 
 // 创建测试列表: [1, 2, 3, 4, 5]
 let test_list: any = cons(1, cons(2, cons(3, cons(4, cons(5, Nil)))));

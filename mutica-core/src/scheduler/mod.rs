@@ -359,7 +359,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 
     pub fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
         let empty_v = ClosureEnv::new(Vec::<Type<T>>::new());
-        let empty_p = ParamEnv::from_collector(&mut Collector::new())
+        let empty_p = ParamEnv::from_collector(&mut Collector::new(), 0)
             .unwrap()
             .unwrap();
         let mut rec_assumptions = smallvec::SmallVec::new();

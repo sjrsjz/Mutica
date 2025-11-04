@@ -1165,6 +1165,7 @@ impl TypeAst {
     }
 }
 
+#[derive(Debug)]
 pub struct PatternEnv {
     declared: HashMap<String, WithLocation<()>>, // 已声明的模式变量
 }
@@ -1192,7 +1193,7 @@ impl PatternEnv {
     pub fn extend(&mut self, names: impl IntoIterator<Item = WithLocation<String>>) {
         for name in names {
             if self.declared.contains_key(name.value()) {
-                return; // 重复声明，忽略
+                continue; // 重复声明的模式变量忽略
             }
             self.declared
                 .insert(name.value().clone(), WithLocation::new((), name.location()));
@@ -1396,14 +1397,14 @@ impl<'ast> LinearTypeAst<'ast> {
                             .map(|(name, loc)| WithLocation::new(name, loc.location())),
                     );
                 }
-                if !all_patterns.is_empty() {
-                    // 泛化类型中不允许出现模式变量，因为泛化类型是乱序的
-                    errors.push(WithLocation::new(
-                        ParseError::AmbiguousPattern(WithLocation::new(self.clone(), loc)),
-                        loc,
-                    ));
-                    all_patterns = PatternEnv::new(); // 清空模式变量
-                }
+                // if !all_patterns.is_empty() {
+                //     // 泛化类型中不允许出现模式变量，因为泛化类型是乱序的
+                //     errors.push(WithLocation::new(
+                //         ParseError::AmbiguousPattern(WithLocation::new(self.clone(), loc)),
+                //         loc,
+                //     ));
+                //     all_patterns = PatternEnv::new(); // 清空模式变量
+                // }
                 FlowResult::complex(
                     WithLocation::new(LinearTypeAst::Generalize(new_types), loc),
                     all_captures,
@@ -1425,14 +1426,14 @@ impl<'ast> LinearTypeAst<'ast> {
                             .map(|(name, loc)| WithLocation::new(name, loc.location())),
                     );
                 }
-                if !all_patterns.is_empty() {
-                    // 专化类型中不允许出现模式变量，因为专化类型是乱序的
-                    errors.push(WithLocation::new(
-                        ParseError::AmbiguousPattern(WithLocation::new(self.clone(), loc)),
-                        loc,
-                    ));
-                    all_patterns = PatternEnv::new(); // 清空模式变量
-                }
+                // if !all_patterns.is_empty() {
+                //     // 专化类型中不允许出现模式变量，因为专化类型是乱序的
+                //     errors.push(WithLocation::new(
+                //         ParseError::AmbiguousPattern(WithLocation::new(self.clone(), loc)),
+                //         loc,
+                //     ));
+                //     all_patterns = PatternEnv::new(); // 清空模式变量
+                // }
                 FlowResult::complex(
                     WithLocation::new(LinearTypeAst::Specialize(new_types), loc),
                     all_captures,
@@ -1825,42 +1826,70 @@ impl<'ast> LinearTypeAst<'ast> {
                 ))
             }
             LinearTypeAst::Generalize(basic_type_asts) => {
+                // let mut types = Vec::new();
+                // for bta in basic_type_asts {
+                //     types.push(bta.to_type(
+                //         ctx,
+                //         &mut PatternCounter::new(), // 泛化类型内不允许出现模式变量，安全起见传入一个新的计数器
+                //         false,
+                //         gc,
+                //         roots,
+                //         bta.location(),
+                //     )?);
+                // }
+                // // 我们无法计算出泛化类型的闭包环境，因此传入一个空的闭包环境
+                // let (types, patterns) = BuildResult::fold(types);
+                // Ok(BuildResult::complex(Generalize::new_raw(&types), patterns))
+
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(
                         ctx,
-                        &mut PatternCounter::new(), // 泛化类型内不允许出现模式变量，安全起见传入一个新的计数器
-                        false,
+                        pattern_counter,
+                        pattern_mode,
                         gc,
                         roots,
                         bta.location(),
                     )?);
                 }
-                // 我们无法计算出泛化类型的闭包环境，因此传入一个空的闭包环境
                 let (types, patterns) = BuildResult::fold(types);
-                Ok(BuildResult::complex(Generalize::new_raw(&types), patterns))
+                Ok(BuildResult::complex(Generalize::new_raw(types), patterns))
             }
             LinearTypeAst::Specialize(basic_type_asts) => {
+                // let mut types = Vec::new();
+                // for bta in basic_type_asts {
+                //     types.push(bta.to_type(
+                //         ctx,
+                //         &mut PatternCounter::new(), // 专化类型内不允许出现模式变量，安全起见传入一个新的计数器
+                //         false,
+                //         gc,
+                //         roots,
+                //         bta.location(),
+                //     )?);
+                // }
+                // // 我们无法计算出专化类型的闭包环境，因此传入一个空的闭包环境
+                // let (types, patterns) = BuildResult::fold(types);
+                // if !patterns.is_empty() {
+                //     return Err(Err(ParseError::AmbiguousPattern(WithLocation::new(
+                //         self.clone(),
+                //         loc,
+                //     ))));
+                // }
+                // Ok(BuildResult::complex(Specialize::new_raw(&types), patterns))
+
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(
                         ctx,
-                        &mut PatternCounter::new(), // 专化类型内不允许出现模式变量，安全起见传入一个新的计数器
-                        false,
+                        pattern_counter,
+                        pattern_mode,
                         gc,
                         roots,
                         bta.location(),
                     )?);
                 }
-                // 我们无法计算出专化类型的闭包环境，因此传入一个空的闭包环境
                 let (types, patterns) = BuildResult::fold(types);
-                if !patterns.is_empty() {
-                    return Err(Err(ParseError::AmbiguousPattern(WithLocation::new(
-                        self.clone(),
-                        loc,
-                    ))));
-                }
-                Ok(BuildResult::complex(Specialize::new_raw(&types), patterns))
+                Ok(BuildResult::complex(Specialize::new_raw(types), patterns))
             }
             LinearTypeAst::Invoke {
                 func,
@@ -1943,9 +1972,10 @@ impl<'ast> LinearTypeAst<'ast> {
                 let closure_env = ClosureEnv::new(closure_env);
                 let mut new_branches = Vec::new();
                 for (pattern, body) in branches {
+                    let mut pattern_counter = PatternCounter::new(); // 每个分支的模式变量计数器都是独立的
                     let pattern_type: BuildResult<T> = pattern.to_type(
                         ctx,
-                        &mut PatternCounter::new(), // 进入模式定义，重新计数
+                        &mut pattern_counter, // 进入模式定义，重新计数
                         true,
                         gc,
                         roots,
@@ -1975,7 +2005,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         body.location(),
                     )?;
                     ctx.exit_layer();
-                    new_branches.push((pattern_type.ty, body_type.ty, 0));
+                    new_branches.push((pattern_type.ty, body_type.ty, 0, pattern_counter.len()));
                 }
                 Ok(BuildResult::simple(Closure::new::<Type<T>, Type<T>>(
                     new_branches,

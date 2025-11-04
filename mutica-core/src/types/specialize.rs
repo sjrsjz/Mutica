@@ -108,8 +108,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
+        let is_enabled = ctx.pattern_env.is_enabled();
         ctx.pattern_env.collect(|pattern_env| {
-            let enabled = pattern_env.is_enabled();
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
@@ -119,7 +119,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                _ if enabled => {
+                _ if is_enabled => {
                     // 当 pattern_mode 不为 false 时,表示需要匹配子模式
                     // 这时不能短路返回,因为可能需要多个子类型共同匹配一个模式
                     let mut matched = false;
@@ -148,6 +148,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
+        let is_enabled = ctx.pattern_env.is_enabled();
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
@@ -156,7 +157,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
                 TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Specialize(v) => {
+                TypeRef::Specialize(v) if !is_enabled => {
                     if self.types.len() != v.types.len() {
                         return Ok(false);
                     }
@@ -179,6 +180,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
                     }
                     Ok(true)
                 }
+
+                TypeRef::Specialize(v) if is_enabled => {
+                    if self.types.len() != v.types.len() {
+                        return Ok(false);
+                    }
+                    for sub in self.types.iter() {
+                        let mut found = false;
+                        for other_sub in v.types.iter() {
+                            // 在模式匹配上下文中, 必须完全匹配
+                            found |= sub.equals(other_sub.as_ref_dispatcher(), &mut inner_ctx)?
+                        }
+                        if !found {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                }
+
                 _ => Ok(false),
             }
         })
@@ -237,16 +256,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, super::TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|_| {
-            let mut new_pattern_env = Collector::new_disabled();
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                &mut new_pattern_env,
-                ctx.rhs,
-            );
+        ctx.pattern_env.collect(|pattern_env| {
+            let mut inner_ctx =
+                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             for sub in self.types.iter() {
-                // 我们传入 disabled 是因为specialize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
                 if !other.check(sub.as_ref_dispatcher(), &mut inner_ctx)? {
                     return Ok(false);
                 }

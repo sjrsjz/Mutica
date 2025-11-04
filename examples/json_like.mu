@@ -1,10 +1,14 @@
 let list_pkg: any = import "lib/list.mu";
 let string_pkg: any = import "lib/string.mu";
-let List::(List: any) = list_pkg;
-let iter::(iter: any) = list_pkg;
-let String::(String: any) = string_pkg;
-let println::(println: any) = string_pkg;
-let print::(print: any) = string_pkg;
+let {
+    List::(List: any) &
+    iter::(iter: any)
+} = list_pkg;
+let {
+    String::(String: any) &
+    println::(println: any) &
+    print::(print: any)
+} = string_pkg;
 
 
 let Json: any = rec object: (

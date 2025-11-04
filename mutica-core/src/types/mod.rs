@@ -326,6 +326,7 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     TupleIndexOutOfBounds(Box<(U, U)>),
     TypeMismatch(Box<(U, String)>),
     UnboundVariable(isize),
+    UndefinedPatternVariable(isize),
     AssertFailed(Box<(U, U)>),
     MissingContinuation(Box<U>),
     MissingPerformHandler(Box<U>),
@@ -355,9 +356,12 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::TypeMismatch(info) => {
                 write!(f, "Type mismatch: expected {}, found {:?}", info.1, info.0)
             }
-            TypeError::UnboundVariable(id) => write!(f, "Unbound variable: id={}", id),
+            TypeError::UnboundVariable(id) => write!(f, "Unbound variable: id = {}", id),
+            TypeError::UndefinedPatternVariable(id) => {
+                write!(f, "Undefined pattern variable: id = {}", id)
+            }
             TypeError::AssertFailed(types) => {
-                write!(f, "Assert failed: {:?} </: {:?}", types.0, types.1)
+                write!(f, "Assert failed: {:?} doesn't accept {:?}", types.0, types.1)
             }
             TypeError::MissingContinuation(ty) => write!(f, "Missing continuation: {:?}", ty),
             TypeError::MissingPerformHandler(ty) => write!(f, "Missing perform handler: {:?}", ty),

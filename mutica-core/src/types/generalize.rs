@@ -136,6 +136,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
+        let is_enabled = ctx.pattern_env.is_enabled();
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
@@ -144,7 +145,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
                 TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Generalize(v) => {
+                TypeRef::Generalize(v) if !is_enabled => {
                     if self.types.len() != v.types.len() {
                         return Ok(false);
                     }
@@ -167,6 +168,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Gener
                     }
                     Ok(true)
                 }
+
+                TypeRef::Generalize(v) if is_enabled => {
+                    if self.types.len() != v.types.len() {
+                        return Ok(false);
+                    }
+                    for sub in self.types.iter() {
+                        let mut found = false;
+                        for other_sub in v.types.iter() {
+                            // 在模式匹配上下文中, 必须完全匹配
+                            found |= sub.equals(other_sub.as_ref_dispatcher(), &mut inner_ctx)?
+                        }
+                        if !found {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                }
+
                 _ => Ok(false),
             }
         })
@@ -225,22 +244,32 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, super::TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|_| {
-            let mut new_pattern_env = Collector::new_disabled();
-            let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
-                ctx.closure_env,
-                &mut new_pattern_env,
-                ctx.rhs,
-            );
-            for sub in self.types.iter() {
-                // 我们传入 false 是因为generalize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
-                if other.check(sub.as_ref_dispatcher(), &mut inner_ctx)? {
-                    return Ok(true); // 由于不需要匹配子模式,短路返回不会影响正确性
+        if ctx.pattern_env.is_enabled() {
+            // 模式匹配上下文，必须确保遍历所有子类型进行匹配
+            ctx.pattern_env.collect(|pattern_env| {
+                let mut inner_ctx =
+                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+                let mut matched = false;
+                for sub in self.types.iter() {
+                    // 不可以短路,必须匹配所有子模式
+                    matched |= other.check(sub.as_ref_dispatcher(), &mut inner_ctx)?
                 }
-            }
-            Ok(false)
-        })
+                Ok(matched)
+            })
+        } else {
+            // 非模式匹配上下文，任意子类型匹配即可
+            ctx.pattern_env.collect(|pattern_env| {
+                let mut inner_ctx =
+                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+                for sub in self.types.iter() {
+                    // 我们传入 false 是因为generalize是乱序的,它不适用于模式匹配,因为模式匹配的解构是有序的
+                    if other.check(sub.as_ref_dispatcher(), &mut inner_ctx)? {
+                        return Ok(true); // 由于不需要匹配子模式,短路返回不会影响正确性
+                    }
+                }
+                Ok(false)
+            })
+        }
     }
 }
 

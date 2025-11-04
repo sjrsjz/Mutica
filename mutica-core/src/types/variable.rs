@@ -2,7 +2,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, type_bound::TypeBound,
+        TypeRef,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -133,11 +133,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let idx = self.debruijn_index;
         if idx >= 0 {
-            Ok(ctx
-                .param_env
-                .get(idx as usize)
-                .cloned()
-                .unwrap_or(TypeBound::bottom()))
+            ctx.param_env.get(idx as usize).cloned()
         } else {
             ctx.closure_env.get((-1 - idx) as usize).cloned()
         }

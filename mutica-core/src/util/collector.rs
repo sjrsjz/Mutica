@@ -15,6 +15,8 @@ impl<T> Collector<T> {
         }
     }
 
+    /// 声明一个禁用的 Collector，所有操作都将直接生效且不进行收集
+    /// 含义为禁用模式匹配环境
     pub fn new_disabled() -> Self {
         Self { items: None }
     }

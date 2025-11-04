@@ -8,7 +8,9 @@ use crate::{
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
         TypeRef,
     },
-    util::{arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
@@ -93,21 +95,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
-        if ctx.rhs {
+        if ctx.pattern_env.is_enabled() {
+            // 模式匹配上下文，直接穿透到表达式内部进行比较
+            if ctx.rhs {
+                ctx.pattern_env.collect(|pattern_env| {
+                    let mut inner_ctx = TypeCheckContext::new(
+                        ctx.assumptions,
+                        ctx.closure_env,
+                        pattern_env,
+                        ctx.rhs,
+                    );
+                    let (debruijn_index, expr, _) = self.inner.as_ref();
+                    if expr.equals(other, &mut inner_ctx)? {
+                        pattern_env.push((*debruijn_index, other.clone_data()));
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
+                })
+            } else {
+                let (_, expr, _) = self.inner.as_ref();
+                expr.equals(other, ctx)
+            }
+        } else {
+            // 非模式匹配上下文，必须确保模式本身严格相等
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                let (debruijn_index, expr, _) = self.inner.as_ref();
-                if expr.equals(other, &mut inner_ctx)? {
-                    pattern_env.push((*debruijn_index, other.clone_data()));
-                    Ok(true)
-                } else {
-                    Ok(false)
+                match other {
+                    TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                    TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                    TypeRef::Pattern(v) => {
+                        let (debruijn_index, expr, _) = self.inner.as_ref();
+                        let (other_debruijn_index, other_expr, _) = v.inner.as_ref();
+                        if *debruijn_index != *other_debruijn_index {
+                            return Ok(false);
+                        }
+                        expr.equals(other_expr.as_ref_dispatcher(), &mut inner_ctx)
+                    }
+                    _ => Ok(false),
                 }
             })
-        } else {
-            let (_, expr, _) = self.inner.as_ref();
-            expr.equals(other, ctx)
         }
     }
 

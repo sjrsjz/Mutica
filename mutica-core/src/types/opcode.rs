@@ -194,7 +194,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             Opcode::Set.dispatch(), 
                             Tuple::new(vec![place_holder.clone(), Variable::new_debruijn(0)]), 
                             None::<Type<T>>, 
-                            None::<Type<T>>),0)],
+                            None::<Type<T>>), 0, 1)],
                         vec![ClosureEnv::new(Vec::<Type<T>>::new())]
                     );
                     Ok(Invoke::new(arg.clone_data(), place_holder, Some(call_back), None::<Type<_>>))

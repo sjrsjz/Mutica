@@ -1,6 +1,8 @@
 let string_pkg: any = import "lib/string.mu";
-let String::(String: any) = string_pkg;
-let println::(println: any) = string_pkg;
+let {
+    String::(String: any) &
+    println::(println: any)
+} = string_pkg;
 
 let get: any = match | panic;
 let set: any = match | panic;

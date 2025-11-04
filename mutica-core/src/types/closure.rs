@@ -118,20 +118,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
     /// 这个构造器拒绝“空洞的真理”，即保证每个索引下至少有一个类型
     pub fn from_collector(
         collector: &mut Collector<(usize, U)>,
+        pattern_count: usize,
     ) -> Result<Option<Self>, TypeError<U, V>> {
         if collector.is_empty() {
             return Ok(Some(ParamEnv(Vec::new(), PhantomData)));
         }
-        // 计算出最大的索引
-        let max_index = collector
-            .items()
-            .unwrap()
-            .iter()
-            .map(|(index, _)| *index)
-            .max()
-            .unwrap();
-        let mut vec = vec![smallvec::SmallVec::<[U; 8]>::new(); max_index + 1];
+        let mut vec = vec![smallvec::SmallVec::<[U; 8]>::new(); pattern_count];
         for (index, ty) in collector.take_items().unwrap().into_iter() {
+            if index >= pattern_count {
+                return Err(TypeError::UndefinedPatternVariable(index as isize));
+            }
             vec[index].push(ty);
         }
         let mut stabilized_vec = Vec::with_capacity(vec.len());
@@ -219,8 +215,8 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureBranch<U, V> {
 pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
     #[allow(clippy::type_complexity)]
     inner: ArcOpt<(
-        Vec<(ClosureBranch<Type<T>, T>, usize)>, // usize 用于记录分支指向的环境索引
-        Vec<ClosureEnv<Type<T>, T>>,             // 环境列表
+        Vec<(ClosureBranch<Type<T>, T>, usize, usize)>, // 第一个 usize 用于记录分支指向的环境索引， 第二个 usize 用于记录分支的模式共有多少个待匹配变量
+        Vec<ClosureEnv<Type<T>, T>>,                    // 环境列表
         RwLock<ThreeValuedLogic>,
     )>,
 }
@@ -236,7 +232,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Closure<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         let (branches, env, _) = self.inner.as_ref();
-        for (inner, _) in branches.iter() {
+        for (inner, _, _) in branches.iter() {
             inner.collect(queue);
         }
         for e in env.iter() {
@@ -248,7 +244,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Closure<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         let (branches, env, _) = self.inner.as_ref();
-        for (inner, _) in branches.iter() {
+        for (inner, _, _) in branches.iter() {
             inner.upgrade(collected);
         }
         for e in env.iter() {
@@ -298,9 +294,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                         return Ok(false);
                     }
 
-                    for ((self_inner, self_idx), (other_inner, other_idx)) in
-                        self_branches.iter().zip(v_branches.iter())
+                    for (
+                        (self_inner, self_idx, self_pattern_count),
+                        (other_inner, other_idx, other_pattern_count),
+                    ) in self_branches.iter().zip(v_branches.iter())
                     {
+                        if self_pattern_count != other_pattern_count {
+                            return Ok(false);
+                        }
                         // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                         // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
                         // 因此所有的pattern_env都应当被禁用
@@ -367,9 +368,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                         return Ok(false);
                     }
 
-                    for ((self_inner, self_idx), (other_inner, other_idx)) in
-                        self_branches.iter().zip(v_branches.iter())
+                    for (
+                        (self_inner, self_idx, self_pattern_count),
+                        (other_inner, other_idx, other_pattern_count),
+                    ) in self_branches.iter().zip(v_branches.iter())
                     {
+                        if self_pattern_count != other_pattern_count {
+                            return Ok(false);
+                        }
                         // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                         // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
                         // 因此所有的pattern_env都应当被禁用
@@ -427,7 +433,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 .fold(ThreeValuedLogic::True, |a, b| a & b);
             let mut is_branches_nf = branches
                 .iter()
-                .map(|(inner, _)| inner.pattern.is_normal_form())
+                .map(|(inner, _, _)| inner.pattern.is_normal_form())
                 .fold(ThreeValuedLogic::True, |a, b| a & b);
             // 化简env
             let reduced_env = if let ThreeValuedLogic::True = is_env_nf {
@@ -454,7 +460,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             } else {
                 let result = branches
                     .into_iter()
-                    .map(|(inner, closure_idx)| {
+                    .map(|(inner, closure_idx, pattern_count)| {
                         inner.pattern.reduce(ctx).map(|reduced_pattern| {
                             (
                                 ClosureBranch {
@@ -463,12 +469,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                                     _pantom: PhantomData,
                                 },
                                 closure_idx,
+                                pattern_count,
                             )
                         })
                     })
                     .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
                 is_branches_nf = ThreeValuedLogic::True;
-                for (inner, _) in result.iter() {
+                for (inner, _, _) in result.iter() {
                     is_branches_nf &= inner.pattern.is_normal_form();
                 }
                 result
@@ -496,9 +503,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let mut reduced_branches = Vec::with_capacity(branches.len());
-                for (inner, closure_idx) in branches.iter() {
+                for (inner, closure_idx, pattern_count) in branches.iter() {
                     let reduced_pattern = inner.pattern.clone().reduce(ctx)?;
-                    reduced_branches.push((reduced_pattern, inner.expr.clone(), *closure_idx));
+                    reduced_branches.push((
+                        reduced_pattern,
+                        inner.expr.clone(),
+                        *closure_idx,
+                        *pattern_count,
+                    ));
                 }
                 Ok(Closure::new::<Type<T>, Type<T>>(
                     reduced_branches,
@@ -516,7 +528,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         let empty_closure_env = ClosureEnv::new(Vec::<Type<T>>::new());
         let mut matched_pattern = Collector::new();
         let mut assumptions_temp = smallvec::smallvec![];
-        for (inner, closure_idx) in branches.iter() {
+        for (inner, closure_idx, pattern_count) in branches.iter() {
             matched_pattern.clear();
             assumptions_temp.clear();
             // 创建用于模式匹配的类型检查上下文
@@ -530,7 +542,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             if ctx
                 .arg
                 .check(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
-                && let Some(param_env) = ParamEnv::from_collector(&mut matched_pattern)?
+                && let Some(param_env) =
+                    ParamEnv::from_collector(&mut matched_pattern, *pattern_count)?
             {
                 // 模式匹配成功，构造用于表达式求值的上下文
                 if *closure_idx >= env.len() {
@@ -561,7 +574,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
         let (branches, env, is_nf) = self.inner.as_ref();
-        for (inner, _) in branches.iter() {
+        for (inner, _, _) in branches.iter() {
             inner.pattern.recalculate_normal_form(cycle_detector);
         }
         for e in env.iter() {
@@ -570,7 +583,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             }
         }
         let mut new_nf = ThreeValuedLogic::True;
-        for (inner, _) in branches.iter() {
+        for (inner, _, _) in branches.iter() {
             new_nf &= inner.pattern.is_normal_form();
             // expr_ty 是惰性的, 不影响 is_nf
         }
@@ -592,7 +605,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
             repr.push_str(&env.represent(path));
             repr.push('>');
         }
-        for (inner, closure_idx) in branches.iter() {
+        for (inner, closure_idx, _) in branches.iter() {
             repr.push_str(&format!(" | c.{} ", closure_idx));
             repr.push_str(&inner.pattern.represent(path));
             repr.push_str(" => ");
@@ -605,8 +618,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
     #[allow(clippy::new_ret_no_self)]
+    /// 构造闭包类型
+    /// `branches` 参数格式: (pattern, expr, closure_env_index, pattern_variable_count)
+    /// `closure_env` 参数格式: 捕获环境列表
     pub fn new<U, V>(
-        branches: Vec<(U, V, usize)>,
+        branches: Vec<(U, V, usize, usize)>,
         closure_env: Vec<ClosureEnv<Type<T>, T>>,
     ) -> Type<T>
     where
@@ -616,7 +632,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         let mut is_nf = ThreeValuedLogic::True;
         let branches_vec = branches
             .into_iter()
-            .map(|(pattern, expr, closure_idx)| {
+            .map(|(pattern, expr, closure_idx, pattern_count)| {
                 let pattern_ty = pattern.into_dispatcher();
                 let expr_ty = expr.into_dispatcher();
                 is_nf &= pattern_ty.is_normal_form();
@@ -628,6 +644,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
                         _pantom: PhantomData,
                     },
                     closure_idx,
+                    pattern_count,
                 )
             })
             .collect::<Vec<_>>();
@@ -645,7 +662,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         &self.inner.as_ref().1
     }
 
-    pub fn branches(&self) -> &[(ClosureBranch<Type<T>, T>, usize)] {
+    #[allow(clippy::type_complexity)]
+    pub fn branches(&self) -> &[(ClosureBranch<Type<T>, T>, usize, usize)] {
         &self.inner.as_ref().0
     }
 
@@ -656,7 +674,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         new_branches.extend_from_slice(other.branches());
         // 修正环境索引
         let offset = self.env().len();
-        for (_, closure_idx) in new_branches.iter_mut().skip(self.branches().len()) {
+        for (_, closure_idx, _) in new_branches.iter_mut().skip(self.branches().len()) {
             *closure_idx += offset;
         }
         let is_nf = self.is_normal_form() & other.is_normal_form();
