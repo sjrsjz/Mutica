@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -8,36 +8,34 @@ use crate::{
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
         TypeRef,
     },
-    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
 
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
 // 但是为了实现的简洁性，这里就先分开了
 pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
-    is_nf: Arc<RwLock<ThreeValuedLogic>>,
-    debruijn_index: usize,
-    expr: Arc<Type<T>>,
+    inner: ArcOpt<(usize, Type<T>, RwLock<ThreeValuedLogic>)>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Pattern<T> {
     fn clone(&self) -> Self {
         Self {
-            is_nf: self.is_nf.clone(),
-            debruijn_index: self.debruijn_index,
-            expr: self.expr.clone(),
+            inner: self.inner.clone(),
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Pattern<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        self.expr.collect(queue);
+        let (_, expr, _) = self.inner.as_ref();
+        expr.collect(queue);
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Pattern<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        self.expr.upgrade(collected);
+        let (_, expr, _) = self.inner.as_ref();
+        expr.upgrade(collected);
     }
 }
 
@@ -46,7 +44,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
-        format!("λ.{} : {}", self.debruijn_index, self.expr.represent(path))
+        let (debruijn_index, expr, _) = self.inner.as_ref();
+        format!("λ.{} : {}", debruijn_index, expr.represent(path))
     }
 }
 
@@ -75,15 +74,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                if self.expr.check(other, &mut inner_ctx)? {
-                    pattern_env.push((self.debruijn_index, other.clone_data()));
+                let (debruijn_index, expr, _) = self.inner.as_ref();
+                if expr.check(other, &mut inner_ctx)? {
+                    pattern_env.push((*debruijn_index, other.clone_data()));
                     Ok(true)
                 } else {
                     Ok(false)
                 }
             })
         } else {
-            self.expr.check(other, ctx)
+            let (_, expr, _) = self.inner.as_ref();
+            expr.check(other, ctx)
         }
     }
 
@@ -96,15 +97,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                if self.expr.equals(other, &mut inner_ctx)? {
-                    pattern_env.push((self.debruijn_index, other.clone_data()));
+                let (debruijn_index, expr, _) = self.inner.as_ref();
+                if expr.equals(other, &mut inner_ctx)? {
+                    pattern_env.push((*debruijn_index, other.clone_data()));
                     Ok(true)
                 } else {
                     Ok(false)
                 }
             })
         } else {
-            self.expr.equals(other, ctx)
+            let (_, expr, _) = self.inner.as_ref();
+            expr.equals(other, ctx)
         }
     }
 
@@ -116,13 +119,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
     }
 
     fn reduce(
-        self,
+        mut self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(Self::new(
-            self.debruijn_index,
-            self.expr.as_ref().clone().reduce(ctx)?,
-        ))
+        match self.inner.modify(|(debruijn_index, expr, is_nf)| {
+            let new_expr = expr.reduce(ctx)?;
+            let new_is_nf = new_expr.is_normal_form();
+            if let Ok(mut nf_lock) = is_nf.write() {
+                *nf_lock = new_is_nf;
+            }
+            Ok((debruijn_index, new_expr, is_nf))
+        })? {
+            Some(()) => Ok(self.dispatch()),
+            None => {
+                let (debruijn_index, expr, _) = self.inner.as_ref();
+                let new_expr = expr.clone().reduce(ctx)?;
+                Ok(Self::new(*debruijn_index, new_expr))
+            }
+        }
     }
 
     fn tagged_ptr(&self) -> super::TaggedPtr<()> {
@@ -130,16 +144,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self.is_nf.read() {
+        let (_, _, is_nf) = self.inner.as_ref();
+        match is_nf.read() {
             Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
 
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        self.expr.recalculate_normal_form(cycle_detector);
-        let new_nf = self.expr.is_normal_form();
-        if let Ok(mut nf_lock) = self.is_nf.write() {
+        let (_, expr, is_nf) = self.inner.as_ref();
+        expr.recalculate_normal_form(cycle_detector);
+        let new_nf = expr.is_normal_form();
+        if let Ok(mut nf_lock) = is_nf.write() {
             *nf_lock = new_nf;
         }
     }
@@ -153,13 +169,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
         if ctx.rhs {
-            other.check(self.expr.as_ref_dispatcher(), ctx)
+            let (_, expr, _) = self.inner.as_ref();
+            other.check(expr.as_ref_dispatcher(), ctx)
         } else {
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                if other.check(self.expr.as_ref_dispatcher(), &mut inner_ctx)? {
-                    pattern_env.push((self.debruijn_index, other.clone_data()));
+                let (debruijn_index, expr, _) = self.inner.as_ref();
+                if other.check(expr.as_ref_dispatcher(), &mut inner_ctx)? {
+                    pattern_env.push((*debruijn_index, other.clone_data()));
                     Ok(true)
                 } else {
                     Ok(false)
@@ -175,13 +193,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<bool, TypeError<Type<T>, T>> {
         if ctx.rhs {
-            other.equals(self.expr.as_ref_dispatcher(), ctx)
+            let (_, expr, _) = self.inner.as_ref();
+            other.equals(expr.as_ref_dispatcher(), ctx)
         } else {
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                if other.equals(self.expr.as_ref_dispatcher(), &mut inner_ctx)? {
-                    pattern_env.push((self.debruijn_index, other.clone_data()));
+                let (debruijn_index, expr, _) = self.inner.as_ref();
+                if other.equals(expr.as_ref_dispatcher(), &mut inner_ctx)? {
+                    pattern_env.push((*debruijn_index, other.clone_data()));
                     Ok(true)
                 } else {
                     Ok(false)
@@ -197,17 +217,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<T> {
         let expr = expr.into_dispatcher();
         let is_nf = expr.is_normal_form();
         Self {
-            is_nf: Arc::new(RwLock::new(is_nf)),
-            debruijn_index,
-            expr: Arc::new(expr),
+            inner: ArcOpt::new((debruijn_index, expr, RwLock::new(is_nf))),
         }
         .dispatch()
     }
     pub fn debruijn_index(&self) -> usize {
-        self.debruijn_index
+        self.inner.as_ref().0
     }
 
     pub fn expr(&self) -> &Type<T> {
-        &self.expr
+        &self.inner.as_ref().1
     }
 }

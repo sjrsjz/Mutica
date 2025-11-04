@@ -1,8 +1,4 @@
-use std::{
-    marker::PhantomData,
-    ops::Deref,
-    sync::{Arc, RwLock},
-};
+use std::{marker::PhantomData, ops::Deref, sync::RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -13,7 +9,7 @@ use crate::{
         TypeRef, type_bound::TypeBound,
     },
     util::{
-        collector::Collector, cycle_detector::FastCycleDetector,
+        arc_opt::ArcOpt, collector::Collector, cycle_detector::FastCycleDetector,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -93,6 +89,15 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureEnv<U, V> {
             result &= ty.is_normal_form();
         }
         result
+    }
+}
+
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> IntoIterator for ClosureEnv<U, V> {
+    type Item = U;
+    type IntoIter = std::vec::IntoIter<U>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
@@ -213,40 +218,41 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureBranch<U, V> {
 
 pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
     #[allow(clippy::type_complexity)]
-    inner: Arc<(
+    inner: ArcOpt<(
         Vec<(ClosureBranch<Type<T>, T>, usize)>, // usize 用于记录分支指向的环境索引
         Vec<ClosureEnv<Type<T>, T>>,             // 环境列表
+        RwLock<ThreeValuedLogic>,
     )>,
-    is_nf: Arc<RwLock<ThreeValuedLogic>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Closure<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            is_nf: self.is_nf.clone(),
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        for (inner, _) in self.inner.0.iter() {
+        let (branches, env, _) = self.inner.as_ref();
+        for (inner, _) in branches.iter() {
             inner.collect(queue);
         }
-        for env in self.inner.1.iter() {
-            env.collect(queue);
+        for e in env.iter() {
+            e.collect(queue);
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Closure<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        for (inner, _) in self.inner.0.iter() {
+        let (branches, env, _) = self.inner.as_ref();
+        for (inner, _) in branches.iter() {
             inner.upgrade(collected);
         }
-        for env in self.inner.1.iter() {
-            env.upgrade(collected);
+        for e in env.iter() {
+            e.upgrade(collected);
         }
     }
 }
@@ -285,25 +291,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Closure(v) => {
-                    if self.inner.0.len() != v.inner.0.len() {
+                    let (self_branches, self_env, _) = self.inner.as_ref();
+                    let (v_branches, v_env, _) = v.inner.as_ref();
+
+                    if self_branches.len() != v_branches.len() {
                         return Ok(false);
                     }
 
                     for ((self_inner, self_idx), (other_inner, other_idx)) in
-                        self.inner.0.iter().zip(v.inner.0.iter())
+                        self_branches.iter().zip(v_branches.iter())
                     {
                         // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                         // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
                         // 因此所有的pattern_env都应当被禁用
 
                         // 创建用于表达式比较的上下文
-                        if *self_idx >= self.inner.1.len() || *other_idx >= v.inner.1.len() {
+                        if *self_idx >= self_env.len() || *other_idx >= v_env.len() {
                             panic!("CRITICAL: Closure branch environment index out of bounds");
                         }
                         let mut pattern_env_disabled = Collector::new_disabled();
                         let mut pattern_ctx = TypeCheckContext::new(
                             ctx.assumptions,
-                            (&self.inner.1[*self_idx], &v.inner.1[*other_idx]),
+                            (&self_env[*self_idx], &v_env[*other_idx]),
                             &mut pattern_env_disabled,
                             ctx.rhs,
                         );
@@ -351,25 +360,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Closure(v) => {
-                    if self.inner.0.len() != v.inner.0.len() {
+                    let (self_branches, self_env, _) = self.inner.as_ref();
+                    let (v_branches, v_env, _) = v.inner.as_ref();
+
+                    if self_branches.len() != v_branches.len() {
                         return Ok(false);
                     }
 
                     for ((self_inner, self_idx), (other_inner, other_idx)) in
-                        self.inner.0.iter().zip(v.inner.0.iter())
+                        self_branches.iter().zip(v_branches.iter())
                     {
                         // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                         // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
                         // 因此所有的pattern_env都应当被禁用
 
                         // 创建用于表达式比较的上下文
-                        if *self_idx >= self.inner.1.len() || *other_idx >= v.inner.1.len() {
+                        if *self_idx >= self_env.len() || *other_idx >= v_env.len() {
                             panic!("CRITICAL: Closure branch environment index out of bounds");
                         }
                         let mut pattern_env_disabled = Collector::new_disabled();
                         let mut pattern_ctx = TypeCheckContext::new(
                             ctx.assumptions,
-                            (&self.inner.1[*self_idx], &v.inner.1[*other_idx]),
+                            (&self_env[*self_idx], &v_env[*other_idx]),
                             &mut pattern_env_disabled,
                             ctx.rhs,
                         );
@@ -405,40 +417,84 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     }
 
     fn reduce(
-        self,
+        mut self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        // 化简env
-        let reduced_env = self
-            .env()
-            .iter()
-            .map(|env| {
-                env.iter()
-                    .map(|ty| ty.clone().reduce(ctx))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(ClosureEnv::new)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut reduced_branches = Vec::with_capacity(self.inner.0.len());
+        match self.inner.modify(|(branches, env, is_nf)| {
+            // 化简env
+            let reduced_env = env
+                .into_iter()
+                .map(|e: ClosureEnv<Type<T>, T>| {
+                    e.into_iter()
+                        .map(|ty| ty.reduce(ctx))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(ClosureEnv::new)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
-        for (inner, closure_idx) in self.inner.0.iter() {
-            let reduced_pattern = inner.pattern.clone().reduce(ctx)?;
-            reduced_branches.push((reduced_pattern, inner.expr.clone(), *closure_idx)); // expr 是惰性的,不需要立即化简
+            let mut reduced_branches = Vec::with_capacity(branches.len());
+            for (inner, closure_idx) in branches.into_iter() {
+                let reduced_pattern = inner.pattern.reduce(ctx)?;
+                reduced_branches.push((
+                    ClosureBranch {
+                        pattern: reduced_pattern,
+                        expr: inner.expr,
+                        _pantom: PhantomData,
+                    },
+                    closure_idx,
+                ));
+            }
+
+            // 重新计算 is_nf
+            let mut new_nf = ThreeValuedLogic::True;
+            for (inner, _) in reduced_branches.iter() {
+                new_nf &= inner.pattern.is_normal_form();
+            }
+            for e in reduced_env.iter() {
+                new_nf &= e.all_nf();
+            }
+            if let Ok(mut nf_lock) = is_nf.write() {
+                *nf_lock = new_nf;
+            }
+
+            Ok((reduced_branches, reduced_env, is_nf))
+        })? {
+            Some(()) => Ok(self.dispatch()),
+            None => {
+                let (branches, env, _) = self.inner.as_ref();
+                // 化简env
+                let reduced_env = env
+                    .iter()
+                    .map(|e| {
+                        e.iter()
+                            .map(|ty| ty.clone().reduce(ctx))
+                            .collect::<Result<Vec<_>, _>>()
+                            .map(ClosureEnv::new)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let mut reduced_branches = Vec::with_capacity(branches.len());
+                for (inner, closure_idx) in branches.iter() {
+                    let reduced_pattern = inner.pattern.clone().reduce(ctx)?;
+                    reduced_branches.push((reduced_pattern, inner.expr.clone(), *closure_idx));
+                }
+                Ok(Closure::new::<Type<T>, Type<T>>(
+                    reduced_branches,
+                    reduced_env,
+                ))
+            }
         }
-        Ok(Closure::new::<Type<T>, Type<T>>(
-            reduced_branches,
-            reduced_env,
-        ))
     }
 
     fn invoke(
         &self,
         ctx: &mut InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        let (branches, env, _) = self.inner.as_ref();
         let empty_closure_env = ClosureEnv::new(Vec::<Type<T>>::new());
         let mut matched_pattern = Collector::new();
         let mut assumptions_temp = smallvec::smallvec![];
-        for (inner, closure_idx) in self.inner.0.iter() {
+        for (inner, closure_idx) in branches.iter() {
             matched_pattern.clear();
             assumptions_temp.clear();
             // 创建用于模式匹配的类型检查上下文
@@ -455,11 +511,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 && let Some(param_env) = ParamEnv::from_collector(&mut matched_pattern)?
             {
                 // 模式匹配成功，构造用于表达式求值的上下文
-                if *closure_idx >= self.inner.1.len() {
+                if *closure_idx >= env.len() {
                     panic!("CRITICAL: Closure branch environment index out of bounds");
                 }
                 let mut reduce_ctx = ReductionContext::new(
-                    &self.env()[*closure_idx],
+                    &env[*closure_idx],
                     &param_env,
                     ctx.rec_assumptions,
                     ctx.gc,
@@ -474,30 +530,32 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self.is_nf.read() {
+        let (_, _, is_nf) = self.inner.as_ref();
+        match is_nf.read() {
             Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
 
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        for (inner, _) in self.inner.0.iter() {
+        let (branches, env, is_nf) = self.inner.as_ref();
+        for (inner, _) in branches.iter() {
             inner.pattern.recalculate_normal_form(cycle_detector);
         }
-        for env in self.inner.1.iter() {
-            for ty in env.iter() {
+        for e in env.iter() {
+            for ty in e.iter() {
                 ty.recalculate_normal_form(cycle_detector);
             }
         }
         let mut new_nf = ThreeValuedLogic::True;
-        for (inner, _) in self.inner.0.iter() {
+        for (inner, _) in branches.iter() {
             new_nf &= inner.pattern.is_normal_form();
             // expr_ty 是惰性的, 不影响 is_nf
         }
-        for env in self.inner.1.iter() {
-            new_nf &= env.all_nf();
+        for e in env.iter() {
+            new_nf &= e.all_nf();
         }
-        if let Ok(mut nf_lock) = self.is_nf.write() {
+        if let Ok(mut nf_lock) = is_nf.write() {
             *nf_lock = new_nf;
         }
     }
@@ -505,13 +563,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
     fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+        let (branches, env, _) = self.inner.as_ref();
         let mut repr = String::from("match");
-        if !self.inner.1.is_empty() {
+        if !env.is_empty() {
             repr.push_str(" capture<");
-            repr.push_str(&self.inner.1.represent(path));
+            repr.push_str(&env.represent(path));
             repr.push('>');
         }
-        for (inner, closure_idx) in self.inner.0.iter() {
+        for (inner, closure_idx) in branches.iter() {
             repr.push_str(&format!(" | c.{} ", closure_idx));
             repr.push_str(&inner.pattern.represent(path));
             repr.push_str(" => ");
@@ -533,43 +592,39 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         V: AsDispatcher<Type<T>, T>,
     {
         let mut is_nf = ThreeValuedLogic::True;
-        let inner = Arc::from((
-            branches
-                .into_iter()
-                .map(|(pattern, expr, closure_idx)| {
-                    let pattern_ty = pattern.into_dispatcher();
-                    let expr_ty = expr.into_dispatcher();
-                    is_nf &= pattern_ty.is_normal_form();
-                    // expr_ty 是惰性的, 不影响 is_nf
-                    (
-                        ClosureBranch {
-                            pattern: pattern_ty,
-                            expr: expr_ty,
-                            _pantom: PhantomData,
-                        },
-                        closure_idx,
-                    )
-                })
-                .collect::<Vec<_>>(),
-            {
-                for env in closure_env.iter() {
-                    is_nf &= env.all_nf();
-                }
-                closure_env
-            },
-        ));
+        let branches_vec = branches
+            .into_iter()
+            .map(|(pattern, expr, closure_idx)| {
+                let pattern_ty = pattern.into_dispatcher();
+                let expr_ty = expr.into_dispatcher();
+                is_nf &= pattern_ty.is_normal_form();
+                // expr_ty 是惰性的, 不影响 is_nf
+                (
+                    ClosureBranch {
+                        pattern: pattern_ty,
+                        expr: expr_ty,
+                        _pantom: PhantomData,
+                    },
+                    closure_idx,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for env in closure_env.iter() {
+            is_nf &= env.all_nf();
+        }
+
         Type::Closure(Closure {
-            inner,
-            is_nf: Arc::new(RwLock::new(is_nf)),
+            inner: ArcOpt::new((branches_vec, closure_env, RwLock::new(is_nf))),
         })
     }
 
     pub fn env(&self) -> &[ClosureEnv<Type<T>, T>] {
-        &self.inner.1
+        &self.inner.as_ref().1
     }
 
     pub fn branches(&self) -> &[(ClosureBranch<Type<T>, T>, usize)] {
-        &self.inner.0
+        &self.inner.as_ref().0
     }
 
     pub fn impls(&self, other: &Self) -> Type<T> {
@@ -582,9 +637,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         for (_, closure_idx) in new_branches.iter_mut().skip(self.branches().len()) {
             *closure_idx += offset;
         }
+        let is_nf = self.is_normal_form() & other.is_normal_form();
         Closure {
-            inner: Arc::new((new_branches, new_closure_env)),
-            is_nf: Arc::new(RwLock::new(self.is_normal_form() & other.is_normal_form())),
+            inner: ArcOpt::new((new_branches, new_closure_env, RwLock::new(is_nf))),
         }
         .into_dispatcher()
     }

@@ -3,3 +3,4 @@ pub mod collector;
 pub mod cycle_detector;
 pub mod rootstack;
 pub mod three_valued_logic;
+pub mod arc_opt;

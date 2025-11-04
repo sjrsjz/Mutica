@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -8,7 +8,9 @@ use crate::{
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
         TypeRef, type_bound::TypeBound,
     },
-    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub enum InvokeCountinuationStyle<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -39,30 +41,36 @@ pub struct Invoke<T: GcAllocObject<T, Inner = Type<T>>> {
     // 0: function
     // 1: argument
     // 2: continuation
-    inner: Arc<(Type<T>, Type<T>, InvokeCountinuationStyle<T>)>,
-    is_nf: Arc<RwLock<ThreeValuedLogic>>,
+    // 3: is_nf
+    #[allow(clippy::type_complexity)]
+    inner: ArcOpt<(
+        Type<T>,
+        Type<T>,
+        InvokeCountinuationStyle<T>,
+        RwLock<ThreeValuedLogic>,
+    )>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Invoke<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            is_nf: self.is_nf.clone(),
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Invoke<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        self.inner.0.collect(queue);
-        self.inner.1.collect(queue);
-        match self.inner.2 {
+        let (func, arg, cont_style, _) = self.inner.as_ref();
+        func.collect(queue);
+        arg.collect(queue);
+        match cont_style {
             InvokeCountinuationStyle::TailCall => {}
-            InvokeCountinuationStyle::WithContinuation(ref cont)
-            | InvokeCountinuationStyle::WithPerformHandler(ref cont) => {
+            InvokeCountinuationStyle::WithContinuation(cont)
+            | InvokeCountinuationStyle::WithPerformHandler(cont) => {
                 cont.collect(queue);
             }
-            InvokeCountinuationStyle::WithBoth(ref cont1, ref cont2) => {
+            InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
                 cont1.collect(queue);
                 cont2.collect(queue);
             }
@@ -72,15 +80,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Invoke<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Invoke<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        self.inner.0.upgrade(collected);
-        self.inner.1.upgrade(collected);
-        match self.inner.2 {
+        let (func, arg, cont_style, _) = self.inner.as_ref();
+        func.upgrade(collected);
+        arg.upgrade(collected);
+        match cont_style {
             InvokeCountinuationStyle::TailCall => {}
-            InvokeCountinuationStyle::WithContinuation(ref cont)
-            | InvokeCountinuationStyle::WithPerformHandler(ref cont) => {
+            InvokeCountinuationStyle::WithContinuation(cont)
+            | InvokeCountinuationStyle::WithPerformHandler(cont) => {
                 cont.upgrade(collected);
             }
-            InvokeCountinuationStyle::WithBoth(ref cont1, ref cont2) => {
+            InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
                 cont1.upgrade(collected);
                 cont2.upgrade(collected);
             }
@@ -122,21 +131,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
 
                 TypeRef::Bound(TypeBound::Top) => Ok(true),
                 TypeRef::Invoke(v) => {
-                    let func_eq = self
-                        .inner
-                        .0
-                        .check(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
+                    let (self_func, self_arg, self_cont_style, _) = self.inner.as_ref();
+                    let (v_func, v_arg, v_cont_style, _) = v.inner.as_ref();
+
+                    let func_eq = self_func.check(v_func.as_ref_dispatcher(), &mut inner_ctx)?;
                     if !func_eq {
                         return Ok(false);
                     }
-                    let arg_eq = self
-                        .inner
-                        .1
-                        .check(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
+                    let arg_eq = self_arg.check(v_arg.as_ref_dispatcher(), &mut inner_ctx)?;
                     if !arg_eq {
                         return Ok(false);
                     }
-                    let cont_eq = match (&self.inner.2, &v.inner.2) {
+                    let cont_eq = match (self_cont_style, v_cont_style) {
                         (
                             InvokeCountinuationStyle::TailCall,
                             InvokeCountinuationStyle::TailCall,
@@ -188,21 +194,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Invoke(v) => {
-                    let func_eq = self
-                        .inner
-                        .0
-                        .equals(v.inner.0.as_ref_dispatcher(), &mut inner_ctx)?;
+                    let (self_func, self_arg, self_cont_style, _) = self.inner.as_ref();
+                    let (v_func, v_arg, v_cont_style, _) = v.inner.as_ref();
+
+                    let func_eq = self_func.equals(v_func.as_ref_dispatcher(), &mut inner_ctx)?;
                     if !func_eq {
                         return Ok(false);
                     }
-                    let arg_eq = self
-                        .inner
-                        .1
-                        .equals(v.inner.1.as_ref_dispatcher(), &mut inner_ctx)?;
+                    let arg_eq = self_arg.equals(v_arg.as_ref_dispatcher(), &mut inner_ctx)?;
                     if !arg_eq {
                         return Ok(false);
                     }
-                    let cont_eq = match (&self.inner.2, &v.inner.2) {
+                    let cont_eq = match (self_cont_style, v_cont_style) {
                         (
                             InvokeCountinuationStyle::TailCall,
                             InvokeCountinuationStyle::TailCall,
@@ -242,19 +245,58 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
     }
 
     fn reduce(
-        self,
+        mut self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        Ok(Self::new(
-            self.inner.0.clone().reduce(ctx)?,
-            self.inner.1.clone().reduce(ctx)?,
-            self.continuation()
-                .map(|c| c.clone().reduce(ctx))
-                .transpose()?,
-            self.perform_handler()
-                .map(|c| c.clone().reduce(ctx))
-                .transpose()?,
-        ))
+        match self.inner.modify(|(func, arg, cont_style, is_nf)| {
+            let new_func = func.reduce(ctx)?;
+            let new_arg = arg.reduce(ctx)?;
+
+            let new_cont_style = match cont_style {
+                InvokeCountinuationStyle::TailCall => InvokeCountinuationStyle::TailCall,
+                InvokeCountinuationStyle::WithContinuation(cont) => {
+                    InvokeCountinuationStyle::WithContinuation(cont.reduce(ctx)?)
+                }
+                InvokeCountinuationStyle::WithPerformHandler(cont) => {
+                    InvokeCountinuationStyle::WithPerformHandler(cont.reduce(ctx)?)
+                }
+                InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
+                    InvokeCountinuationStyle::WithBoth(cont1.reduce(ctx)?, cont2.reduce(ctx)?)
+                }
+            };
+
+            let new_is_nf = new_func.is_normal_form()
+                & new_arg.is_normal_form()
+                & match &new_cont_style {
+                    InvokeCountinuationStyle::TailCall => ThreeValuedLogic::True,
+                    InvokeCountinuationStyle::WithContinuation(cont)
+                    | InvokeCountinuationStyle::WithPerformHandler(cont) => cont.is_normal_form(),
+                    InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
+                        cont1.is_normal_form() & cont2.is_normal_form()
+                    }
+                };
+
+            if let Ok(mut nf_lock) = is_nf.write() {
+                *nf_lock = new_is_nf;
+            }
+
+            Ok((new_func, new_arg, new_cont_style, is_nf))
+        })? {
+            Some(()) => Ok(self.dispatch()),
+            None => {
+                let (func, arg, _, _) = self.inner.as_ref();
+                Ok(Self::new(
+                    func.clone().reduce(ctx)?,
+                    arg.clone().reduce(ctx)?,
+                    self.continuation()
+                        .map(|c| c.clone().reduce(ctx))
+                        .transpose()?,
+                    self.perform_handler()
+                        .map(|c| c.clone().reduce(ctx))
+                        .transpose()?,
+                ))
+            }
+        }
     }
 
     fn invoke(
@@ -265,16 +307,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self.is_nf.read() {
+        let (_, _, _, is_nf) = self.inner.as_ref();
+        match is_nf.read() {
             Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
 
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        self.inner.0.recalculate_normal_form(cycle_detector);
-        self.inner.1.recalculate_normal_form(cycle_detector);
-        match &self.inner.2 {
+        let (func, arg, cont_style, is_nf) = self.inner.as_ref();
+        func.recalculate_normal_form(cycle_detector);
+        arg.recalculate_normal_form(cycle_detector);
+        match cont_style {
             InvokeCountinuationStyle::TailCall => {}
             InvokeCountinuationStyle::WithContinuation(cont)
             | InvokeCountinuationStyle::WithPerformHandler(cont) => {
@@ -285,9 +329,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 cont2.recalculate_normal_form(cycle_detector);
             }
         }
-        let new_nf = self.inner.0.is_normal_form()
-            & self.inner.1.is_normal_form()
-            & match &self.inner.2 {
+        let new_nf = func.is_normal_form()
+            & arg.is_normal_form()
+            & match cont_style {
                 InvokeCountinuationStyle::TailCall => ThreeValuedLogic::True,
                 InvokeCountinuationStyle::WithContinuation(cont)
                 | InvokeCountinuationStyle::WithPerformHandler(cont) => cont.is_normal_form(),
@@ -295,7 +339,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                     cont1.is_normal_form() & cont2.is_normal_form()
                 }
             };
-        if let Ok(mut nf_lock) = self.is_nf.write() {
+        if let Ok(mut nf_lock) = is_nf.write() {
             *nf_lock = new_nf;
         }
     }
@@ -303,9 +347,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
     fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        let func_repr = self.inner.0.represent(path);
-        let arg_repr = self.inner.1.represent(path);
-        let cont_repr = match &self.inner.2 {
+        let (func, arg, cont_style, _) = self.inner.as_ref();
+        let func_repr = func.represent(path);
+        let arg_repr = arg.represent(path);
+        let cont_repr = match cont_style {
             InvokeCountinuationStyle::TailCall => "tail".to_string(),
             InvokeCountinuationStyle::WithContinuation(cont) => {
                 format!("cps({})", cont.represent(path))
@@ -356,24 +401,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
             (Some(cont1), Some(cont2)) => InvokeCountinuationStyle::WithBoth(cont1, cont2),
         };
 
-        let inner = Arc::new((func, arg, continuation_style));
         Self {
-            inner,
-            is_nf: Arc::new(RwLock::new(all_nf)),
+            inner: ArcOpt::new((func, arg, continuation_style, RwLock::new(all_nf))),
         }
         .dispatch()
     }
 
     pub fn func(&self) -> &Type<T> {
-        &self.inner.0
+        &self.inner.as_ref().0
     }
 
     pub fn arg(&self) -> &Type<T> {
-        &self.inner.1
+        &self.inner.as_ref().1
     }
 
     pub fn continuation(&self) -> Option<&Type<T>> {
-        match &self.inner.2 {
+        match &self.inner.as_ref().2 {
             InvokeCountinuationStyle::TailCall
             | InvokeCountinuationStyle::WithPerformHandler(_) => None,
             InvokeCountinuationStyle::WithBoth(cont, _)
@@ -382,7 +425,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
     }
 
     pub fn perform_handler(&self) -> Option<&Type<T>> {
-        match &self.inner.2 {
+        match &self.inner.as_ref().2 {
             InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::WithContinuation(_) => {
                 None
             }
@@ -392,6 +435,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
     }
 
     pub fn continuation_style(&self) -> &InvokeCountinuationStyle<T> {
-        &self.inner.2
+        &self.inner.as_ref().2
     }
 }
