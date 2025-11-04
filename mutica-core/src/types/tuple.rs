@@ -1,3 +1,4 @@
+use core::panic;
 use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};

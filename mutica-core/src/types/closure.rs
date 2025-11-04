@@ -421,43 +421,62 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.inner.modify(|(branches, env, is_nf)| {
+            let mut is_env_nf = env
+                .iter()
+                .map(|e| e.all_nf())
+                .fold(ThreeValuedLogic::True, |a, b| a & b);
+            let mut is_branches_nf = branches
+                .iter()
+                .map(|(inner, _)| inner.pattern.is_normal_form())
+                .fold(ThreeValuedLogic::True, |a, b| a & b);
             // 化简env
-            let reduced_env = env
-                .into_iter()
-                .map(|e: ClosureEnv<Type<T>, T>| {
-                    e.into_iter()
-                        .map(|ty| ty.reduce(ctx))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map(ClosureEnv::new)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-
-            let reduced_branches = branches
-                .into_iter()
-                .map(|(inner, closure_idx)| {
-                    inner.pattern.reduce(ctx).map(|reduced_pattern| {
-                        (
-                            ClosureBranch {
-                                pattern: reduced_pattern,
-                                expr: inner.expr,
-                                _pantom: PhantomData,
-                            },
-                            closure_idx,
-                        )
+            let reduced_env = if let ThreeValuedLogic::True = is_env_nf {
+                env
+            } else {
+                let result = env
+                    .into_iter()
+                    .map(|e: ClosureEnv<Type<T>, T>| {
+                        e.into_iter()
+                            .map(|ty| ty.reduce(ctx))
+                            .collect::<Result<Vec<_>, _>>()
+                            .map(ClosureEnv::new)
                     })
-                })
-                .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
+                    .collect::<Result<Vec<_>, _>>()?;
+                is_env_nf = ThreeValuedLogic::True;
+                for e in result.iter() {
+                    is_env_nf &= e.all_nf();
+                }
+                result
+            };
+
+            let reduced_branches = if let ThreeValuedLogic::True = is_branches_nf {
+                branches
+            } else {
+                let result = branches
+                    .into_iter()
+                    .map(|(inner, closure_idx)| {
+                        inner.pattern.reduce(ctx).map(|reduced_pattern| {
+                            (
+                                ClosureBranch {
+                                    pattern: reduced_pattern,
+                                    expr: inner.expr,
+                                    _pantom: PhantomData,
+                                },
+                                closure_idx,
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
+                is_branches_nf = ThreeValuedLogic::True;
+                for (inner, _) in result.iter() {
+                    is_branches_nf &= inner.pattern.is_normal_form();
+                }
+                result
+            };
 
             // 重新计算 is_nf
-            let mut new_nf = ThreeValuedLogic::True;
-            for (inner, _) in reduced_branches.iter() {
-                new_nf &= inner.pattern.is_normal_form();
-            }
-            for e in reduced_env.iter() {
-                new_nf &= e.all_nf();
-            }
             if let Ok(mut nf_lock) = is_nf.write() {
-                *nf_lock = new_nf;
+                *nf_lock = is_env_nf & is_branches_nf;
             }
 
             Ok((reduced_branches, reduced_env, is_nf))
