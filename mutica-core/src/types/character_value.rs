@@ -92,11 +92,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
         Ok(self.dispatch())
     }
 
-    fn invoke(
-        &self,
-        _ctx: &mut InvokeContext<Type<T>, T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Err(TypeError::NonApplicableType(self.dispatch().into()))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

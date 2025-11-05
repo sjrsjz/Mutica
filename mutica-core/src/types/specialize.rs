@@ -219,15 +219,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Speci
         Self::new(&result, ctx.closure_env)
     }
 
-    fn invoke(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
-        for sub in self.types.iter() {
-            result.push(sub.invoke(ctx)?);
-        }
-        Self::new(&result, ctx.closure_env)
+    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Err(TypeError::NonApplicableType(self.dispatch().into()))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

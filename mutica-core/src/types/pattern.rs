@@ -139,11 +139,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         }
     }
 
-    fn invoke(
-        &self,
-        _ctx: &mut InvokeContext<Type<T>, T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        match self.inner.take() {
+            Ok(v) => {
+                let (_, expr, _) = v;
+                expr.invoke(ctx)
+            }
+            Err(v) => {
+                let (_, expr, _) = v.as_ref();
+                expr.clone().invoke(ctx)
+            }
+        }
     }
 
     fn reduce(

@@ -520,10 +520,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         }
     }
 
-    fn invoke(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let (branches, env, _) = self.inner.as_ref();
         let empty_closure_env = ClosureEnv::new(Vec::<Type<T>>::new());
         let mut matched_pattern = Collector::new();
@@ -667,7 +664,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         &self.inner.as_ref().0
     }
 
-    pub fn impls(&self, other: &Self) -> Type<T> {
+    pub fn impls(self, other: Self) -> Type<T> {
         let mut new_closure_env = self.env().to_vec();
         new_closure_env.extend_from_slice(other.env());
         let mut new_branches = self.branches().to_vec();

@@ -164,12 +164,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
     }
 
     fn invoke(
-        &self,
-        _ctx: &mut super::InvokeContext<Type<T>, T>,
+        self,
+        _ctx: super::InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        Err(super::TypeError::NonApplicableType(
-            self.clone().dispatch().into(),
-        ))
+        Err(super::TypeError::NonApplicableType(self.dispatch().into()))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

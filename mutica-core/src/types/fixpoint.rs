@@ -82,6 +82,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
             .ok_or(TypeError::UnresolvableType("Reference is dead".into()))
             .map(|inner: GCArc<T>| inner.as_ref().map_value(path, f))
     }
+
+    pub fn take<F, R>(
+        self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        f: F,
+    ) -> Result<Option<R>, TypeError<<T as GcAllocObject<T>>::Inner, T>>
+    where
+        F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, T::Inner) -> R,
+    {
+        self.reference
+            .upgrade()
+            .ok_or(TypeError::UnresolvableType("Reference is dead".into()))
+            .map(|inner: GCArc<T>| inner.as_ref().take_value(path, f))
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
@@ -285,16 +299,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         }
     }
 
-    fn invoke(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
             Some(inner) => inner
                 .as_ref()
                 .get_value()
                 .ok_or(TypeError::UnresolvableType("Reference is dead".into()))
-                .and_then(|t| t.invoke(ctx)),
+                .and_then(|t| t.clone().invoke(ctx)),
             None => Err(TypeError::UnresolvableType("Reference is dead".into())),
         }
     }

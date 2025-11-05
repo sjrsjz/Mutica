@@ -7,7 +7,9 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
         Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
     },
-    util::{arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub struct Rotate<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -89,8 +91,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
                     );
                     let (v_value, _) = v.inner.as_ref();
                     let (self_value, _) = self.inner.as_ref();
-                    v_value
-                        .check(self_value.as_ref_dispatcher(), &mut inner_ctx)
+                    v_value.check(self_value.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => Ok(false),
             }
@@ -142,12 +143,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
     }
 
     fn invoke(
-        &self,
-        _ctx: &mut super::InvokeContext<Type<T>, T>,
+        self,
+        _ctx: super::InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        Err(super::TypeError::NonApplicableType(
-            self.clone().dispatch().into(),
-        ))
+        Err(super::TypeError::NonApplicableType(self.dispatch().into()))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

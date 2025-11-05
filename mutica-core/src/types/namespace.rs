@@ -8,7 +8,9 @@ use crate::{
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
         TypeRef, type_bound::TypeBound,
     },
-    util::{arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub struct Namespace<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -139,12 +141,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
         }
     }
 
-    fn invoke(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        let (_, expr, _) = self.inner.as_ref();
-        expr.invoke(ctx)
+    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        match self.inner.take() {
+            Ok((_, expr, _)) => expr.invoke(ctx),
+            Err(v) => {
+                let (_, expr, _) = v.as_ref();
+                expr.clone().invoke(ctx)
+            }
+        }
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

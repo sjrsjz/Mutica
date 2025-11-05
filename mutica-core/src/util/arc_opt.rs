@@ -43,4 +43,18 @@ impl<T> ArcOpt<T> {
             None => Ok(None),
         }
     }
+
+    pub fn take(self) -> Result<T, Self> {
+        match Arc::try_unwrap(self.value) {
+            Ok(opt) => match opt {
+                Some(v) => Ok(v),
+                None => panic!("ArcOpt contains None"),
+            },
+            Err(v) => Err(Self { value: v }),
+        }
+    }
+
+    pub fn is_unique(&self) -> bool {
+        Arc::strong_count(&self.value) == 1
+    }
 }

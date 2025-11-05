@@ -1,5 +1,5 @@
 use core::panic;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -9,13 +9,15 @@ use crate::{
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
         TypeRef, type_bound::TypeBound,
     },
-    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 // 元组类型，但是其允许通过cons类型解构
 pub struct Tuple<T: GcAllocObject<T, Inner = Type<T>>> {
-    elements: Arc<im::Vector<Option<Type<T>>>>,
-    is_nf: Arc<RwLock<ThreeValuedLogic>>,
+    elements: ArcOpt<Vec<Type<T>>>,
+    is_nf: ArcOpt<RwLock<ThreeValuedLogic>>,
     head: usize,
 }
 
@@ -36,7 +38,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Tuple<T> {
     ) -> String {
         let mut repr = String::from("(");
         for (i, element) in self.iter().enumerate() {
-            repr.push_str(&element.as_ref().unwrap().represent(path));
+            repr.push_str(&element.represent(path));
             if i != self.len() - 1 {
                 repr.push_str(", ");
             }
@@ -53,7 +55,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Tuple<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         for element in self.iter() {
             // 我们不关心 head 之前的元素，他们对于本类型是不可达的
-            element.as_ref().unwrap().collect(queue);
+            element.collect(queue);
         }
     }
 }
@@ -62,7 +64,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Tuple<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for element in self.iter() {
             // 我们不关心 head 之前的元素，他们对于本类型是不可达的
-            element.as_ref().unwrap().upgrade(collected);
+            element.upgrade(collected);
         }
     }
 }
@@ -105,11 +107,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                         return Ok(false);
                     }
                     for (a, b) in self.iter().zip(v.iter()) {
-                        if !a
-                            .as_ref()
-                            .unwrap()
-                            .check(b.as_ref().unwrap().as_ref_dispatcher(), &mut inner_ctx)?
-                        {
+                        if !a.check(b.as_ref_dispatcher(), &mut inner_ctx)? {
                             return Ok(false);
                         }
                     }
@@ -156,11 +154,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                         return Ok(false);
                     }
                     for (a, b) in self.iter().zip(v.iter()) {
-                        if !a
-                            .as_ref()
-                            .unwrap()
-                            .equals(b.as_ref().unwrap().as_ref_dispatcher(), &mut inner_ctx)?
-                        {
+                        if !a.check(b.as_ref_dispatcher(), &mut inner_ctx)? {
                             return Ok(false);
                         }
                     }
@@ -194,41 +188,50 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         mut self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        match Arc::get_mut(&mut self.elements) {
-            Some(elements) => {
-                let mut is_nf = ThreeValuedLogic::True;
-                for element in elements.iter_mut().skip(self.head) {
-                    let v = element.take().unwrap().reduce(ctx)?;
-                    is_nf &= v.is_normal_form();
-                    *element = Some(v);
-                }
-                if let Ok(mut nf_lock) = self.is_nf.write() {
-                    *nf_lock = is_nf;
-                }
-                Ok(self.dispatch())
+        match self.elements.modify(|mut elements| {
+            if !self.is_nf.is_unique() {
+                panic!(
+                    "CRITICAL: Tuple's self.is_nf lock is not unique when self.elements is unique"
+                );
             }
+            let mut is_nf = ThreeValuedLogic::True;
+            for element in elements.iter_mut().skip(self.head) {
+                // 手动提供一个占位符值，然后换出旧值
+                let owned_element = std::mem::replace(element, TypeBound::bottom());
+                let reduced = owned_element.reduce(ctx)?;
+                is_nf &= reduced.is_normal_form();
+                // 将计算结果写回
+                *element = reduced;
+            }
+            if let Ok(mut nf_lock) = self.is_nf.as_ref().write() {
+                *nf_lock = is_nf;
+            };
+            Ok(elements)
+        })? {
+            Some(()) => Ok(self.dispatch()),
             None => {
-                let mut reduced_elements = Vec::with_capacity(self.len());
-                for element in self.iter() {
-                    reduced_elements.push(element.as_ref().unwrap().clone().reduce(ctx)?);
-                }
-                Ok(Self::new(reduced_elements))
+                let new_elements = self
+                    .types()
+                    .iter()
+                    .map(|t| t.clone().reduce(ctx))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Self::new(new_elements))
             }
         }
     }
 
     fn invoke(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
+        self,
+        ctx: InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         ctx.arg
-            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                TypeRef::IntegerValue(iv) => {
+            .take(&mut FastCycleDetector::new(), |_, arg| match arg {
+                Type::IntegerValue(iv) => {
                     let index = iv.value() as usize;
                     match self.get(index) {
                         Some(t) => Ok(t.clone()),
                         None => Err(super::TypeError::TupleIndexOutOfBounds(
-                            (self.clone().dispatch(), ctx.arg.clone()).into(),
+                            (self.dispatch(), iv.dispatch()).into(),
                         )),
                     }
                 }
@@ -244,7 +247,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self.is_nf.read() {
+        match self.is_nf.as_ref().read() {
             Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
@@ -253,13 +256,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
         let mut new_nf = ThreeValuedLogic::True;
         for element in self.iter() {
-            element
-                .as_ref()
-                .unwrap()
-                .recalculate_normal_form(cycle_detector);
-            new_nf &= element.as_ref().unwrap().is_normal_form();
+            element.recalculate_normal_form(cycle_detector);
+            new_nf &= element.is_normal_form();
         }
-        if let Ok(mut nf_lock) = self.is_nf.write() {
+        if let Ok(mut nf_lock) = self.is_nf.as_ref().write() {
             *nf_lock = new_nf;
         }
     }
@@ -267,29 +267,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
     pub fn len(&self) -> usize {
-        self.elements.len() - self.head
+        self.elements.as_ref().len() - self.head
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Option<Type<T>>> {
-        self.elements.iter().skip(self.head)
+    pub fn iter(&self) -> impl Iterator<Item = &Type<T>> {
+        self.elements.as_ref().iter().skip(self.head)
     }
 
-    pub fn types(&self) -> im::Vector<Option<Type<T>>> {
-        self.elements.skip(self.head)
+    pub fn types(&self) -> &[Type<T>] {
+        self.elements.as_ref()[self.head..].as_ref()
     }
 
     pub fn get(&self, index: usize) -> Option<&Type<T>> {
         if index >= self.len() {
             return None;
         }
-        self.elements
-            .get(self.head + index)
-            .as_ref()
-            .and_then(|t| t.as_ref())
+        self.elements.as_ref().get(self.head + index)
     }
 
     #[allow(clippy::new_ret_no_self)]
@@ -298,18 +295,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         I: IntoIterator<Item = X>,
         X: AsDispatcher<Type<T>, T>,
     {
-        let elements: Vec<Option<Type<T>>> = types
-            .into_iter()
-            .map(|t| Some(t.into_dispatcher()))
-            .collect();
+        let elements: Vec<Type<T>> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         let mut is_nf = ThreeValuedLogic::True;
         for element in &elements {
-            is_nf &= element.as_ref().unwrap().is_normal_form();
+            is_nf &= element.is_normal_form();
         }
         Self {
-            elements: Arc::from(im::Vector::from(elements)),
+            elements: ArcOpt::new(elements),
             head: 0,
-            is_nf: Arc::new(RwLock::new(is_nf)),
+            is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()
     }
@@ -322,21 +316,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
             ThreeValuedLogic::True // 删掉这个会导致大部分算法从O(1)变成O(n)，进而严重影响性能
         } else {
             let mut is_nf = ThreeValuedLogic::True;
-            for element in self.elements.iter().skip(self.head + start) {
-                is_nf &= element.as_ref().unwrap().is_normal_form();
+            for element in self.elements.as_ref().iter().skip(self.head + start) {
+                is_nf &= element.is_normal_form();
             }
             is_nf
         };
         Self {
             elements: self.elements.clone(),
             head: self.head + start,
-            is_nf: Arc::new(RwLock::new(is_nf)),
+            is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()
     }
 
     pub fn head(&self) -> Option<&Type<T>> {
-        self.iter().next().and_then(|t| t.as_ref())
+        self.iter().next()
     }
 
     pub fn tail(&self) -> Option<Type<T>> {
@@ -346,15 +340,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         Some(self.view(1))
     }
 
-    pub fn concat(&self, other: &Tuple<T>) -> Type<T> {
-        let mut new_elements = self.types();
-        new_elements.extend(other.types());
+    pub fn concat(self, other: Tuple<T>) -> Type<T> {
         let is_nf = self.is_normal_form() & other.is_normal_form();
+        let mut new_elements = self.take();
+        new_elements.extend(other.take());
         Self {
-            elements: Arc::new(new_elements),
+            elements: ArcOpt::new(new_elements),
             head: 0,
-            is_nf: Arc::new(RwLock::new(is_nf)),
+            is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()
+    }
+
+    pub fn take(self) -> Vec<Type<T>> {
+        self.elements.take().unwrap_or_else(|v| v.as_ref().clone())
     }
 }

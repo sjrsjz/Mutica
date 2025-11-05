@@ -361,7 +361,11 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
                 write!(f, "Undefined pattern variable: id = {}", id)
             }
             TypeError::AssertFailed(types) => {
-                write!(f, "Assert failed: {:?} doesn't accept {:?}", types.0, types.1)
+                write!(
+                    f,
+                    "Assert failed: {:?} doesn't accept {:?}",
+                    types.0, types.1
+                )
             }
             TypeError::MissingContinuation(ty) => write!(f, "Missing continuation: {:?}", ty),
             TypeError::MissingPerformHandler(ty) => write!(f, "Missing perform handler: {:?}", ty),
@@ -437,6 +441,11 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
         self.get_value()
             .map(|inner| f(path, inner.as_ref_dispatcher()))
     }
+
+    fn take_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, Self::Inner) -> R,
+        T: GcAllocObject<T>;
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Type<T> {
@@ -476,10 +485,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
     }
 
     #[stacksafe::stacksafe]
-    fn invoke(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         type_dispatch!(self, invoke, ctx)
     }
 
@@ -561,6 +567,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Type<T> {
         match self {
             Type::FixPoint(v) => v.map(path, f),
             _ => Ok(Some(f(path, self.as_ref_dispatcher()))),
+        }
+    }
+
+    pub fn take<F, R>(
+        self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        f: F,
+    ) -> Result<Option<R>, TypeError<Type<T>, T>>
+    where
+        F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, Type<T>) -> R,
+    {
+        match self {
+            Type::FixPoint(v) => v.take(path, f),
+            _ => Ok(Some(f(path, self))),
         }
     }
 }
@@ -733,7 +753,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
 
 /// 类型应用上下文，用于 `invoke` 方法
 pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    pub arg: &'a U,
+    pub arg: U,
     pub closure_env: &'a ClosureEnv<U, V>,
     pub param_env: &'a ParamEnv<U, V>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
@@ -743,7 +763,7 @@ pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a, 'roots, U, V> {
     pub fn new(
-        arg: &'a U,
+        arg: U,
         closure_env: &'a ClosureEnv<U, V>,
         param_env: &'a ParamEnv<U, V>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
@@ -773,7 +793,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     fn reduce(self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     // 类型应用
-    fn invoke(&self, ctx: &mut InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
+    fn invoke(self, ctx: InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         TaggedPtr::new_unique(self as *const _ as *const ())

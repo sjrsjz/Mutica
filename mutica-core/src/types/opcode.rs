@@ -156,34 +156,35 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     }
 
     fn invoke(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
+        self,
+        ctx: InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg
-            .map(&mut FastCycleDetector::new(), |_, arg| match self {
-                Opcode::Opcode => Err(TypeError::NonApplicableType(self.clone().dispatch().into())),
+            .take(&mut FastCycleDetector::new(), |_, arg| match self {
+                Opcode::Opcode => Err(TypeError::NonApplicableType(self.dispatch().into())),
                 Opcode::Set => {
-                    if let TypeRef::Tuple(tuple) = arg {
+                    if let Type::Tuple(tuple) = arg {
                         if tuple.len() == 2 {
-                            let left = tuple.get(0).unwrap();
-                            let right = tuple.get(1).unwrap();
+                            let mut elements = tuple.take().into_iter();
+                            let left = elements.next().unwrap();
+                            let right = elements.next().unwrap();
                             match left {
                                 Type::FixPoint(fixpoint) => {
                                     fixpoint.set(right)?;
-                                    Ok(left.clone())
+                                    Ok(fixpoint.dispatch())
                                 }
                                 _ => Err(TypeError::TypeMismatch(
-                                    (ctx.arg.clone(), "FixPoint".into()).into(),
+                                    (left.dispatch(), "FixPoint".into()).into(),
                                 )),
                             }
                         } else {
                             Err(TypeError::TypeMismatch(
-                                (ctx.arg.clone(), "(FixPoint, Any)".into()).into(),
+                                (tuple.dispatch(), "(FixPoint, Any)".into()).into(),
                             ))
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            (ctx.arg.clone(), "Tuple".into()).into(),
+                            (arg, "Tuple".into()).into(),
                         ))
                     }
                 }
@@ -197,7 +198,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             None::<Type<T>>), 0, 1)],
                         vec![ClosureEnv::new(Vec::<Type<T>>::new())]
                     );
-                    Ok(Invoke::new(arg.clone_data(), place_holder, Some(call_back), None::<Type<_>>))
+                    Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>))
                 }
                 Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
                     std::io::Error::other(
@@ -205,23 +206,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     ),
                 ))),
                 Opcode::Neg => {
-                    if let TypeRef::IntegerValue(n) = arg {
+                    if let Type::IntegerValue(n) = arg {
                         Ok(IntegerValue::new(-n.value()))
-                    } else if let TypeRef::FloatValue(n) = arg {
+                    } else if let Type::FloatValue(n) = arg {
                         Ok(FloatValue::new(-n.value()))
                     } else {
                         Err(TypeError::TypeMismatch(
-                            (ctx.arg.clone(), "IntegerValue | FloatValue".into()).into(),
+                            (arg, "IntegerValue | FloatValue".into()).into(),
                         ))
                     }
                 }
                 Opcode::Is => {
-                    if let TypeRef::Tuple(tuple) = arg {
+                    if let Type::Tuple(tuple) = arg {
                         if tuple.len() == 4 {
-                            let left = tuple.get(0).unwrap();
-                            let right = tuple.get(1).unwrap();
-                            let true_branch = tuple.get(2).unwrap().clone();
-                            let false_branch = tuple.get(3).unwrap().clone();
+                            let mut elements = tuple.take().into_iter();
+                            let left = elements.next().unwrap();
+                            let right = elements.next().unwrap();
+                            let true_branch = elements.next().unwrap();
+                            let false_branch = elements.next().unwrap();
                             let empty_closure = ClosureEnv::new(Vec::<Type<T>>::new());
                             let mut assumptions = smallvec::SmallVec::new();
                             let mut pattern_env = Collector::new_disabled();
@@ -238,7 +240,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         } else {
                             Err(TypeError::TypeMismatch(
                                 (
-                                    ctx.arg.clone(),
+                                    tuple.dispatch(),
                                     "(Value, Type, TrueCase, FalseCase)".into()
                                 )
                                     .into(),
@@ -246,7 +248,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            (ctx.arg.clone(), "Tuple".into()).into(),
+                            (arg, "Tuple".into()).into(),
                         ))
                     }
                 }
@@ -255,21 +257,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 | Opcode::Mul
                 | Opcode::Div
                 | Opcode::Mod => {
-                    if let TypeRef::Tuple(tuple) = arg {
+                    if let Type::Tuple(tuple) = arg {
                         if tuple.len() == 2 {
-                            let left = tuple.get(0).unwrap();
-                            let right = tuple.get(1).unwrap();
-                            left.map(&mut FastCycleDetector::new(), |_, left| {
-                                right.map(&mut FastCycleDetector::new(), |_, right| {
+                            let mut elements = tuple.take().into_iter();
+                            let left = elements.next().unwrap();
+                            let right = elements.next().unwrap();
+                            left.take(&mut FastCycleDetector::new(), |_, left| {
+                                right.take(&mut FastCycleDetector::new(), |_, right| {
                                     match (left, right) {
-                            (TypeRef::IntegerValue(l), TypeRef::IntegerValue(r)) => match self {
+                            (Type::IntegerValue(l), Type::IntegerValue(r)) => match self {
                                 Opcode::Add => Ok(IntegerValue::new(l.value() + r.value())),
                                 Opcode::Sub => Ok(IntegerValue::new(l.value() - r.value())),
                                 Opcode::Mul => Ok(IntegerValue::new(l.value() * r.value())),
                                 Opcode::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            (ctx.arg.clone(), "Non-zero integer".into()).into(),
+                                            (l.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
                                         Ok(IntegerValue::new(l.value() / r.value()))
@@ -278,7 +281,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 Opcode::Mod => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            (ctx.arg.clone(), "Non-zero integer".into()).into(),
+                                            (r.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
                                         Ok(IntegerValue::new(l.value() % r.value()))
@@ -286,14 +289,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 }
                                 _ => unreachable!(),
                             },
-                            (TypeRef::FloatValue(l), TypeRef::FloatValue(r)) => match self {
+                            (Type::FloatValue(l), Type::FloatValue(r)) => match self {
                                 Opcode::Add => Ok(FloatValue::new(l.value() + r.value())),
                                 Opcode::Sub => Ok(FloatValue::new(l.value() - r.value())),
                                 Opcode::Mul => Ok(FloatValue::new(l.value() * r.value())),
                                 Opcode::Div => {
                                     if r.value() == 0.0 {
                                         Err(TypeError::TypeMismatch(
-                                            (ctx.arg.clone(), "Non-zero float".into()).into(),
+                                            (r.dispatch(), "Non-zero float".into()).into(),
                                         ))
                                     } else {
                                         Ok(FloatValue::new(l.value() / r.value()))
@@ -302,7 +305,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 Opcode::Mod => {
                                     if r.value() == 0.0 {
                                         Err(TypeError::TypeMismatch(
-                                            (ctx.arg.clone(), "Non-zero float".into()).into(),
+                                            (r.dispatch(), "Non-zero float".into()).into(),
                                         ))
                                     } else {
                                         Ok(FloatValue::new(l.value() % r.value()))
@@ -310,7 +313,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 }
                                 _ => unreachable!(),
                             },
-                            (TypeRef::Closure(l), TypeRef::Closure(r)) => match self {
+                            (Type::Closure(l), Type::Closure(r)) => match self {
                                 Opcode::Add => Ok(l.impls(r)),
                                 _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                                     std::io::Error::other(
@@ -318,7 +321,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     ),
                                 ))),
                             },
-                            (TypeRef::Tuple(l), TypeRef::Tuple(r)) => match self {
+                            (Type::Tuple(l), Type::Tuple(r)) => match self {
                                 Opcode::Add => Ok(l.concat(r)),
                                 _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                                     std::io::Error::other(
@@ -326,9 +329,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     ),
                                 ))),
                             },
-                            _ => Err(TypeError::TypeMismatch(
+                            (l, r) => Err(TypeError::TypeMismatch(
                                 (
-                                    ctx.arg.clone(),
+                                    Tuple::new(vec![l, r]),
                                     "(IntegerValue, IntegerValue) | (FloatValue, FloatValue) | (Closure, Closure) | (Tuple, Tuple)".into()
                                 )
                                     .into(),
@@ -338,58 +341,55 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             })?.unwrap_or(Err(TypeError::UnresolvableType("Could not resolve left argument".into())))
                         } else {
                             Err(TypeError::TypeMismatch(
-                                (ctx.arg.clone(), "Tuple".into()).into(),
+                                (tuple.dispatch(), "Tuple".into()).into(),
                             ))
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            (ctx.arg.clone(), "Tuple".into()).into(),
+                            (arg, "Tuple".into()).into(),
                         ))
                     }
                 }
                 Opcode::Less | Opcode::Greater => {
-                    if let TypeRef::Tuple(tuple) = arg {
+                    if let Type::Tuple(tuple) = arg {
                         if tuple.len() == 4 {
-                            let left = tuple.get(0).unwrap();
-                            let right = tuple.get(1).unwrap();
-                            let true_branch = tuple.get(2).unwrap().clone();
-                            let false_branch = tuple.get(3).unwrap().clone();
-                            left.map(&mut FastCycleDetector::new(), move |_, left| {
-                                let true_branch = true_branch.clone();
-                                let false_branch = false_branch.clone();
-                                right.map(&mut FastCycleDetector::new(), move |_, right| {
-                                    let true_branch = true_branch.clone();
-                                    let false_branch = false_branch.clone();
+                            let mut elements = tuple.take().into_iter();
+                            let left = elements.next().unwrap();
+                            let right = elements.next().unwrap();
+                            let true_branch = elements.next().unwrap();
+                            let false_branch = elements.next().unwrap();
+                            left.take(&mut FastCycleDetector::new(), move |_, left| {
+                                right.take(&mut FastCycleDetector::new(), move |_, right| {
                                     match (left, right) {
-                                        (TypeRef::IntegerValue(l), TypeRef::IntegerValue(r)) => {
+                                        (Type::IntegerValue(l), Type::IntegerValue(r)) => {
                                             let condition = match self {
                                                 Opcode::Less => l.value() < r.value(),
                                                 Opcode::Greater => l.value() > r.value(),
                                                 _ => unreachable!(),
                                             };
                                             let result = if condition {
-                                                true_branch.clone()
+                                                true_branch
                                             } else {
-                                                false_branch.clone()
+                                                false_branch
                                             };
                                             Ok(result)
                                         }
-                                        (TypeRef::FloatValue(l), TypeRef::FloatValue(r)) => {
+                                        (Type::FloatValue(l), Type::FloatValue(r)) => {
                                             let condition = match self {
                                                 Opcode::Less => l.value() < r.value(),
                                                 Opcode::Greater => l.value() > r.value(),
                                                 _ => unreachable!(),
                                             };
                                             let result = if condition {
-                                                true_branch.clone()
+                                                true_branch
                                             } else {
-                                                false_branch.clone()
+                                                false_branch
                                             };
                                             Ok(result)
                                         }
-                                        _ => Err(TypeError::TypeMismatch(
+                                        (l, r) => Err(TypeError::TypeMismatch(
                                             (
-                                                ctx.arg.clone(),
+                                                Tuple::new(vec![l, r]),
                                                 "(IntegerValue, IntegerValue, Any, Any) | (FloatValue, FloatValue, Any, Any)".into()
                                             )
                                                 .into(),
@@ -406,7 +406,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         } else {
                             Err(TypeError::TypeMismatch(
                                 (
-                                    ctx.arg.clone(),
+                                    tuple.dispatch(),
                                     "(Value, Value, TrueCase, FalseCase)".into()
                                 )
                                     .into(),
@@ -414,7 +414,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         }
                     } else {
                         Err(TypeError::TypeMismatch(
-                            (ctx.arg.clone(), "Tuple".into()).into(),
+                            (arg, "Tuple".into()).into(),
                         ))
                     }
                 }

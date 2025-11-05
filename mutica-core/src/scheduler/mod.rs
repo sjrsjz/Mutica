@@ -375,11 +375,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         })?;
         let reduced = current_type.reduce(&mut reduction_ctx)?;
         let (next_type, updated) = reduced
-            .map(&mut FastCycleDetector::new(), |_, inner| match inner {
-                TypeRef::Invoke(invoke) => {
-                    let io_result = self.io(invoke.func(), invoke.arg());
-                    let invoke_context = &mut InvokeContext::new(
-                        invoke.arg(),
+            .take(&mut FastCycleDetector::new(), |_, inner| match inner {
+                Type::Invoke(invoke) => {
+                    let (func, arg, continuation_style) = invoke.take();
+                    let io_result = self.io(&func, &arg);
+                    let invoke_context = InvokeContext::new(
+                        arg,
                         &empty_v,
                         &empty_p,
                         &mut rec_assumptions,
@@ -393,27 +394,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             let (perform_handler, index) = match find_last_perform_handler(&view) {
                                 Some(handler) => handler,
                                 None => {
-                                    return Err(TypeError::MissingPerformHandler(Box::new(
-                                        invoke.arg().clone(),
-                                    )));
+                                    return Err(TypeError::MissingPerformHandler(Box::new(func)));
                                 }
                             };
                             let perform_invoke =
                                 Invoke::new(perform_handler, *v, None::<Type<T>>, None::<Type<T>>);
-                            match invoke.continuation_style() {
+                            match continuation_style {
                                 InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::WithContinuation(v) => self
-                                    .cont_stack
-                                    .push(ContinuationOrHandler::Continuation(v.clone())),
+                                InvokeCountinuationStyle::WithContinuation(v) => {
+                                    self.cont_stack.push(ContinuationOrHandler::Continuation(v))
+                                }
                                 InvokeCountinuationStyle::WithPerformHandler(v) => {
                                     self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(v.clone()));
+                                        .push(ContinuationOrHandler::PerformHandler(v));
                                 }
                                 InvokeCountinuationStyle::WithBoth(a, b) => {
+                                    self.cont_stack.push(ContinuationOrHandler::Continuation(a));
                                     self.cont_stack
-                                        .push(ContinuationOrHandler::Continuation(a.clone()));
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(b.clone()));
+                                        .push(ContinuationOrHandler::PerformHandler(b));
                                 }
                             }
                             self.cont_stack.fork(index); // 踢掉perform handler及其上面的frame
@@ -427,7 +425,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                     Some(ContinuationOrHandler::PerformHandler(_)) => break,
                                     None => {
                                         return Err(TypeError::MissingPerformHandler(Box::new(
-                                            invoke.arg().clone(),
+                                            func,
                                         )));
                                     }
                                 }
@@ -440,20 +438,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                     None => break None,
                                 }
                             };
-                            match invoke.continuation_style() {
+                            match continuation_style {
                                 InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::WithContinuation(v) => self
-                                    .cont_stack
-                                    .push(ContinuationOrHandler::Continuation(v.clone())),
+                                InvokeCountinuationStyle::WithContinuation(v) => {
+                                    self.cont_stack.push(ContinuationOrHandler::Continuation(v))
+                                }
                                 InvokeCountinuationStyle::WithPerformHandler(v) => {
                                     self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(v.clone()));
+                                        .push(ContinuationOrHandler::PerformHandler(v));
                                 }
                                 InvokeCountinuationStyle::WithBoth(a, b) => {
+                                    self.cont_stack.push(ContinuationOrHandler::Continuation(a));
                                     self.cont_stack
-                                        .push(ContinuationOrHandler::Continuation(a.clone()));
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(b.clone()));
+                                        .push(ContinuationOrHandler::PerformHandler(b));
                                 }
                             }
                             let break_invoke = match continuation {
@@ -465,20 +462,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             return Ok((break_invoke, true));
                         }
                         Err(TypeError::Resume(v)) => {
-                            match invoke.continuation_style() {
+                            match continuation_style {
                                 InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::WithContinuation(v) => self
-                                    .cont_stack
-                                    .push(ContinuationOrHandler::Continuation(v.clone())),
+                                InvokeCountinuationStyle::WithContinuation(v) => {
+                                    self.cont_stack.push(ContinuationOrHandler::Continuation(v))
+                                }
                                 InvokeCountinuationStyle::WithPerformHandler(v) => {
                                     self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(v.clone()));
+                                        .push(ContinuationOrHandler::PerformHandler(v));
                                 }
                                 InvokeCountinuationStyle::WithBoth(a, b) => {
+                                    self.cont_stack.push(ContinuationOrHandler::Continuation(a));
                                     self.cont_stack
-                                        .push(ContinuationOrHandler::Continuation(a.clone()));
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(b.clone()));
+                                        .push(ContinuationOrHandler::PerformHandler(b));
                                 }
                             }
                             let view = match self.cont_stack.skip_frames(1) {
@@ -501,41 +497,39 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     };
                     let invoke_result = match io_result {
                         Some(io_result) => io_result,
-                        None => invoke.func().invoke(invoke_context)?,
+                        None => func.invoke(invoke_context)?,
                     };
 
-                    match invoke.continuation_style() {
+                    match continuation_style {
                         InvokeCountinuationStyle::TailCall => (),
-                        InvokeCountinuationStyle::WithContinuation(v) => self
-                            .cont_stack
-                            .push(ContinuationOrHandler::Continuation(v.clone())),
+                        InvokeCountinuationStyle::WithContinuation(v) => {
+                            self.cont_stack.push(ContinuationOrHandler::Continuation(v))
+                        }
                         InvokeCountinuationStyle::WithPerformHandler(v) => {
                             self.cont_stack
-                                .push(ContinuationOrHandler::PerformHandler(v.clone()));
+                                .push(ContinuationOrHandler::PerformHandler(v));
                         }
                         InvokeCountinuationStyle::WithBoth(a, b) => {
+                            self.cont_stack.push(ContinuationOrHandler::Continuation(a));
                             self.cont_stack
-                                .push(ContinuationOrHandler::Continuation(a.clone()));
-                            self.cont_stack
-                                .push(ContinuationOrHandler::PerformHandler(b.clone()));
+                                .push(ContinuationOrHandler::PerformHandler(b));
                         }
                     };
                     Ok((invoke_result, true))
                 }
-                _ => Ok(loop {
+                _ => match loop {
                     match self.cont_stack.pop_and_auto_defork() {
                         Some(ContinuationOrHandler::Continuation(v)) => break Some(v),
                         Some(ContinuationOrHandler::PerformHandler(_)) => continue,
                         None => break None,
                     }
-                }
-                .map(|cont| {
-                    (
-                        Invoke::new(cont, inner.clone_data(), None::<Type<T>>, None::<Type<T>>),
+                } {
+                    Some(cont) => Ok((
+                        Invoke::new(cont, inner, None::<Type<T>>, None::<Type<T>>),
                         true,
-                    )
-                })
-                .unwrap_or((reduced.clone(), false))),
+                    )),
+                    None => Ok((inner, false)),
+                },
             })?
             .unwrap_or(Err(TypeError::UnresolvableType(
                 "Could not resolve continuation".into(),

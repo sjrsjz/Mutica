@@ -300,10 +300,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
     }
 
     fn invoke(
-        &self,
-        _ctx: &mut InvokeContext<Type<T>, T>,
+        self,
+        _ctx: InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+        Err(TypeError::NonApplicableType(self.dispatch().into()))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
@@ -436,5 +436,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
 
     pub fn continuation_style(&self) -> &InvokeCountinuationStyle<T> {
         &self.inner.as_ref().2
+    }
+
+    pub fn take(self) -> (Type<T>, Type<T>, InvokeCountinuationStyle<T>) {
+        match self.inner.take() {
+            Ok((func, arg, cont_style, _)) => (func, arg, cont_style),
+            Err(v) => {
+                let (func, arg, cont_style, _) = v.as_ref();
+                (func.clone(), arg.clone(), cont_style.clone())
+            }
+        }
     }
 }

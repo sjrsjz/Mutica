@@ -86,19 +86,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
         Ok(self.dispatch())
     }
 
-    fn invoke(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg
-            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                TypeRef::FloatValue(_) => Ok(arg.clone_data()),
-                TypeRef::IntegerValue(v) => {
+            .take(&mut FastCycleDetector::new(), |_, arg| match arg {
+                Type::FloatValue(_) => Ok(arg),
+                Type::IntegerValue(v) => {
                     let float_value = FloatValue::<T>::new(v.value() as f64);
                     Ok(float_value)
                 }
                 _ => Err(super::TypeError::TypeMismatch(
-                    (ctx.arg.clone(), "FloatValue or IntegerValue".into()).into(),
+                    (arg, "FloatValue or IntegerValue".into()).into(),
                 )),
             })?
             .unwrap_or(Err(TypeError::UnresolvableType(

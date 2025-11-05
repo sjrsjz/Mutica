@@ -47,7 +47,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> OrderedType<T> {
         Self {
             level,
             _phantom: std::marker::PhantomData,
-        }.dispatch()
+        }
+        .dispatch()
     }
 }
 
@@ -113,10 +114,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
     }
 
     fn invoke(
-        &self,
-        _ctx: &mut super::InvokeContext<Type<T>, T>,
+        self,
+        _ctx: super::InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+        Err(TypeError::NonApplicableType(self.dispatch().into()))
     }
 
     fn recalculate_normal_form(

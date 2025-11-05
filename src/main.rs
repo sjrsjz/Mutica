@@ -53,6 +53,14 @@ impl GcAllocObject<TypeGcOnceLock> for TypeGcOnceLock {
             .set(_value)
             .map_err(|_| TypeError::RedeclaredType)
     }
+
+    fn take_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, Self::Inner) -> R,
+        TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
+    {
+        self.get_value().map(|inner| f(path, inner.clone()))
+    }
 }
 
 impl GCTraceable<TypeGcOnceLock> for TypeGcOnceLock {
