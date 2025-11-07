@@ -90,9 +90,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => match self {
-                    TypeBound::Top => Ok(ThreeValuedLogic::True), // 任何类型都是 ⊤ 的子类型
-                    TypeBound::Bottom => match other {
-                        TypeRef::Bound(TypeBound::Bottom) => Ok(ThreeValuedLogic::True),
+                    TypeBound::Bottom => Ok(ThreeValuedLogic::True), // ⊥ 是所有类型的子类型
+                    TypeBound::Top => match other {
+                        TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                         _ => Ok(ThreeValuedLogic::False),
                     },
                     TypeBound::PandomData(_) => Ok(ThreeValuedLogic::False),

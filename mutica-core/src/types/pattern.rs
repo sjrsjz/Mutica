@@ -3,7 +3,6 @@ use std::sync::RwLock;
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
-    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
@@ -80,9 +79,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 let (debruijn_index, expr, _) = self.inner.as_ref();
-                test_true!(expr.check(other, &mut inner_ctx)?);
-                pattern_env.push((*debruijn_index, other.clone_data()));
-                Ok(ThreeValuedLogic::True)
+                match expr.check(other, &mut inner_ctx)? {
+                    ThreeValuedLogic::True => {
+                        pattern_env.push((*debruijn_index, other.clone_data()));
+                        Ok(ThreeValuedLogic::True)
+                    }
+                    ThreeValuedLogic::False => Ok(ThreeValuedLogic::False),
+                    ThreeValuedLogic::Unknown => Ok(ThreeValuedLogic::Unknown),
+                }
             })
         } else {
             let (_, expr, _) = self.inner.as_ref();
@@ -100,9 +104,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 let (debruijn_index, expr, _) = self.inner.as_ref();
-                test_true!(expr.subof(other, &mut inner_ctx)?);
-                pattern_env.push((*debruijn_index, other.clone_data()));
-                Ok(ThreeValuedLogic::True)
+                match expr.subof(other, &mut inner_ctx)? {
+                    ThreeValuedLogic::True => {
+                        pattern_env.push((*debruijn_index, other.clone_data()));
+                        Ok(ThreeValuedLogic::True)
+                    }
+                    ThreeValuedLogic::False => Ok(ThreeValuedLogic::False),
+                    ThreeValuedLogic::Unknown => Ok(ThreeValuedLogic::Unknown),
+                }
             })
         } else {
             let (_, expr, _) = self.inner.as_ref();
@@ -181,9 +190,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 let (debruijn_index, expr, _) = self.inner.as_ref();
-                test_true!(other.check(expr.as_ref_dispatcher(), &mut inner_ctx)?);
-                pattern_env.push((*debruijn_index, other.clone_data()));
-                Ok(ThreeValuedLogic::True)
+                match other.check(expr.as_ref_dispatcher(), &mut inner_ctx)? {
+                    ThreeValuedLogic::True => {
+                        pattern_env.push((*debruijn_index, other.clone_data()));
+                        Ok(ThreeValuedLogic::True)
+                    }
+                    ThreeValuedLogic::False => Ok(ThreeValuedLogic::False),
+                    ThreeValuedLogic::Unknown => Ok(ThreeValuedLogic::Unknown),
+                }
             })
         }
     }
@@ -202,9 +216,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 let (debruijn_index, expr, _) = self.inner.as_ref();
-                test_true!(other.subof(expr.as_ref_dispatcher(), &mut inner_ctx)?);
-                pattern_env.push((*debruijn_index, other.clone_data()));
-                Ok(ThreeValuedLogic::True)
+                match other.subof(expr.as_ref_dispatcher(), &mut inner_ctx)? {
+                    ThreeValuedLogic::True => {
+                        pattern_env.push((*debruijn_index, other.clone_data()));
+                        Ok(ThreeValuedLogic::True)
+                    }
+                    ThreeValuedLogic::False => Ok(ThreeValuedLogic::False),
+                    ThreeValuedLogic::Unknown => Ok(ThreeValuedLogic::Unknown),
+                }
             })
         }
     }

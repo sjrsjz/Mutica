@@ -320,14 +320,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
                     let mut all = ThreeValuedLogic::True;
 
-                    for (
-                        (self_inner, self_idx, self_pattern_count),
-                        (other_inner, other_idx, other_pattern_count),
-                    ) in self_branches.iter().zip(v_branches.iter())
+                    for ((self_inner, self_idx, _), (other_inner, other_idx, _)) in
+                        self_branches.iter().zip(v_branches.iter())
                     {
-                        if self_pattern_count != other_pattern_count {
-                            return Ok(ThreeValuedLogic::False);
-                        }
                         // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                         // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
                         // 因此所有的pattern_env都应当被禁用
@@ -358,7 +353,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                             &mut pattern_env_disabled,
                             !ctx.rhs,
                         );
-
                         all &= test_true!(
                             other_inner
                                 .pattern

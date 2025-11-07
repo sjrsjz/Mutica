@@ -158,9 +158,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                                     InvokeCountinuationStyle::WithBoth(c1a, c1b),
                                     InvokeCountinuationStyle::WithBoth(c2a, c2b),
                                 ) => {
-                                    test_true!(c1a.check(c2a.as_ref_dispatcher(), &mut inner_ctx)?);
-                                    test_true!(c1b.check(c2b.as_ref_dispatcher(), &mut inner_ctx)?);
-                                    ThreeValuedLogic::True
+                                    test_true!(c1a.check(c2a.as_ref_dispatcher(), &mut inner_ctx)?)
+                                        & test_true!(
+                                            c1b.check(c2b.as_ref_dispatcher(), &mut inner_ctx)?
+                                        )
                                 }
                                 _ => ThreeValuedLogic::False,
                             },
@@ -212,9 +213,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                                     InvokeCountinuationStyle::WithBoth(c1a, c1b),
                                     InvokeCountinuationStyle::WithBoth(c2a, c2b),
                                 ) => {
-                                    test_true!(c1a.subof(c2a.as_ref_dispatcher(), &mut inner_ctx)?);
-                                    test_true!(c1b.subof(c2b.as_ref_dispatcher(), &mut inner_ctx)?);
-                                    ThreeValuedLogic::True
+                                    test_true!(c1a.subof(c2a.as_ref_dispatcher(), &mut inner_ctx)?)
+                                        & test_true!(
+                                            c1b.subof(c2b.as_ref_dispatcher(), &mut inner_ctx)?
+                                        )
                                 }
                                 _ => ThreeValuedLogic::False,
                             },
