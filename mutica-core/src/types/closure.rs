@@ -288,7 +288,57 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
-                // 我们实际上无法为闭包类型分配一个其对应的类型
+                TypeRef::Closure(v) => {
+                    let (self_branches, self_env, _) = self.inner.as_ref();
+                    let (v_branches, v_env, _) = v.inner.as_ref();
+
+                    if self_branches.len() != v_branches.len() {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+
+                    let mut all = ThreeValuedLogic::True;
+
+                    for ((self_inner, self_idx, _), (other_inner, other_idx, _)) in
+                        self_branches.iter().zip(v_branches.iter())
+                    {
+                        // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
+                        // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
+                        // 因此所有的pattern_env都应当被禁用
+
+                        // 创建用于表达式比较的上下文
+                        if *self_idx >= self_env.len() || *other_idx >= v_env.len() {
+                            panic!("CRITICAL: Closure branch environment index out of bounds");
+                        }
+                        let mut pattern_env_disabled = Collector::new_disabled();
+                        let mut pattern_ctx = TypeCheckContext::new(
+                            ctx.assumptions,
+                            (&self_env[*self_idx], &v_env[*other_idx]),
+                            &mut pattern_env_disabled,
+                            ctx.rhs,
+                        );
+
+                        all &= test_true!(
+                            self_inner
+                                .expr
+                                .check(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
+                        );
+
+                        // 创建用于模式比较的上下文
+                        let mut pattern_env_disabled = Collector::new_disabled();
+                        let mut pattern_ctx = TypeCheckContext::new(
+                            ctx.assumptions,
+                            (ctx.closure_env.1, ctx.closure_env.0), // 逆变
+                            &mut pattern_env_disabled,
+                            !ctx.rhs,
+                        );
+                        all &= test_true!(
+                            other_inner
+                                .pattern
+                                .check(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
+                        )
+                    }
+                    Ok(all)
+                }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
