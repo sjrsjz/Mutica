@@ -42,39 +42,43 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(true),
-                TypeRef::OrderedType(v) => Ok(v.level() == 0),
-                _ => Ok(false),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::OrderedType(v) => Ok((v.level() == 0).into()),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Float(_) => Ok(true),
-                _ => Ok(false),
+                TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Float(_) => Ok(ThreeValuedLogic::True),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }

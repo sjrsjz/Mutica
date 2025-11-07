@@ -56,3 +56,23 @@ impl ThreeValuedLogic {
         matches!(self, ThreeValuedLogic::Unknown)
     }
 }
+
+impl From<bool> for ThreeValuedLogic {
+    fn from(value: bool) -> Self {
+        if value {
+            ThreeValuedLogic::True
+        } else {
+            ThreeValuedLogic::False
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! test_true {
+    ($expr:expr) => {
+        match $expr {
+            ThreeValuedLogic::False => return Ok(ThreeValuedLogic::False),
+            other => other,
+        }
+    };
+}

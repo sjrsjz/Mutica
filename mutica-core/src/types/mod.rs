@@ -1,14 +1,15 @@
 //! Mutica 类型系统模块
 
+pub mod allof;
+pub mod anyof;
 pub mod character;
 pub mod character_value;
 pub mod closure;
 pub mod construct;
-pub mod eq_type;
+pub mod eqof;
 pub mod fixpoint;
 pub mod float;
 pub mod float_value;
-pub mod generalize;
 pub mod integer;
 pub mod integer_value;
 pub mod invoke;
@@ -18,7 +19,7 @@ pub mod opcode;
 pub mod ordered_type;
 pub mod pattern;
 pub mod rot;
-pub mod specialize;
+pub mod subof;
 pub mod tuple;
 pub mod type_bound;
 pub mod variable;
@@ -33,16 +34,18 @@ use arc_gc::{
 use smallvec::SmallVec;
 
 use crate::{
+    test_true,
     types::{
+        allof::AllOf,
+        anyof::AnyOf,
         character::Character,
         character_value::CharacterValue,
         closure::{Closure, ClosureEnv, ParamEnv},
         construct::Construct,
-        eq_type::EqType,
+        eqof::EqOf,
         fixpoint::FixPoint,
         float::Float,
         float_value::FloatValue,
-        generalize::Generalize,
         integer::Integer,
         integer_value::IntegerValue,
         invoke::Invoke,
@@ -52,7 +55,7 @@ use crate::{
         ordered_type::OrderedType,
         pattern::Pattern,
         rot::Rotate,
-        specialize::Specialize,
+        subof::SubOf,
         tuple::Tuple,
         type_bound::TypeBound,
         variable::Variable,
@@ -76,8 +79,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Char(v) => Type::<T>::Char(v.clone()),
             Type::CharValue(v) => Type::<T>::CharValue(v.clone()),
             Type::Tuple(v) => Type::<T>::Tuple(v.clone()),
-            Type::Generalize(v) => Type::<T>::Generalize(v.clone()),
-            Type::Specialize(v) => Type::<T>::Specialize(v.clone()),
+            Type::Any(v) => Type::<T>::Any(v.clone()),
+            Type::All(v) => Type::<T>::All(v.clone()),
             Type::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
             Type::Invoke(v) => Type::<T>::Invoke(v.clone()),
             Type::Variable(v) => Type::<T>::Variable(v.clone()),
@@ -89,7 +92,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Rot(v) => Type::<T>::Rot(v.clone()),
             Type::Construct(v) => Type::<T>::Construct(v.clone()),
             Type::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
-            Type::EqType(v) => Type::<T>::EqType(v.clone()),
+            Type::EqOf(v) => Type::<T>::EqOf(v.clone()),
+            Type::SubOf(v) => Type::<T>::SubOf(v.clone()),
         }
     }
 }
@@ -112,9 +116,9 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     // 元组类型
     Tuple(Tuple<T>),
     // 泛化类型
-    Generalize(Generalize<T>),
+    Any(AnyOf<T>),
     // 专化类型
-    Specialize(Specialize<T>),
+    All(AllOf<T>),
     // 不动点类型
     FixPoint(FixPoint<T>),
     // 类型应用
@@ -138,7 +142,9 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     // 高阶类型
     OrderedType(OrderedType<T>),
     // 单例等价类型
-    EqType(EqType<T>),
+    EqOf(EqOf<T>),
+    // 子类型
+    SubOf(SubOf<T>),
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
@@ -150,8 +156,8 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Char(&'a Character<T>),
     CharValue(&'a CharacterValue<T>),
     Tuple(&'a Tuple<T>),
-    Generalize(&'a Generalize<T>),
-    Specialize(&'a Specialize<T>),
+    Any(&'a AnyOf<T>),
+    All(&'a AllOf<T>),
     FixPoint(&'a FixPoint<T>),
     Invoke(&'a Invoke<T>),
     Variable(&'a Variable<T>),
@@ -163,7 +169,8 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Rot(&'a Rotate<T>),
     Construct(&'a Construct<T>),
     OrderedType(&'a OrderedType<T>),
-    EqType(&'a EqType<T>),
+    EqOf(&'a EqOf<T>),
+    SubOf(&'a SubOf<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
@@ -173,6 +180,176 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Copy for TypeRef<'_, T> {}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for TypeRef<'_, T> {
+    type RefDispatcher<'a>
+        = TypeRef<'a, T>
+    where
+        Self: 'a;
+    fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
+        *self
+    }
+
+    fn into_dispatcher(self) -> Type<T> {
+        self.clone_data()
+    }
+}
+
+impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T, Self>
+    for TypeRef<'a, T>
+{
+    fn check(
+        &self,
+        other: Self,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
+        match self {
+            TypeRef::Bound(v) => v.check(other, ctx),
+            TypeRef::Integer(v) => v.check(other, ctx),
+            TypeRef::IntegerValue(v) => v.check(other, ctx),
+            TypeRef::Float(v) => v.check(other, ctx),
+            TypeRef::FloatValue(v) => v.check(other, ctx),
+            TypeRef::Char(v) => v.check(other, ctx),
+            TypeRef::CharValue(v) => v.check(other, ctx),
+            TypeRef::Tuple(v) => v.check(other, ctx),
+            TypeRef::Any(v) => v.check(other, ctx),
+            TypeRef::All(v) => v.check(other, ctx),
+            TypeRef::FixPoint(v) => v.check(other, ctx),
+            TypeRef::Invoke(v) => v.check(other, ctx),
+            TypeRef::Variable(v) => v.check(other, ctx),
+            TypeRef::Closure(v) => v.check(other, ctx),
+            TypeRef::Opcode(v) => v.check(other, ctx),
+            TypeRef::Namespace(v) => v.check(other, ctx),
+            TypeRef::Pattern(v) => v.check(other, ctx),
+            TypeRef::Lazy(v) => v.check(other, ctx),
+            TypeRef::Rot(v) => v.check(other, ctx),
+            TypeRef::Construct(v) => v.check(other, ctx),
+            TypeRef::OrderedType(v) => v.check(other, ctx),
+            TypeRef::EqOf(v) => v.check(other, ctx),
+            TypeRef::SubOf(v) => v.check(other, ctx),
+        }
+    }
+
+    fn is_normal_form(&self) -> ThreeValuedLogic {
+        match self {
+            TypeRef::Bound(v) => v.is_normal_form(),
+            TypeRef::Integer(v) => v.is_normal_form(),
+            TypeRef::IntegerValue(v) => v.is_normal_form(),
+            TypeRef::Float(v) => v.is_normal_form(),
+            TypeRef::FloatValue(v) => v.is_normal_form(),
+            TypeRef::Char(v) => v.is_normal_form(),
+            TypeRef::CharValue(v) => v.is_normal_form(),
+            TypeRef::Tuple(v) => v.is_normal_form(),
+            TypeRef::Any(v) => v.is_normal_form(),
+            TypeRef::All(v) => v.is_normal_form(),
+            TypeRef::FixPoint(v) => v.is_normal_form(),
+            TypeRef::Invoke(v) => v.is_normal_form(),
+            TypeRef::Variable(v) => v.is_normal_form(),
+            TypeRef::Closure(v) => v.is_normal_form(),
+            TypeRef::Opcode(v) => v.is_normal_form(),
+            TypeRef::Namespace(v) => v.is_normal_form(),
+            TypeRef::Pattern(v) => v.is_normal_form(),
+            TypeRef::Lazy(v) => v.is_normal_form(),
+            TypeRef::Rot(v) => v.is_normal_form(),
+            TypeRef::Construct(v) => v.is_normal_form(),
+            TypeRef::OrderedType(v) => v.is_normal_form(),
+            TypeRef::EqOf(v) => v.is_normal_form(),
+            TypeRef::SubOf(v) => v.is_normal_form(),
+        }
+    }
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
+        match self {
+            TypeRef::Bound(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Integer(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::IntegerValue(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Float(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::FloatValue(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Char(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::CharValue(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Tuple(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Any(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::All(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::FixPoint(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Invoke(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Variable(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Closure(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Opcode(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Namespace(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Pattern(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Lazy(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Rot(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Construct(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::OrderedType(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::EqOf(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::SubOf(v) => v.recalculate_normal_form(cycle_detector),
+        }
+    }
+
+    fn subof(
+        &self,
+        other: Self,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
+        match self {
+            TypeRef::Bound(v) => v.subof(other, ctx),
+            TypeRef::Integer(v) => v.subof(other, ctx),
+            TypeRef::IntegerValue(v) => v.subof(other, ctx),
+            TypeRef::Float(v) => v.subof(other, ctx),
+            TypeRef::FloatValue(v) => v.subof(other, ctx),
+            TypeRef::Char(v) => v.subof(other, ctx),
+            TypeRef::CharValue(v) => v.subof(other, ctx),
+            TypeRef::Tuple(v) => v.subof(other, ctx),
+            TypeRef::Any(v) => v.subof(other, ctx),
+            TypeRef::All(v) => v.subof(other, ctx),
+            TypeRef::FixPoint(v) => v.subof(other, ctx),
+            TypeRef::Invoke(v) => v.subof(other, ctx),
+            TypeRef::Variable(v) => v.subof(other, ctx),
+            TypeRef::Closure(v) => v.subof(other, ctx),
+            TypeRef::Opcode(v) => v.subof(other, ctx),
+            TypeRef::Namespace(v) => v.subof(other, ctx),
+            TypeRef::Pattern(v) => v.subof(other, ctx),
+            TypeRef::Lazy(v) => v.subof(other, ctx),
+            TypeRef::Rot(v) => v.subof(other, ctx),
+            TypeRef::Construct(v) => v.subof(other, ctx),
+            TypeRef::OrderedType(v) => v.subof(other, ctx),
+            TypeRef::EqOf(v) => v.subof(other, ctx),
+            TypeRef::SubOf(v) => v.subof(other, ctx),
+        }
+    }
+
+    fn tagged_ptr(&self) -> TaggedPtr<()> {
+        match self {
+            TypeRef::Bound(v) => v.tagged_ptr(),
+            TypeRef::Integer(v) => v.tagged_ptr(),
+            TypeRef::IntegerValue(v) => v.tagged_ptr(),
+            TypeRef::Float(v) => v.tagged_ptr(),
+            TypeRef::FloatValue(v) => v.tagged_ptr(),
+            TypeRef::Char(v) => v.tagged_ptr(),
+            TypeRef::CharValue(v) => v.tagged_ptr(),
+            TypeRef::Tuple(v) => v.tagged_ptr(),
+            TypeRef::Any(v) => v.tagged_ptr(),
+            TypeRef::All(v) => v.tagged_ptr(),
+            TypeRef::FixPoint(v) => v.tagged_ptr(),
+            TypeRef::Invoke(v) => v.tagged_ptr(),
+            TypeRef::Variable(v) => v.tagged_ptr(),
+            TypeRef::Closure(v) => v.tagged_ptr(),
+            TypeRef::Opcode(v) => v.tagged_ptr(),
+            TypeRef::Namespace(v) => v.tagged_ptr(),
+            TypeRef::Pattern(v) => v.tagged_ptr(),
+            TypeRef::Lazy(v) => v.tagged_ptr(),
+            TypeRef::Rot(v) => v.tagged_ptr(),
+            TypeRef::Construct(v) => v.tagged_ptr(),
+            TypeRef::OrderedType(v) => v.tagged_ptr(),
+            TypeRef::EqOf(v) => v.tagged_ptr(),
+            TypeRef::SubOf(v) => v.tagged_ptr(),
+        }
+    }
+
+    fn as_ref_dispatcher(&self) -> Self {
+        *self
+    }
+}
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
     pub fn clone_data(self) -> Type<T> {
@@ -185,8 +362,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Char(v) => Type::<T>::Char(v.clone()),
             TypeRef::CharValue(v) => Type::<T>::CharValue(v.clone()),
             TypeRef::Tuple(v) => Type::<T>::Tuple(v.clone()),
-            TypeRef::Generalize(v) => Type::<T>::Generalize(v.clone()),
-            TypeRef::Specialize(v) => Type::<T>::Specialize(v.clone()),
+            TypeRef::Any(v) => Type::<T>::Any(v.clone()),
+            TypeRef::All(v) => Type::<T>::All(v.clone()),
             TypeRef::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
             TypeRef::Invoke(v) => Type::<T>::Invoke(v.clone()),
             TypeRef::Variable(v) => Type::<T>::Variable(v.clone()),
@@ -198,39 +375,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Rot(v) => Type::<T>::Rot(v.clone()),
             TypeRef::Construct(v) => Type::<T>::Construct(v.clone()),
             TypeRef::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
-            TypeRef::EqType(v) => Type::<T>::EqType(v.clone()),
+            TypeRef::EqOf(v) => Type::<T>::EqOf(v.clone()),
+            TypeRef::SubOf(v) => Type::<T>::SubOf(v.clone()),
         }
     }
 }
 
 impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
-    pub fn tagged_ptr(self) -> TaggedPtr<()> {
-        match self {
-            TypeRef::Bound(v) => v.tagged_ptr(),
-            TypeRef::Integer(v) => v.tagged_ptr(),
-            TypeRef::IntegerValue(v) => v.tagged_ptr(),
-            TypeRef::Float(v) => v.tagged_ptr(),
-            TypeRef::FloatValue(v) => v.tagged_ptr(),
-            TypeRef::Char(v) => v.tagged_ptr(),
-            TypeRef::CharValue(v) => v.tagged_ptr(),
-            TypeRef::Tuple(v) => v.tagged_ptr(),
-            TypeRef::Generalize(v) => v.tagged_ptr(),
-            TypeRef::Specialize(v) => v.tagged_ptr(),
-            TypeRef::FixPoint(v) => v.tagged_ptr(),
-            TypeRef::Invoke(v) => v.tagged_ptr(),
-            TypeRef::Variable(v) => v.tagged_ptr(),
-            TypeRef::Closure(v) => v.tagged_ptr(),
-            TypeRef::Opcode(v) => v.tagged_ptr(),
-            TypeRef::Namespace(v) => v.tagged_ptr(),
-            TypeRef::Pattern(v) => v.tagged_ptr(),
-            TypeRef::Lazy(v) => v.tagged_ptr(),
-            TypeRef::Rot(v) => v.tagged_ptr(),
-            TypeRef::Construct(v) => v.tagged_ptr(),
-            TypeRef::OrderedType(v) => v.tagged_ptr(),
-            TypeRef::EqType(v) => v.tagged_ptr(),
-        }
-    }
-
     pub fn map<F, R>(
         self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -243,68 +394,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
         match self {
             TypeRef::FixPoint(v) => v.map(path, f),
             _ => Ok(Some(f(path, self))),
-        }
-    }
-
-    pub fn check(
-        self,
-        other: TypeRef<T>,
-        ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
-        match self {
-            TypeRef::Bound(v) => v.check(other, ctx),
-            TypeRef::Integer(v) => v.check(other, ctx),
-            TypeRef::IntegerValue(v) => v.check(other, ctx),
-            TypeRef::Float(v) => v.check(other, ctx),
-            TypeRef::FloatValue(v) => v.check(other, ctx),
-            TypeRef::Char(v) => v.check(other, ctx),
-            TypeRef::CharValue(v) => v.check(other, ctx),
-            TypeRef::Tuple(v) => v.check(other, ctx),
-            TypeRef::Generalize(v) => v.check(other, ctx),
-            TypeRef::Specialize(v) => v.check(other, ctx),
-            TypeRef::FixPoint(v) => v.check(other, ctx),
-            TypeRef::Invoke(v) => v.check(other, ctx),
-            TypeRef::Variable(v) => v.check(other, ctx),
-            TypeRef::Closure(v) => v.check(other, ctx),
-            TypeRef::Opcode(v) => v.check(other, ctx),
-            TypeRef::Namespace(v) => v.check(other, ctx),
-            TypeRef::Pattern(v) => v.check(other, ctx),
-            TypeRef::Lazy(v) => v.check(other, ctx),
-            TypeRef::Rot(v) => v.check(other, ctx),
-            TypeRef::Construct(v) => v.check(other, ctx),
-            TypeRef::OrderedType(v) => v.check(other, ctx),
-            TypeRef::EqType(v) => v.check(other, ctx),
-        }
-    }
-
-    pub fn equals(
-        self,
-        other: Self,
-        ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
-        match self {
-            TypeRef::Bound(v) => v.equals(other, ctx),
-            TypeRef::Integer(v) => v.equals(other, ctx),
-            TypeRef::IntegerValue(v) => v.equals(other, ctx),
-            TypeRef::Float(v) => v.equals(other, ctx),
-            TypeRef::FloatValue(v) => v.equals(other, ctx),
-            TypeRef::Char(v) => v.equals(other, ctx),
-            TypeRef::CharValue(v) => v.equals(other, ctx),
-            TypeRef::Tuple(v) => v.equals(other, ctx),
-            TypeRef::Generalize(v) => v.equals(other, ctx),
-            TypeRef::Specialize(v) => v.equals(other, ctx),
-            TypeRef::FixPoint(v) => v.equals(other, ctx),
-            TypeRef::Invoke(v) => v.equals(other, ctx),
-            TypeRef::Variable(v) => v.equals(other, ctx),
-            TypeRef::Closure(v) => v.equals(other, ctx),
-            TypeRef::Opcode(v) => v.equals(other, ctx),
-            TypeRef::Namespace(v) => v.equals(other, ctx),
-            TypeRef::Pattern(v) => v.equals(other, ctx),
-            TypeRef::Lazy(v) => v.equals(other, ctx),
-            TypeRef::Rot(v) => v.equals(other, ctx),
-            TypeRef::Construct(v) => v.equals(other, ctx),
-            TypeRef::OrderedType(v) => v.equals(other, ctx),
-            TypeRef::EqType(v) => v.equals(other, ctx),
         }
     }
 }
@@ -394,8 +483,8 @@ macro_rules! type_dispatch {
             Type::Float(v) => v.$method($($args),*),
             Type::FloatValue(v) => v.$method($($args),*),
             Type::Tuple(v) => v.$method($($args),*),
-            Type::Generalize(v) => v.$method($($args),*),
-            Type::Specialize(v) => v.$method($($args),*),
+            Type::Any(v) => v.$method($($args),*),
+            Type::All(v) => v.$method($($args),*),
             Type::FixPoint(v) => v.$method($($args),*),
             Type::Invoke(v) => v.$method($($args),*),
             Type::Variable(v) => v.$method($($args),*),
@@ -409,7 +498,8 @@ macro_rules! type_dispatch {
             Type::Rot(v) => v.$method($($args),*),
             Type::Construct(v) => v.$method($($args),*),
             Type::OrderedType(v) => v.$method($($args),*),
-            Type::EqType(v) => v.$method($($args),*),
+            Type::EqOf(v) => v.$method($($args),*),
+            Type::SubOf(v) => v.$method($($args),*),
         }
     };
 }
@@ -468,7 +558,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         type_dispatch!(self, check, other, ctx)
     }
 
@@ -500,8 +590,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Char(v) => v.is_normal_form(),
             Type::CharValue(v) => v.is_normal_form(),
             Type::Tuple(v) => v.is_normal_form(),
-            Type::Generalize(v) => v.is_normal_form(),
-            Type::Specialize(v) => v.is_normal_form(),
+            Type::Any(v) => v.is_normal_form(),
+            Type::All(v) => v.is_normal_form(),
             Type::FixPoint(v) => v.is_normal_form(),
             Type::Invoke(v) => v.is_normal_form(),
             Type::Variable(v) => v.is_normal_form(),
@@ -513,7 +603,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
             Type::Rot(v) => v.is_normal_form(),
             Type::Construct(v) => v.is_normal_form(),
             Type::OrderedType(v) => v.is_normal_form(),
-            Type::EqType(v) => v.is_normal_form(),
+            Type::EqOf(v) => v.is_normal_form(),
+            Type::SubOf(v) => v.is_normal_form(),
         }
     }
 
@@ -523,12 +614,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
     }
 
     #[stacksafe::stacksafe]
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
-        type_dispatch!(self, equals, other, ctx)
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
+        type_dispatch!(self, subof, other, ctx)
     }
 }
 
@@ -587,9 +678,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Type<T> {
 
 /// Trait to extract Type reference from different input types
 pub trait AsDispatcher<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    type RefDispatcher<'a>
+    type RefDispatcher<'b>: CoinductiveTypeRef<'b, U, V, Self::RefDispatcher<'b>>
+        + AsDispatcher<U, V>
     where
-        Self: 'a;
+        Self: 'b;
 
     fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a>;
     fn into_dispatcher(self) -> U
@@ -613,8 +705,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Char(v) => TypeRef::Char(v),
             Type::CharValue(v) => TypeRef::CharValue(v),
             Type::Tuple(v) => TypeRef::Tuple(v),
-            Type::Generalize(v) => TypeRef::Generalize(v),
-            Type::Specialize(v) => TypeRef::Specialize(v),
+            Type::Any(v) => TypeRef::Any(v),
+            Type::All(v) => TypeRef::All(v),
             Type::FixPoint(v) => TypeRef::FixPoint(v),
             Type::Invoke(v) => TypeRef::Invoke(v),
             Type::Variable(v) => TypeRef::Variable(v),
@@ -626,7 +718,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Rot(v) => TypeRef::Rot(v),
             Type::Construct(v) => TypeRef::Construct(v),
             Type::OrderedType(v) => TypeRef::OrderedType(v),
-            Type::EqType(v) => TypeRef::EqType(v),
+            Type::EqOf(v) => TypeRef::EqOf(v),
+            Type::SubOf(v) => TypeRef::SubOf(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -652,8 +745,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Char(v) => TypeRef::Char(v),
             Type::CharValue(v) => TypeRef::CharValue(v),
             Type::Tuple(v) => TypeRef::Tuple(v),
-            Type::Generalize(v) => TypeRef::Generalize(v),
-            Type::Specialize(v) => TypeRef::Specialize(v),
+            Type::Any(v) => TypeRef::Any(v),
+            Type::All(v) => TypeRef::All(v),
             Type::FixPoint(v) => TypeRef::FixPoint(v),
             Type::Invoke(v) => TypeRef::Invoke(v),
             Type::Variable(v) => TypeRef::Variable(v),
@@ -665,7 +758,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Rot(v) => TypeRef::Rot(v),
             Type::Construct(v) => TypeRef::Construct(v),
             Type::OrderedType(v) => TypeRef::OrderedType(v),
-            Type::EqType(v) => TypeRef::EqType(v),
+            Type::EqOf(v) => TypeRef::EqOf(v),
+            Type::SubOf(v) => TypeRef::SubOf(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -783,11 +877,36 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     Clone + Rootable<V> + Representable + AsDispatcher<U, V> + GCTraceable<V> + 'static + Sized
 {
-    fn check(
-        &self,
-        other: Self::RefDispatcher<'_>,
+    // A : B
+    fn check<'a>(
+        &'a self,
+        other: Self::RefDispatcher<'a>,
         ctx: &mut TypeCheckContext<U, V>,
-    ) -> Result<bool, TypeError<U, V>>;
+    ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
+
+    // A <: B，验证类型图A是图B的特例（关键处理的是Generalize和Specialize）
+    fn subof<'a>(
+        &'a self,
+        other: Self::RefDispatcher<'a>,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
+
+    // A == B，验证类型图A与图B等价
+    fn equals<'a>(
+        &'a self,
+        other: Self::RefDispatcher<'a>,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<ThreeValuedLogic, TypeError<U, V>> {
+        let mut rev_ctx = TypeCheckContext {
+            assumptions: ctx.assumptions,
+            closure_env: (ctx.closure_env.1, ctx.closure_env.0),
+            pattern_env: ctx.pattern_env,
+            rhs: !ctx.rhs,
+        };
+        let sub_ba = test_true!(other.subof(self.as_ref_dispatcher(), &mut rev_ctx)?);
+        let sub_ab = test_true!(self.subof(other, ctx)?);
+        Ok(sub_ab & sub_ba)
+    }
 
     // 归约变换
     fn reduce(self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
@@ -800,12 +919,6 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic;
-
-    fn equals(
-        &self,
-        other: Self::RefDispatcher<'_>,
-        ctx: &mut TypeCheckContext<U, V>,
-    ) -> Result<bool, TypeError<U, V>>;
 
     fn dispatch(self) -> U {
         <Self as AsDispatcher<U, V>>::into_dispatcher(self)
@@ -821,25 +934,68 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>);
 }
 
+pub trait CoinductiveTypeRef<
+    'a,
+    U: CoinductiveType<U, V>,
+    V: GcAllocObject<V>,
+    W: AsDispatcher<U, V> + CoinductiveTypeRef<'a, U, V, W>,
+>: Clone + Sized
+{
+    // A : B
+    fn check(
+        &self,
+        other: W,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
+
+    // A <: B，验证类型图A是图B的特例（关键处理的是Generalize和Specialize）
+    fn subof(
+        &self,
+        other: W,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
+
+    fn equals(
+        &self,
+        other: W,
+        ctx: &mut TypeCheckContext<U, V>,
+    ) -> Result<ThreeValuedLogic, TypeError<U, V>> {
+        let mut rev_ctx = TypeCheckContext {
+            assumptions: ctx.assumptions,
+            closure_env: (ctx.closure_env.1, ctx.closure_env.0),
+            pattern_env: ctx.pattern_env,
+            rhs: !ctx.rhs,
+        };
+
+        let sub_ba = test_true!(other.subof(self.as_ref_dispatcher(), &mut rev_ctx)?);
+        let sub_ab = test_true!(self.subof(other, ctx)?);
+        Ok(sub_ab & sub_ba)
+    }
+
+    fn tagged_ptr(&self) -> TaggedPtr<()>;
+
+    fn is_normal_form(&self) -> ThreeValuedLogic;
+
+    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>);
+
+    fn as_ref_dispatcher(&self) -> W;
+}
+
 pub trait CoinductiveTypeWithAny<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     AsDispatcher<U, V>
 {
     /// 检查当前类型是否接受另一个类型
-    fn accept(
-        &self,
-        other: Self::RefDispatcher<'_>,
+    fn accept<'a>(
+        &'a self,
+        other: Self::RefDispatcher<'a>,
         ctx: &mut TypeCheckContext<U, V>,
-    ) -> Result<bool, TypeError<U, V>>;
+    ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
 
-    /// 检查两个类型是否相等
-    #[allow(unused_variables)]
-    fn equals_any(
-        &self,
-        other: Self::RefDispatcher<'_>,
+    fn superof<'a>(
+        &'a self,
+        other: Self::RefDispatcher<'a>,
         ctx: &mut TypeCheckContext<U, V>,
-    ) -> Result<bool, TypeError<U, V>> {
-        unimplemented!()
-    }
+    ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
 }
 
 pub trait Representable {

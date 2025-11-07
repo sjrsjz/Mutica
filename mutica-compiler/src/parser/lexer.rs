@@ -1,6 +1,8 @@
 use logos::{Lexer, Logos};
 use std::{
-   fmt::Display, num::{ParseFloatError, ParseIntError}, ops::Range
+    fmt::Display,
+    num::{ParseFloatError, ParseIntError},
+    ops::Range,
 };
 
 pub type Span = Range<usize>;
@@ -206,7 +208,9 @@ pub enum LexerToken {
     #[token("handle")]
     Handle,
     #[token("eq")]
-    EqType,
+    EqOf,
+    #[token("sub")]
+    SubOf,
     #[token("type")]
     Type,
     #[token("for")]
@@ -215,7 +219,7 @@ pub enum LexerToken {
     In,
     #[token("extend")]
     Extend,
-    
+
     #[token("->")]
     Arrow,
     #[token("|->")]

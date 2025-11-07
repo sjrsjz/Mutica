@@ -19,6 +19,8 @@ use crate::{
     },
 };
 
+use crate::types::CoinductiveTypeRef;
+
 /// # 不动点算子内部实现 (Fixed-Point Operator Inner Implementation)
 ///
 /// `FixPointInner` 是不动点类型的内部存储结构，使用 `OnceLock`
@@ -172,7 +174,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
@@ -184,17 +186,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     let r: Weak<_> = v.reference.clone().into();
                     if l.ptr_eq(&r) {
                         // 相同引用，协归纳假设成立
-                        return Ok(true);
+                        return Ok(ThreeValuedLogic::True);
                     }
                     v.accept(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(TypeBound::Top) => Ok(true),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {
                             Some(t) => t,
-                            None => return Ok(false), // 未初始化（实际上这个可能需要更精细的处理）
+                            None => return Ok(ThreeValuedLogic::Unknown), // 未初始化
                         };
                         let self_ptr = inner.tagged_ptr();
                         let other_ptr = other.tagged_ptr();
@@ -203,7 +205,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         let already_assumed =
                             inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
                         if already_assumed {
-                            return Ok(true); // already assumed
+                            return Ok(ThreeValuedLogic::True); // already assumed
                         }
 
                         inner_ctx.assumptions.push(assumption_pair.clone());
@@ -217,11 +219,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
@@ -231,16 +233,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     let r: Weak<_> = v.reference.clone().into();
                     if l.ptr_eq(&r) {
                         // 相同引用，协归纳假设成立
-                        return Ok(true);
+                        return Ok(ThreeValuedLogic::True);
                     }
-                    v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx)
+                    v.superof(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {
                             Some(t) => t,
-                            None => return Ok(false), // 未初始化（实际上这个可能需要更精细的处理）
+                            None => return Ok(ThreeValuedLogic::Unknown), // 未初始化（实际上这个可能需要更精细的处理）
                         };
                         let self_ptr = inner.tagged_ptr();
                         let other_ptr = other.tagged_ptr();
@@ -249,11 +252,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         let already_assumed =
                             inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
                         if already_assumed {
-                            return Ok(true); // already assumed
+                            return Ok(ThreeValuedLogic::True); // already assumed
                         }
 
                         inner_ctx.assumptions.push(assumption_pair.clone());
-                        let result = inner.equals(other, &mut inner_ctx);
+                        let result = inner.subof(other, &mut inner_ctx);
                         inner_ctx.assumptions.pop();
                         result
                     }
@@ -362,7 +365,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
@@ -370,7 +373,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 Some(inner) => other.check(
                     match inner.as_ref().get_value() {
                         Some(t) => t.as_ref_dispatcher(),
-                        None => return Ok(false), // 未初始化
+                        None => return Ok(ThreeValuedLogic::Unknown), // 未初始化
                     },
                     &mut inner_ctx,
                 ),
@@ -380,19 +383,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     }
 
     #[stacksafe::stacksafe]
-    fn equals_any(
+    fn superof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match self.reference.upgrade() {
-                Some(inner) => other.equals(
+                Some(inner) => other.subof(
                     match inner.as_ref().get_value() {
                         Some(t) => t.as_ref_dispatcher(),
-                        None => return Ok(false), // 未初始化
+                        None => return Ok(ThreeValuedLogic::Unknown), // 未初始化
                     },
                     &mut inner_ctx,
                 ),

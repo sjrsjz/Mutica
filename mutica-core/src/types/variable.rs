@@ -1,8 +1,9 @@
+use crate::types::CoinductiveTypeRef;
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeRef, type_bound::TypeBound,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -47,22 +48,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Variable(v) => {
                     let self_idx = self.debruijn_index;
                     let v_idx = v.debruijn_index;
                     if self_idx >= 0 || v_idx >= 0 {
-                        return Ok(self_idx == v_idx);
+                        return Ok(ThreeValuedLogic::Unknown);
                     }
                     // 如果都是负数,说明都是闭包内的变量
                     // 需要从闭包环境中取出对应的类型进行比较
@@ -77,7 +79,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                     if self.debruijn_index >= 0 {
                         // 如果是正数,说明是参数变量,无法确定
                         // 实际上新模型允许通过上下文推导出参数变量的类型，进而使用Eq来判断
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::Unknown);
                     }
                     let r = (-1 - self.debruijn_index) as usize;
                     let value = ctx.closure_env.1.get(r)?;
@@ -87,22 +89,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Variable(v) => {
                     let self_idx = self.debruijn_index;
                     let v_idx = v.debruijn_index;
                     if self_idx >= 0 || v_idx >= 0 {
-                        return Ok(self_idx == v_idx);
+                        return Ok(ThreeValuedLogic::Unknown);
                     }
                     // 如果都是负数,说明都是闭包内的变量
                     // 需要从闭包环境中取出对应的类型进行比较
@@ -111,17 +114,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
 
                     let value_l = ctx.closure_env.0.get(l)?;
                     let value_r = ctx.closure_env.1.get(r)?;
-                    value_l.equals(value_r.as_ref_dispatcher(), &mut inner_ctx)
+                    value_l.subof(value_r.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => {
                     if self.debruijn_index >= 0 {
                         // 如果是正数,说明是参数变量,无法确定
                         // 实际上新模型允许通过上下文推导出参数变量的类型，进而使用Eq来判断
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::Unknown);
                     }
                     let r = (-1 - self.debruijn_index) as usize;
                     let value = ctx.closure_env.1.get(r)?;
-                    value.equals(other, &mut inner_ctx)
+                    value.subof(other, &mut inner_ctx)
                 }
             }
         })
@@ -156,16 +159,35 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             if self.debruijn_index >= 0 {
-                Ok(false)
+                Ok(ThreeValuedLogic::Unknown)
             } else {
                 let r = (-1 - self.debruijn_index) as usize;
                 let value = ctx.closure_env.1.get(r)?;
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 other.check(value.as_ref_dispatcher(), &mut inner_ctx)
+            }
+        })
+    }
+
+    #[stacksafe::stacksafe]
+    fn superof(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
+        ctx.pattern_env.collect(|pattern_env| {
+            if self.debruijn_index >= 0 {
+                Ok(ThreeValuedLogic::Unknown)
+            } else {
+                let r = (-1 - self.debruijn_index) as usize;
+                let value = ctx.closure_env.1.get(r)?;
+                let mut inner_ctx =
+                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+                other.subof(value.as_ref_dispatcher(), &mut inner_ctx)
             }
         })
     }

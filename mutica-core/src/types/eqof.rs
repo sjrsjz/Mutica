@@ -12,11 +12,13 @@ use crate::{
     },
 };
 
-pub struct Lazy<T: GcAllocObject<T, Inner = Type<T>>> {
+use crate::types::CoinductiveTypeRef;
+
+pub struct EqOf<T: GcAllocObject<T, Inner = Type<T>>> {
     inner: ArcOpt<(Type<T>, RwLock<ThreeValuedLogic>)>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for EqOf<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -24,46 +26,46 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for EqOf<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         let (value, _) = self.inner.as_ref();
         value.collect(queue);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for EqOf<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         let (value, _) = self.inner.as_ref();
         value.upgrade(collected);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for EqOf<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
         let (value, _) = self.inner.as_ref();
-        format!("Lazy<{}>", value.represent(path))
+        format!("Eq<{}>", value.represent(path))
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for EqOf<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
         Self: 'a;
 
     fn into_dispatcher(self) -> Type<T> {
-        Type::Lazy(self)
+        Type::EqOf(self)
     }
 
     fn as_ref_dispatcher<'a>(&'a self) -> Self::RefDispatcher<'a> {
-        TypeRef::Lazy(self)
+        TypeRef::EqOf(self)
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for EqOf<T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -78,15 +80,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
-                TypeRef::Lazy(v) => {
-                    let (self_value, _) = self.inner.as_ref();
-                    let (v_value, _) = v.inner.as_ref();
-                    self_value.check(v_value.as_ref_dispatcher(), &mut inner_ctx)
-                }
+                // 我们实际上无法找到EqType所归属的任何类型类，因此只能简单地拒绝其他类型。
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -106,8 +104,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+
                 TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
-                TypeRef::Lazy(v) => {
+                TypeRef::EqOf(v) => {
                     let (self_value, _) = self.inner.as_ref();
                     let (v_value, _) = v.inner.as_ref();
                     self_value.subof(v_value.as_ref_dispatcher(), &mut inner_ctx)
@@ -163,7 +162,33 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for EqOf<T> {
+    fn accept(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
+        let (value, _) = self.inner.as_ref();
+        other.equals(value.as_ref_dispatcher(), ctx)
+    }
+
+    fn superof(
+        &self,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
+        match other {
+            TypeRef::EqOf(v) => {
+                let (self_value, _) = self.inner.as_ref();
+                let (v_value, _) = v.inner.as_ref();
+                self_value.subof(v_value.as_ref_dispatcher(), ctx)
+            }
+            _ => other.subof(self.as_ref_dispatcher(), ctx),
+        }
+    }
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> EqOf<T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Type<T> {
         let value = value.into_dispatcher();

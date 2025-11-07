@@ -3,6 +3,7 @@ use std::sync::RwLock;
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
+    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
@@ -12,6 +13,8 @@ use crate::{
         arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
     },
 };
+
+use crate::types::CoinductiveTypeRef;
 
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
 // 但是为了实现的简洁性，这里就先分开了
@@ -71,18 +74,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         if ctx.rhs {
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 let (debruijn_index, expr, _) = self.inner.as_ref();
-                if expr.check(other, &mut inner_ctx)? {
-                    pattern_env.push((*debruijn_index, other.clone_data()));
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
+                test_true!(expr.check(other, &mut inner_ctx)?);
+                pattern_env.push((*debruijn_index, other.clone_data()));
+                Ok(ThreeValuedLogic::True)
             })
         } else {
             let (_, expr, _) = self.inner.as_ref();
@@ -90,52 +90,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         }
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
-        if ctx.pattern_env.is_enabled() {
-            // 模式匹配上下文，直接穿透到表达式内部进行比较
-            if ctx.rhs {
-                ctx.pattern_env.collect(|pattern_env| {
-                    let mut inner_ctx = TypeCheckContext::new(
-                        ctx.assumptions,
-                        ctx.closure_env,
-                        pattern_env,
-                        ctx.rhs,
-                    );
-                    let (debruijn_index, expr, _) = self.inner.as_ref();
-                    if expr.equals(other, &mut inner_ctx)? {
-                        pattern_env.push((*debruijn_index, other.clone_data()));
-                        Ok(true)
-                    } else {
-                        Ok(false)
-                    }
-                })
-            } else {
-                let (_, expr, _) = self.inner.as_ref();
-                expr.equals(other, ctx)
-            }
-        } else {
-            // 非模式匹配上下文，必须确保模式本身严格相等
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
+        if ctx.rhs {
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                match other {
-                    TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                    TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                    TypeRef::Pattern(v) => {
-                        let (debruijn_index, expr, _) = self.inner.as_ref();
-                        let (other_debruijn_index, other_expr, _) = v.inner.as_ref();
-                        if *debruijn_index != *other_debruijn_index {
-                            return Ok(false);
-                        }
-                        expr.equals(other_expr.as_ref_dispatcher(), &mut inner_ctx)
-                    }
-                    _ => Ok(false),
-                }
+                let (debruijn_index, expr, _) = self.inner.as_ref();
+                test_true!(expr.subof(other, &mut inner_ctx)?);
+                pattern_env.push((*debruijn_index, other.clone_data()));
+                Ok(ThreeValuedLogic::True)
             })
+        } else {
+            let (_, expr, _) = self.inner.as_ref();
+            expr.subof(other, ctx)
         }
     }
 
@@ -201,7 +172,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         if ctx.rhs {
             let (_, expr, _) = self.inner.as_ref();
             other.check(expr.as_ref_dispatcher(), ctx)
@@ -210,36 +181,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 let (debruijn_index, expr, _) = self.inner.as_ref();
-                if other.check(expr.as_ref_dispatcher(), &mut inner_ctx)? {
-                    pattern_env.push((*debruijn_index, other.clone_data()));
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
+                test_true!(other.check(expr.as_ref_dispatcher(), &mut inner_ctx)?);
+                pattern_env.push((*debruijn_index, other.clone_data()));
+                Ok(ThreeValuedLogic::True)
             })
         }
     }
 
     #[stacksafe::stacksafe]
-    fn equals_any(
+    fn superof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         if ctx.rhs {
             let (_, expr, _) = self.inner.as_ref();
-            other.equals(expr.as_ref_dispatcher(), ctx)
+            other.subof(expr.as_ref_dispatcher(), ctx)
         } else {
             ctx.pattern_env.collect(|pattern_env| {
                 let mut inner_ctx =
                     TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
                 let (debruijn_index, expr, _) = self.inner.as_ref();
-                if other.equals(expr.as_ref_dispatcher(), &mut inner_ctx)? {
-                    pattern_env.push((*debruijn_index, other.clone_data()));
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
+                test_true!(other.subof(expr.as_ref_dispatcher(), &mut inner_ctx)?);
+                pattern_env.push((*debruijn_index, other.clone_data()));
+                Ok(ThreeValuedLogic::True)
             })
         }
     }

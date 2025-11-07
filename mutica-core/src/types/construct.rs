@@ -3,6 +3,7 @@ use std::sync::RwLock;
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
+    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
         Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
@@ -70,72 +71,88 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
         &self,
         other: TypeRef<T>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, super::TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(true),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Construct(v) => {
                     let (head, tail, _) = self.inner.as_ref();
                     let (v_head, v_tail, _) = v.inner.as_ref();
-                    Ok(head.check(v_head.as_ref_dispatcher(), &mut inner_ctx)?
-                        && tail.check(v_tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    Ok(
+                        test_true!(head.check(v_head.as_ref_dispatcher(), &mut inner_ctx)?)
+                            & test_true!(tail.check(v_tail.as_ref_dispatcher(), &mut inner_ctx)?),
+                    )
                 }
                 TypeRef::Tuple(v) => {
                     if v.is_empty() {
                         // 空元组无法匹配任何构造
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::False);
                     }
                     let head = v.get(0).unwrap();
                     let tail = v.tail().unwrap();
                     let (self_head, self_tail, _) = self.inner.as_ref();
-                    Ok(self_head.check(head.as_ref_dispatcher(), &mut inner_ctx)?
-                        && self_tail.check(tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    Ok(
+                        test_true!(self_head.check(head.as_ref_dispatcher(), &mut inner_ctx)?)
+                            & test_true!(
+                                self_tail.check(tail.as_ref_dispatcher(), &mut inner_ctx)?
+                            ),
+                    )
                 }
-                _ => Ok(false),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, super::TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Construct(v) => {
                     let (head, tail, _) = self.inner.as_ref();
                     let (v_head, v_tail, _) = v.inner.as_ref();
-                    Ok(head.equals(v_head.as_ref_dispatcher(), &mut inner_ctx)?
-                        && tail.equals(v_tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    Ok(
+                        test_true!(head.subof(v_head.as_ref_dispatcher(), &mut inner_ctx)?)
+                            & test_true!(tail.subof(v_tail.as_ref_dispatcher(), &mut inner_ctx)?),
+                    )
                 }
                 TypeRef::Tuple(v) => {
                     if v.is_empty() {
                         // 空元组无法匹配任何构造
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::False);
                     }
                     let head = v.get(0).unwrap();
                     let tail = v.tail().unwrap();
                     let (self_head, self_tail, _) = self.inner.as_ref();
-                    Ok(self_head.equals(head.as_ref_dispatcher(), &mut inner_ctx)?
-                        && self_tail.equals(tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    Ok(
+                        test_true!(self_head.subof(head.as_ref_dispatcher(), &mut inner_ctx)?)
+                            & test_true!(
+                                self_tail.subof(tail.as_ref_dispatcher(), &mut inner_ctx)?
+                            ),
+                    )
                 }
-                _ => Ok(false),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }

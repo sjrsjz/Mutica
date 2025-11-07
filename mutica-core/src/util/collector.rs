@@ -1,3 +1,5 @@
+use crate::util::three_valued_logic::ThreeValuedLogic;
+
 pub struct Collector<T> {
     items: Option<smallvec::SmallVec<[T; 8]>>,
 }
@@ -32,20 +34,24 @@ impl<T> Collector<T> {
         }
     }
 
-    pub fn collect<F, E>(&mut self, f: F) -> Result<bool, E>
+    pub fn collect<F, E>(&mut self, f: F) -> Result<ThreeValuedLogic, E>
     where
-        F: FnOnce(&mut Self) -> Result<bool, E>,
+        F: FnOnce(&mut Self) -> Result<ThreeValuedLogic, E>,
     {
         if self.items.is_some() {
             let len = self.items.as_ref().unwrap().len();
             let result = f(self);
             match result {
-                Ok(true) => Ok(true),
-                Err(e) => Err(e),
-                Ok(false) => {
+                Ok(ThreeValuedLogic::True) => Ok(ThreeValuedLogic::True),
+                Ok(ThreeValuedLogic::Unknown) => {
                     self.items.as_mut().unwrap().truncate(len);
-                    Ok(false)
+                    Ok(ThreeValuedLogic::Unknown)
                 }
+                Ok(ThreeValuedLogic::False) => {
+                    self.items.as_mut().unwrap().truncate(len);
+                    Ok(ThreeValuedLogic::False)
+                }
+                Err(e) => Err(e),
             }
         } else {
             f(self)

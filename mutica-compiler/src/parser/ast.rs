@@ -5,14 +5,15 @@ use crate::parser::{
 };
 use lalrpop_util::ErrorRecovery;
 use mutica_core::arc_gc::gc::GC;
+use mutica_core::types::allof::AllOf;
+use mutica_core::types::anyof::AnyOf;
 use mutica_core::types::character::Character;
 use mutica_core::types::character_value::CharacterValue;
 use mutica_core::types::closure::{Closure, ClosureEnv};
 use mutica_core::types::construct::Construct;
-use mutica_core::types::eq_type::EqType;
+use mutica_core::types::eqof::EqOf;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
-use mutica_core::types::generalize::Generalize;
 use mutica_core::types::integer::Integer;
 use mutica_core::types::integer_value::IntegerValue;
 use mutica_core::types::invoke::Invoke;
@@ -22,7 +23,7 @@ use mutica_core::types::opcode::Opcode;
 use mutica_core::types::ordered_type::OrderedType;
 use mutica_core::types::pattern::Pattern;
 use mutica_core::types::rot::Rotate;
-use mutica_core::types::specialize::Specialize;
+use mutica_core::types::subof::SubOf;
 use mutica_core::types::tuple::Tuple;
 use mutica_core::types::type_bound::TypeBound;
 use mutica_core::types::variable::Variable;
@@ -122,7 +123,10 @@ pub enum TypeAst {
     Rot {
         value: Box<WithLocation<TypeAst>>,
     },
-    EqType {
+    EqOf {
+        value: Box<WithLocation<TypeAst>>,
+    },
+    SubOf {
         value: Box<WithLocation<TypeAst>>,
     },
 }
@@ -173,7 +177,10 @@ pub enum BasicTypeAst {
     Rot {
         value: Box<WithLocation<BasicTypeAst>>,
     },
-    EqType {
+    EqOf {
+        value: Box<WithLocation<BasicTypeAst>>,
+    },
+    SubOf {
         value: Box<WithLocation<BasicTypeAst>>,
     },
 }
@@ -513,9 +520,16 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::EqType { value } => {
+            BasicTypeAst::EqOf { value } => {
                 let value = value.linearize(ctx, value.location());
-                let ty = LinearTypeAst::EqType {
+                let ty = LinearTypeAst::EqOf {
+                    value: Box::new(value.tail_type().clone()),
+                };
+                LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
+            }
+            BasicTypeAst::SubOf { value } => {
+                let value = value.linearize(ctx, value.location());
+                let ty = LinearTypeAst::SubOf {
                     value: Box::new(value.tail_type().clone()),
                 };
                 LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
@@ -599,7 +613,10 @@ pub enum LinearTypeAst<'ast> {
     Rot {
         value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
-    EqType {
+    EqOf {
+        value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+    },
+    SubOf {
         value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
 }
@@ -950,8 +967,14 @@ impl TypeAst {
                 },
                 loc,
             ),
-            TypeAst::EqType { value } => WithLocation::new(
-                BasicTypeAst::EqType {
+            TypeAst::EqOf { value } => WithLocation::new(
+                BasicTypeAst::EqOf {
+                    value: Box::new(value.into_basic(multifile_builder, value.location())),
+                },
+                loc,
+            ),
+            TypeAst::SubOf { value } => WithLocation::new(
+                BasicTypeAst::SubOf {
                     value: Box::new(value.into_basic(multifile_builder, value.location())),
                 },
                 loc,
@@ -1057,7 +1080,10 @@ impl TypeAst {
                 head.collect_errors(errors);
                 tail.collect_errors(errors);
             }
-            TypeAst::EqType { value } => {
+            TypeAst::EqOf { value } => {
+                value.collect_errors(errors);
+            }
+            TypeAst::SubOf { value } => {
                 value.collect_errors(errors);
             }
         }
@@ -1158,7 +1184,10 @@ impl TypeAst {
             TypeAst::Rot { value } => TypeAst::Rot {
                 value: Box::new(Self::sanitize(*value)),
             },
-            TypeAst::EqType { value } => TypeAst::EqType {
+            TypeAst::EqOf { value } => TypeAst::EqOf {
+                value: Box::new(Self::sanitize(*value)),
+            },
+            TypeAst::SubOf { value } => TypeAst::SubOf {
                 value: Box::new(Self::sanitize(*value)),
             },
         })
@@ -1674,7 +1703,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Rot { value } => {
-                // Rot类型内不允许出现模式变量，因为Rot检查是反向的
                 let value_res = value.flow(ctx, pattern_mode, value.location(), errors);
                 FlowResult::complex(
                     WithLocation::new(
@@ -1688,12 +1716,25 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::EqType { value } => {
-                // EqType类型内不允许出现模式变量，因为EqType检查是反向的
+            LinearTypeAst::EqOf { value } => {
                 let value_res = value.flow(ctx, pattern_mode, value.location(), errors);
                 FlowResult::complex(
                     WithLocation::new(
-                        LinearTypeAst::EqType {
+                        LinearTypeAst::EqOf {
+                            value: Box::new(value_res.ty),
+                        },
+                        loc,
+                    ),
+                    value_res.captures,
+                    value_res.patterns,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
+            LinearTypeAst::SubOf { value } => {
+                let value_res = value.flow(ctx, pattern_mode, value.location(), errors);
+                FlowResult::complex(
+                    WithLocation::new(
+                        LinearTypeAst::SubOf {
                             value: Box::new(value_res.ty),
                         },
                         loc,
@@ -1853,7 +1894,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     )?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
-                Ok(BuildResult::complex(Generalize::new_raw(types), patterns))
+                Ok(BuildResult::complex(AnyOf::new(types), patterns))
             }
             LinearTypeAst::Specialize(basic_type_asts) => {
                 // let mut types = Vec::new();
@@ -1889,7 +1930,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     )?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
-                Ok(BuildResult::complex(Specialize::new_raw(types), patterns))
+                Ok(BuildResult::complex(AllOf::new(types), patterns))
             }
             LinearTypeAst::Invoke {
                 func,
@@ -2093,7 +2134,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     value_type.patterns,
                 ))
             }
-            LinearTypeAst::EqType { value } => {
+            LinearTypeAst::EqOf { value } => {
                 let value_type = value.to_type(
                     ctx,
                     pattern_counter,
@@ -2103,7 +2144,21 @@ impl<'ast> LinearTypeAst<'ast> {
                     value.location(),
                 )?;
                 Ok(BuildResult::complex(
-                    EqType::new(&value_type.ty),
+                    EqOf::new(&value_type.ty),
+                    value_type.patterns,
+                ))
+            }
+            LinearTypeAst::SubOf { value } => {
+                let value_type = value.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    value.location(),
+                )?;
+                Ok(BuildResult::complex(
+                    SubOf::new(&value_type.ty),
                     value_type.patterns,
                 ))
             }

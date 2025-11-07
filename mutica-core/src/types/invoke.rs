@@ -3,6 +3,7 @@ use std::sync::RwLock;
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
+    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
@@ -117,129 +118,109 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, super::TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(true),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Invoke(v) => {
                     let (self_func, self_arg, self_cont_style, _) = self.inner.as_ref();
                     let (v_func, v_arg, v_cont_style, _) = v.inner.as_ref();
 
-                    let func_eq = self_func.check(v_func.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if !func_eq {
-                        return Ok(false);
-                    }
-                    let arg_eq = self_arg.check(v_arg.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if !arg_eq {
-                        return Ok(false);
-                    }
-                    let cont_eq = match (self_cont_style, v_cont_style) {
-                        (
-                            InvokeCountinuationStyle::TailCall,
-                            InvokeCountinuationStyle::TailCall,
-                        ) => true,
-                        (
-                            InvokeCountinuationStyle::WithContinuation(c1),
-                            InvokeCountinuationStyle::WithContinuation(c2),
-                        ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                        (
-                            InvokeCountinuationStyle::WithPerformHandler(c1),
-                            InvokeCountinuationStyle::WithPerformHandler(c2),
-                        ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                        (
-                            InvokeCountinuationStyle::WithBoth(c1a, c1b),
-                            InvokeCountinuationStyle::WithBoth(c2a, c2b),
-                        ) => {
-                            let res_a = c1a.check(c2a.as_ref_dispatcher(), &mut inner_ctx)?;
-                            if !res_a {
-                                return Ok(false);
-                            }
-                            let res_b = c1b.check(c2b.as_ref_dispatcher(), &mut inner_ctx)?;
-                            if !res_b {
-                                return Ok(false);
-                            }
-                            true
-                        }
-                        _ => false,
-                    };
-                    if !cont_eq {
-                        return Ok(false);
-                    }
-                    Ok(true)
+                    Ok(
+                        test_true!(self_func.check(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
+                            & test_true!(
+                                self_arg.check(v_arg.as_ref_dispatcher(), &mut inner_ctx)?
+                            )
+                            & match (self_cont_style, v_cont_style) {
+                                (
+                                    InvokeCountinuationStyle::TailCall,
+                                    InvokeCountinuationStyle::TailCall,
+                                ) => ThreeValuedLogic::True,
+                                (
+                                    InvokeCountinuationStyle::WithContinuation(c1),
+                                    InvokeCountinuationStyle::WithContinuation(c2),
+                                ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                                (
+                                    InvokeCountinuationStyle::WithPerformHandler(c1),
+                                    InvokeCountinuationStyle::WithPerformHandler(c2),
+                                ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                                (
+                                    InvokeCountinuationStyle::WithBoth(c1a, c1b),
+                                    InvokeCountinuationStyle::WithBoth(c2a, c2b),
+                                ) => {
+                                    test_true!(c1a.check(c2a.as_ref_dispatcher(), &mut inner_ctx)?);
+                                    test_true!(c1b.check(c2b.as_ref_dispatcher(), &mut inner_ctx)?);
+                                    ThreeValuedLogic::True
+                                }
+                                _ => ThreeValuedLogic::False,
+                            },
+                    )
                 }
-                _ => Ok(false),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Invoke(v) => {
                     let (self_func, self_arg, self_cont_style, _) = self.inner.as_ref();
                     let (v_func, v_arg, v_cont_style, _) = v.inner.as_ref();
 
-                    let func_eq = self_func.equals(v_func.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if !func_eq {
-                        return Ok(false);
-                    }
-                    let arg_eq = self_arg.equals(v_arg.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if !arg_eq {
-                        return Ok(false);
-                    }
-                    let cont_eq = match (self_cont_style, v_cont_style) {
-                        (
-                            InvokeCountinuationStyle::TailCall,
-                            InvokeCountinuationStyle::TailCall,
-                        ) => true,
-                        (
-                            InvokeCountinuationStyle::WithContinuation(c1),
-                            InvokeCountinuationStyle::WithContinuation(c2),
-                        ) => c1.equals(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                        (
-                            InvokeCountinuationStyle::WithPerformHandler(c1),
-                            InvokeCountinuationStyle::WithPerformHandler(c2),
-                        ) => c1.equals(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                        (
-                            InvokeCountinuationStyle::WithBoth(c1a, c1b),
-                            InvokeCountinuationStyle::WithBoth(c2a, c2b),
-                        ) => {
-                            let res_a = c1a.equals(c2a.as_ref_dispatcher(), &mut inner_ctx)?;
-                            if !res_a {
-                                return Ok(false);
-                            }
-                            let res_b = c1b.equals(c2b.as_ref_dispatcher(), &mut inner_ctx)?;
-                            if !res_b {
-                                return Ok(false);
-                            }
-                            true
-                        }
-                        _ => false,
-                    };
-                    if !cont_eq {
-                        return Ok(false);
-                    }
-                    Ok(true)
+                    Ok(
+                        test_true!(self_func.subof(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
+                            & test_true!(
+                                self_arg.subof(v_arg.as_ref_dispatcher(), &mut inner_ctx)?
+                            )
+                            & match (self_cont_style, v_cont_style) {
+                                (
+                                    InvokeCountinuationStyle::TailCall,
+                                    InvokeCountinuationStyle::TailCall,
+                                ) => ThreeValuedLogic::True,
+                                (
+                                    InvokeCountinuationStyle::WithContinuation(c1),
+                                    InvokeCountinuationStyle::WithContinuation(c2),
+                                ) => c1.subof(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                                (
+                                    InvokeCountinuationStyle::WithPerformHandler(c1),
+                                    InvokeCountinuationStyle::WithPerformHandler(c2),
+                                ) => c1.subof(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                                (
+                                    InvokeCountinuationStyle::WithBoth(c1a, c1b),
+                                    InvokeCountinuationStyle::WithBoth(c2a, c2b),
+                                ) => {
+                                    test_true!(c1a.subof(c2a.as_ref_dispatcher(), &mut inner_ctx)?);
+                                    test_true!(c1b.subof(c2b.as_ref_dispatcher(), &mut inner_ctx)?);
+                                    ThreeValuedLogic::True
+                                }
+                                _ => ThreeValuedLogic::False,
+                            },
+                    )
                 }
-                _ => Ok(false),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }

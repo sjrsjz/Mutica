@@ -1143,7 +1143,10 @@ pub fn inject_std_library(
                 BasicTypeAst::Rot { value } => BasicTypeAst::Rot {
                     value: replace_placeholder(*value, ast).into(),
                 },
-                BasicTypeAst::EqType { value } => BasicTypeAst::EqType {
+                BasicTypeAst::EqOf { value } => BasicTypeAst::EqOf {
+                    value: replace_placeholder(*value, ast).into(),
+                },
+                BasicTypeAst::SubOf { value } => BasicTypeAst::SubOf {
                     value: replace_placeholder(*value, ast).into(),
                 },
             })

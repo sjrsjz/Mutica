@@ -51,50 +51,52 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
                 // 这些都是规则变换类型，他们必须被优先处理
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 _ => match self {
                     TypeBound::Top => match other {
-                        TypeRef::Bound(TypeBound::Top) => Ok(true),
-                        _ => Ok(false),
+                        TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                        _ => Ok(ThreeValuedLogic::False),
                     },
-                    TypeBound::Bottom => Ok(true), // ⊥ 可以满足任何类型
-                    TypeBound::PandomData(_) => Ok(false),
+                    TypeBound::Bottom => Ok(ThreeValuedLogic::True), // ⊥ 可以满足任何类型
+                    TypeBound::PandomData(_) => Ok(ThreeValuedLogic::False),
                 },
             }
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(other_bound) => match (self, other_bound) {
-                    (TypeBound::Top, TypeBound::Top) => Ok(true),
-                    (TypeBound::Bottom, TypeBound::Bottom) => Ok(true),
-                    (TypeBound::PandomData(_), TypeBound::PandomData(_)) => Ok(true),
-                    _ => Ok(false),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                _ => match self {
+                    TypeBound::Top => Ok(ThreeValuedLogic::True), // 任何类型都是 ⊤ 的子类型
+                    TypeBound::Bottom => match other {
+                        TypeRef::Bound(TypeBound::Bottom) => Ok(ThreeValuedLogic::True),
+                        _ => Ok(ThreeValuedLogic::False),
+                    },
+                    TypeBound::PandomData(_) => Ok(ThreeValuedLogic::False),
                 },
-                _ => Ok(false),
             }
         })
     }

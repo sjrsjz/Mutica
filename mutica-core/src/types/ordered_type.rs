@@ -3,7 +3,7 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable, Type,
-        TypeCheckContext, TypeError, TypeRef,
+        TypeCheckContext, TypeError, TypeRef, type_bound::TypeBound,
     },
     util::{rootstack::Rootable, three_valued_logic::ThreeValuedLogic},
 };
@@ -72,7 +72,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
         &self,
         other: crate::types::TypeRef<T>,
         ctx: &mut crate::types::TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, crate::types::TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, crate::types::TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx = crate::types::TypeCheckContext::new(
                 ctx.assumptions,
@@ -81,34 +81,40 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
                 ctx.rhs,
             );
             match other {
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(crate::types::type_bound::TypeBound::Top) => Ok(true),
-                TypeRef::OrderedType(v) => Ok(self.level < v.level),
-                _ => Ok(false),
+                TypeRef::Bound(crate::types::type_bound::TypeBound::Top) => {
+                    Ok(ThreeValuedLogic::True)
+                }
+                TypeRef::OrderedType(v) => Ok((self.level < v.level).into()),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::OrderedType(v) => Ok(self.level == v.level),
-                _ => Ok(false),
+                TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::OrderedType(v) => Ok((self.level == v.level).into()),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }

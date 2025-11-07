@@ -43,7 +43,8 @@ extern {
         "Else"          => LexerToken::Else,
         "Rot"           => LexerToken::Rot,
         "Handle"        => LexerToken::Handle,
-        "EqType"        => LexerToken::EqType,
+        "EqOf"          => LexerToken::EqOf,
+        "SubOf"         => LexerToken::SubOf,
         "Type"          => LexerToken::Type,
         "For"           => LexerToken::For,
         "In"            => LexerToken::In,
@@ -151,7 +152,8 @@ ThenTok: () = <l:@L> "Then" <r:@R> => { TokenColor::fill_colors(colors, l..r, To
 ElseTok: () = <l:@L> "Else" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 RotTok: () = <l:@L> "Rot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 HandleTok: () = <l:@L> "Handle" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-EqTypeTok: () = <l:@L> "EqType" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+EqOfTok: () = <l:@L> "EqOf" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+SubOfTok: () = <l:@L> "SubOf" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 TypeTok: () = <l:@L> "Type" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 ForTok: () = <l:@L> "For" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 InTok: () = <l:@L> "In" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
@@ -258,7 +260,8 @@ Term: WithLocation<TypeAst> = {
         t
     },
     <rot: Rot> => rot,
-    <eq: EqType> => eq,
+    <eq: EqOf> => eq,
+    <sub: SubOf> => sub,
     <np: Namespace> => np,
     <a: AtomType> => a,
 }
@@ -281,9 +284,17 @@ Rot: WithLocation<TypeAst> = {
     },
 }
 
-EqType: WithLocation<TypeAst> = {
-    <l:@L> EqTypeTok <t: Term> <r:@R> => {
-        WithLocation::new(TypeAst::EqType {
+EqOf: WithLocation<TypeAst> = {
+    <l:@L> EqOfTok <t: Term> <r:@R> => {
+        WithLocation::new(TypeAst::EqOf {
+            value: Box::new(t),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
+SubOf: WithLocation<TypeAst> = {
+    <l:@L> SubOfTok <t: Term> <r:@R> => {
+        WithLocation::new(TypeAst::SubOf {
             value: Box::new(t),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },

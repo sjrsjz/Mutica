@@ -77,19 +77,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(true),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Opcode(v) => match (self, v) {
                     (Opcode::Add, Opcode::Opcode) |
                     (Opcode::Sub, Opcode::Opcode) |
@@ -103,27 +104,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     (Opcode::Set, Opcode::Opcode) |
                     (Opcode::BuildFixPoint, Opcode::Opcode) |
                     (Opcode::IO(_), Opcode::Opcode) |
-                    (Opcode::Pandom(_), Opcode::Opcode) => Ok(true),
-                    _ => Ok(false),
+                    (Opcode::Pandom(_), Opcode::Opcode) => Ok(ThreeValuedLogic::True),
+                    _ => Ok(ThreeValuedLogic::False),
                 },
-                TypeRef::OrderedType(v) if matches!(self, Opcode::Opcode) => Ok(v.level() == 0),
-                _ => Ok(false),
+                TypeRef::OrderedType(v) if matches!(self, Opcode::Opcode) => Ok((v.level() == 0).into()),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Opcode(v) => Ok(match (self, v) {
                     (Opcode::Opcode, Opcode::Opcode) |
                     (Opcode::Add, Opcode::Add) |
@@ -136,12 +140,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     (Opcode::Is, Opcode::Is) |
                     (Opcode::Neg, Opcode::Neg) |
                     (Opcode::Set, Opcode::Set) |
-                    (Opcode::BuildFixPoint, Opcode::BuildFixPoint) => true,
-                    (Opcode::IO(a), Opcode::IO(b)) => a == b,
-                    (Opcode::Pandom(_), Opcode::Pandom(_)) => true,
-                    _ => false,
+                    (Opcode::BuildFixPoint, Opcode::BuildFixPoint) => ThreeValuedLogic::True,
+                    (Opcode::IO(a), Opcode::IO(b)) => (a == b).into(),
+                    (Opcode::Pandom(_), Opcode::Pandom(_)) => ThreeValuedLogic::True,
+                    _ => ThreeValuedLogic::False,
                 }),
-                _ => Ok(false),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
@@ -234,7 +238,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 false,
                             );
                             match left.check(right.as_ref_dispatcher(), &mut type_check_ctx) {
-                                Ok(res) => Ok(if res { true_branch } else { false_branch }),
+                                Ok(res) => Ok(if let ThreeValuedLogic::True = res { true_branch } else { false_branch }),
                                 Err(e) => Err(e),
                             }
                         } else {

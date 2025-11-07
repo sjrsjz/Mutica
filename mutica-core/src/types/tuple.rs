@@ -4,6 +4,7 @@ use std::sync::RwLock;
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
+    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
@@ -89,97 +90,97 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(true),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Tuple(v) => {
                     if self.len() != v.len() {
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::False);
                     }
+                    let mut all = ThreeValuedLogic::True;
                     for (a, b) in self.iter().zip(v.iter()) {
-                        if !a.check(b.as_ref_dispatcher(), &mut inner_ctx)? {
-                            return Ok(false);
-                        }
+                        all &= test_true!(a.check(b.as_ref_dispatcher(), &mut inner_ctx)?)
                     }
-                    Ok(true)
+                    Ok(all)
                 }
                 TypeRef::Construct(cons) => {
                     if self.is_empty() {
                         // 空元组无法匹配任何构造
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::False);
                     }
                     let head = cons.head();
                     let tail = cons.tail();
                     // 多元素元组匹配构造
-                    let head_result = self
-                        .head()
-                        .unwrap()
-                        .check(head.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if !head_result {
-                        return Ok(false);
-                    }
-                    self.tail()
-                        .unwrap()
-                        .check(tail.as_ref_dispatcher(), &mut inner_ctx)
+                    Ok(test_true!(
+                        self.head()
+                            .unwrap()
+                            .check(head.as_ref_dispatcher(), &mut inner_ctx)?
+                    ) & test_true!(
+                        self.tail()
+                            .unwrap()
+                            .check(tail.as_ref_dispatcher(), &mut inner_ctx)?
+                    ))
                 }
-                _ => Ok(false),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Tuple(v) => {
                     if self.len() != v.len() {
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::False);
                     }
+                    let mut all = ThreeValuedLogic::True;
                     for (a, b) in self.iter().zip(v.iter()) {
-                        if !a.check(b.as_ref_dispatcher(), &mut inner_ctx)? {
-                            return Ok(false);
-                        }
+                        all &= test_true!(a.subof(b.as_ref_dispatcher(), &mut inner_ctx)?);
                     }
-                    Ok(true)
+                    Ok(all)
                 }
                 TypeRef::Construct(cons) => {
                     if self.is_empty() {
                         // 空元组无法匹配任何构造
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::False);
                     }
                     let head = cons.head();
                     let tail = cons.tail();
                     // 多元素元组匹配构造
-                    let head_result = self
-                        .head()
-                        .unwrap()
-                        .equals(head.as_ref_dispatcher(), &mut inner_ctx)?;
-                    if !head_result {
-                        return Ok(false);
-                    }
-                    self.tail()
-                        .unwrap()
-                        .equals(tail.as_ref_dispatcher(), &mut inner_ctx)
+                    Ok(test_true!(
+                        self.head()
+                            .unwrap()
+                            .subof(head.as_ref_dispatcher(), &mut inner_ctx)?
+                    ) & test_true!(
+                        self.tail()
+                            .unwrap()
+                            .subof(tail.as_ref_dispatcher(), &mut inner_ctx)?
+                    ))
                 }
-                _ => Ok(false),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }

@@ -3,6 +3,7 @@ use std::{marker::PhantomData, ops::Deref, sync::RwLock};
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
+    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
@@ -158,9 +159,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
             false,
         );
         for ty in types.iter().skip(1) {
-            if !ty.equals(base_type.as_ref_dispatcher(), &mut ctx)? {
+            let ThreeValuedLogic::True = ty.equals(base_type.as_ref_dispatcher(), &mut ctx)? else {
                 return Ok(false);
-            }
+            };
         }
         Ok(true)
     }
@@ -273,100 +274,51 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Generalize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Specialize(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqType(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(true),
-                TypeRef::Closure(v) => {
-                    let (self_branches, self_env, _) = self.inner.as_ref();
-                    let (v_branches, v_env, _) = v.inner.as_ref();
-
-                    if self_branches.len() != v_branches.len() {
-                        return Ok(false);
-                    }
-
-                    for (
-                        (self_inner, self_idx, self_pattern_count),
-                        (other_inner, other_idx, other_pattern_count),
-                    ) in self_branches.iter().zip(v_branches.iter())
-                    {
-                        if self_pattern_count != other_pattern_count {
-                            return Ok(false);
-                        }
-                        // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
-                        // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
-                        // 因此所有的pattern_env都应当被禁用
-
-                        // 创建用于表达式比较的上下文
-                        if *self_idx >= self_env.len() || *other_idx >= v_env.len() {
-                            panic!("CRITICAL: Closure branch environment index out of bounds");
-                        }
-                        let mut pattern_env_disabled = Collector::new_disabled();
-                        let mut pattern_ctx = TypeCheckContext::new(
-                            ctx.assumptions,
-                            (&self_env[*self_idx], &v_env[*other_idx]),
-                            &mut pattern_env_disabled,
-                            ctx.rhs,
-                        );
-
-                        if !self_inner
-                            .expr
-                            .check(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
-                        {
-                            return Ok(false);
-                        }
-
-                        // 创建用于模式比较的上下文
-                        let mut pattern_env_disabled = Collector::new_disabled();
-                        let mut pattern_ctx = TypeCheckContext::new(
-                            ctx.assumptions,
-                            (ctx.closure_env.1, ctx.closure_env.0), // 逆变
-                            &mut pattern_env_disabled,
-                            !ctx.rhs,
-                        );
-
-                        if !other_inner
-                            .pattern
-                            .check(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
-                        {
-                            return Ok(false);
-                        }
-                    }
-                    Ok(true)
-                }
-                _ => Ok(false),
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                // 我们实际上无法为闭包类型分配一个其对应的类型
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
 
-    fn equals(
+    fn subof(
         &self,
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
-    ) -> Result<bool, TypeError<Type<T>, T>> {
+    ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_env.collect(|pattern_env| {
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::FixPoint(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Variable(v) => v.equals_any(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Closure(v) => {
                     let (self_branches, self_env, _) = self.inner.as_ref();
                     let (v_branches, v_env, _) = v.inner.as_ref();
 
                     if self_branches.len() != v_branches.len() {
-                        return Ok(false);
+                        return Ok(ThreeValuedLogic::False);
                     }
+
+                    let mut all = ThreeValuedLogic::True;
 
                     for (
                         (self_inner, self_idx, self_pattern_count),
@@ -374,7 +326,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     ) in self_branches.iter().zip(v_branches.iter())
                     {
                         if self_pattern_count != other_pattern_count {
-                            return Ok(false);
+                            return Ok(ThreeValuedLogic::False);
                         }
                         // 我们不考虑比较时捕获对象是Variable的情况,因为自由变量不应当存在被检查的闭包的环境中
                         // 由于闭包的模式不应当被泄漏,对闭包的解构是不适用的
@@ -392,12 +344,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                             ctx.rhs,
                         );
 
-                        if !self_inner
-                            .expr
-                            .equals(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
-                        {
-                            return Ok(false);
-                        }
+                        all &= test_true!(
+                            self_inner
+                                .expr
+                                .subof(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
+                        );
 
                         // 创建用于模式比较的上下文
                         let mut pattern_env_disabled = Collector::new_disabled();
@@ -408,16 +359,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                             !ctx.rhs,
                         );
 
-                        if !other_inner
-                            .pattern
-                            .equals(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
-                        {
-                            return Ok(false);
-                        }
+                        all &= test_true!(
+                            other_inner
+                                .pattern
+                                .subof(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
+                        )
                     }
-                    Ok(true)
+                    Ok(all)
                 }
-                _ => Ok(false),
+                _ => Ok(ThreeValuedLogic::False),
             }
         })
     }
@@ -536,7 +486,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 false,
             );
 
-            if ctx
+            if let ThreeValuedLogic::True = ctx
                 .arg
                 .check(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
                 && let Some(param_env) =

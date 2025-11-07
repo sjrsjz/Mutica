@@ -169,14 +169,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 "as_tuple" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                         TypeRef::Tuple(_) => Ok(Some(arg.clone_data())),
-                        TypeRef::Generalize(v) => {
+                        TypeRef::Any(v) => {
                             let mut elements = Vec::new();
                             for ty in v.types() {
                                 elements.push(ty.clone());
                             }
                             Ok(Some(Tuple::new(elements)))
                         }
-                        TypeRef::Specialize(v) => {
+                        TypeRef::All(v) => {
                             let mut elements = Vec::new();
                             for ty in v.types() {
                                 elements.push(ty.clone());
