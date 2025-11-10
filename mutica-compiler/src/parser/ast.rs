@@ -5,6 +5,7 @@ use crate::parser::{
 };
 use lalrpop_util::ErrorRecovery;
 use mutica_core::arc_gc::gc::GC;
+use mutica_core::as_type;
 use mutica_core::types::allof::AllOf;
 use mutica_core::types::anyof::AnyOf;
 use mutica_core::types::character::Character;
@@ -12,6 +13,7 @@ use mutica_core::types::character_value::CharacterValue;
 use mutica_core::types::closure::{Closure, ClosureEnv};
 use mutica_core::types::construct::Construct;
 use mutica_core::types::eqof::EqOf;
+use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
 use mutica_core::types::integer::Integer;
@@ -111,6 +113,10 @@ pub enum TypeAst {
         param_name: String,
         expr: Box<WithLocation<TypeAst>>,
     },
+    StaticFixPoint {
+        param_name: String,
+        expr: Box<WithLocation<TypeAst>>,
+    },
     Namespace {
         tag: String,
         expr: Box<WithLocation<TypeAst>>,
@@ -182,6 +188,10 @@ pub enum BasicTypeAst {
     },
     SubOf {
         value: Box<WithLocation<BasicTypeAst>>,
+    },
+    StaticFixPoint {
+        param_name: String,
+        expr: Box<WithLocation<BasicTypeAst>>,
     },
 }
 
@@ -534,6 +544,14 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
             }
+            BasicTypeAst::StaticFixPoint { param_name, expr } => {
+                let expr = expr.linearize(ctx, expr.location());
+                let ty = LinearTypeAst::StaticFixPoint {
+                    param_name: param_name.clone(),
+                    expr: Box::new(expr.tail_type().clone()),
+                };
+                LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
+            }
         }
     }
 }
@@ -618,6 +636,10 @@ pub enum LinearTypeAst<'ast> {
     },
     SubOf {
         value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+    },
+    StaticFixPoint {
+        param_name: String,
+        expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
 }
 
@@ -979,6 +1001,13 @@ impl TypeAst {
                 },
                 loc,
             ),
+            TypeAst::StaticFixPoint { param_name, expr } => WithLocation::new(
+                BasicTypeAst::StaticFixPoint {
+                    param_name: param_name.clone(),
+                    expr: Box::new(expr.into_basic(multifile_builder, expr.location())),
+                },
+                loc,
+            ),
         }
     }
 
@@ -1086,6 +1115,9 @@ impl TypeAst {
             TypeAst::SubOf { value } => {
                 value.collect_errors(errors);
             }
+            TypeAst::StaticFixPoint { expr, .. } => {
+                expr.collect_errors(errors);
+            }
         }
     }
 
@@ -1189,6 +1221,10 @@ impl TypeAst {
             },
             TypeAst::SubOf { value } => TypeAst::SubOf {
                 value: Box::new(Self::sanitize(*value)),
+            },
+            TypeAst::StaticFixPoint { param_name, expr } => TypeAst::StaticFixPoint {
+                param_name,
+                expr: Box::new(Self::sanitize(*expr)),
             },
         })
     }
@@ -1584,6 +1620,53 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
+            LinearTypeAst::StaticFixPoint { param_name, expr } => {
+                // 静态不动点类型的处理与普通不动点类型类似，但需要在ctx中声明param_name
+                ctx.enter_scope();
+                match ctx.declare_variable(param_name.clone(), loc) {
+                    Ok(_) => {}
+                    Err(ContextError::EmptyContext) => {
+                        panic!(
+                            "Internal error: Context should not be empty when declaring a variable"
+                        );
+                    }
+                    Err(ContextError::NotDeclared(_)) => unreachable!(),
+                    Err(ContextError::NotUsed(v)) => {
+                        errors.push(WithLocation::new(
+                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                            loc,
+                        ));
+                    }
+                }
+                let expr_res = expr.flow(ctx, pattern_mode, expr.location(), errors);
+                match ctx.exit_scope() {
+                    Ok(_) => {}
+                    Err(ContextError::EmptyContext) => {
+                        panic!("Internal error: Context should not be empty when exiting a scope");
+                    }
+                    Err(ContextError::NotDeclared(_)) => unreachable!(),
+                    Err(ContextError::NotUsed(v)) => {
+                        errors.push(WithLocation::new(
+                            ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
+                            loc,
+                        ));
+                    }
+                }
+                let mut captures = expr_res.captures;
+                captures.remove(param_name); // 移除掉不动点参数，因为它是递归定义的参数，不应当被视为捕获的自由变量
+                FlowResult::complex(
+                    WithLocation::new(
+                        LinearTypeAst::StaticFixPoint {
+                            param_name: param_name.clone(),
+                            expr: Box::new(expr_res.ty),
+                        },
+                        loc,
+                    ),
+                    captures,
+                    expr_res.patterns,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
             LinearTypeAst::Match {
                 auto_captures,
                 branches,
@@ -1867,21 +1950,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 ))
             }
             LinearTypeAst::Generalize(basic_type_asts) => {
-                // let mut types = Vec::new();
-                // for bta in basic_type_asts {
-                //     types.push(bta.to_type(
-                //         ctx,
-                //         &mut PatternCounter::new(), // 泛化类型内不允许出现模式变量，安全起见传入一个新的计数器
-                //         false,
-                //         gc,
-                //         roots,
-                //         bta.location(),
-                //     )?);
-                // }
-                // // 我们无法计算出泛化类型的闭包环境，因此传入一个空的闭包环境
-                // let (types, patterns) = BuildResult::fold(types);
-                // Ok(BuildResult::complex(Generalize::new_raw(&types), patterns))
-
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(
@@ -1897,27 +1965,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 Ok(BuildResult::complex(AnyOf::new(types), patterns))
             }
             LinearTypeAst::Specialize(basic_type_asts) => {
-                // let mut types = Vec::new();
-                // for bta in basic_type_asts {
-                //     types.push(bta.to_type(
-                //         ctx,
-                //         &mut PatternCounter::new(), // 专化类型内不允许出现模式变量，安全起见传入一个新的计数器
-                //         false,
-                //         gc,
-                //         roots,
-                //         bta.location(),
-                //     )?);
-                // }
-                // // 我们无法计算出专化类型的闭包环境，因此传入一个空的闭包环境
-                // let (types, patterns) = BuildResult::fold(types);
-                // if !patterns.is_empty() {
-                //     return Err(Err(ParseError::AmbiguousPattern(WithLocation::new(
-                //         self.clone(),
-                //         loc,
-                //     ))));
-                // }
-                // Ok(BuildResult::complex(Specialize::new_raw(&types), patterns))
-
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(
@@ -2052,6 +2099,24 @@ impl<'ast> LinearTypeAst<'ast> {
                     new_branches,
                     vec![closure_env],
                 )))
+            }
+            LinearTypeAst::StaticFixPoint { param_name, expr } => {
+                let placeholder = FixPoint::new_placeholder(gc, roots);
+                ctx.current_layer_mut()
+                    .enter_fixpoint(param_name.clone(), placeholder.clone());
+                let expr_type = expr.to_type(
+                    ctx,
+                    pattern_counter,
+                    pattern_mode,
+                    gc,
+                    roots,
+                    expr.location(),
+                )?;
+                ctx.current_layer_mut().exit_fixpoint();
+                as_type!(&placeholder, Type::FixPoint)
+                    .set(expr_type.ty())
+                    .map_err(Ok)?;
+                Ok(BuildResult::complex(placeholder, expr_type.patterns))
             }
             LinearTypeAst::AtomicOpcode(atomic_opcode) => {
                 Ok(BuildResult::simple(Opcode::new(match atomic_opcode {

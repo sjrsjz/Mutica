@@ -175,6 +175,8 @@ pub enum LexerToken {
     Match,
     #[token("rec")]
     Rec,
+    #[token("dyn_rec")]
+    DynamicRec,
     #[token("loop")]
     Loop,
     #[token("panic")]

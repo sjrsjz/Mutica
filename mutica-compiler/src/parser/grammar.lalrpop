@@ -27,6 +27,7 @@ extern {
         "With"          => LexerToken::With,
         "Match"         => LexerToken::Match,
         "Rec"           => LexerToken::Rec,
+        "DynamicRec"    => LexerToken::DynamicRec,
         "Loop"          => LexerToken::Loop,
         "Panic"         => LexerToken::Panic,
         "Discard"       => LexerToken::Discard,
@@ -143,6 +144,7 @@ LetTok: () = <l:@L> "Let" <r:@R> => { TokenColor::fill_colors(colors, l..r, Toke
 WithTok: () = <l:@L> "With" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 MatchTok: () = <l:@L> "Match" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 RecTok: () = <l:@L> "Rec" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+DynamicRecTok: () = <l:@L> "DynamicRec" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 LoopTok: () = <l:@L> "Loop" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 PanicTok: () = <l:@L> "Panic" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 DiscardTok: () = <l:@L> "Discard" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
@@ -384,6 +386,12 @@ MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
 
 RecursiveGen: WithLocation<TypeAst> = {
     <l:@L> RecTok <id: Ident> ColonTok <t: Primary> <r:@R> => {
+        WithLocation::new(TypeAst::StaticFixPoint {
+            param_name: id,
+            expr: Box::new(t),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> DynamicRecTok <id: Ident> ColonTok <t: Primary> <r:@R> => {
         WithLocation::new(TypeAst::FixPoint {
             param_name: id,
             expr: Box::new(t),

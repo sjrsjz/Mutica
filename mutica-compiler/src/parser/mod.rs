@@ -1149,6 +1149,10 @@ pub fn inject_std_library(
                 BasicTypeAst::SubOf { value } => BasicTypeAst::SubOf {
                     value: replace_placeholder(*value, ast).into(),
                 },
+                BasicTypeAst::StaticFixPoint { param_name, expr } => BasicTypeAst::StaticFixPoint {
+                    param_name,
+                    expr: replace_placeholder(*expr, ast).into(),
+                },
             })
         }
         replace_placeholder(std_ast, ast.value())

@@ -1,1 +1,3 @@
-rec x: rec y: (1, x, y)
+match (1, 1)
+    | [rec list:(() | (x: any) @ list)] => x
+    | panic

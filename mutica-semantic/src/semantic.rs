@@ -108,6 +108,9 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::SubOf { value } => {
                 Self::build_mapping(value, mapping, source_file);
             }
+            LinearTypeAst::StaticFixPoint { expr, .. } => {
+                Self::build_mapping(expr, mapping, source_file);
+            }
         }
     }
 }

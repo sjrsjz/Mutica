@@ -11,7 +11,7 @@ let {
 } = string_pkg;
 
 
-let Json: any = rec object: (
+let Json: any = dyn_rec object: (
     List(object) |
     (rot [rec t: [() & (none @ t)]], object) |
     String |
