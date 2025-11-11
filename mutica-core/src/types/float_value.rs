@@ -1,22 +1,26 @@
+use std::sync::Arc;
+
 use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, type_bound::TypeBound,
+        TypeRef
     },
-    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct FloatValue<T: GcAllocObject<T, Inner = Type<T>>> {
     value: f64,
+    source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<T>,
 }
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FloatValue<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value,
+            source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -60,7 +64,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Float(_) => Ok(ThreeValuedLogic::True),
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -82,7 +86,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::FloatValue(v) => Ok((self.value == v.value).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -105,6 +109,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
     }
 
     fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.source_info.as_deref()
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FloatValue<T> {
@@ -115,9 +123,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FloatValue<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> FloatValue<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(value: f64) -> Type<T> {
-        Self {
+    pub fn new(value: f64, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        FloatValue {
             value,
+            source_info,
             _phantom: std::marker::PhantomData,
         }
         .dispatch()

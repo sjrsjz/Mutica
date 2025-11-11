@@ -64,6 +64,7 @@ use crate::{
         collector::Collector,
         cycle_detector::FastCycleDetector,
         rootstack::{RootStack, Rootable},
+        source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -914,6 +915,10 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     // 类型应用
     fn invoke(self, ctx: InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
 
+    fn source_info(&self) -> Option<&SourceLocation> {
+        None
+    }
+
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         TaggedPtr::new_unique(self as *const _ as *const ())
     }
@@ -970,6 +975,10 @@ pub trait CoinductiveTypeRef<
         let sub_ba = test_true!(other.subof(self.as_ref_dispatcher(), &mut rev_ctx)?);
         let sub_ab = test_true!(self.subof(other, ctx)?);
         Ok(sub_ab & sub_ba)
+    }
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        None
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()>;

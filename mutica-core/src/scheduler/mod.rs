@@ -13,7 +13,6 @@ use crate::{
         closure::{ClosureEnv, ParamEnv},
         integer_value::IntegerValue,
         invoke::{Invoke, InvokeCountinuationStyle},
-        opcode::Opcode,
         tuple::Tuple,
     },
     util::{
@@ -102,10 +101,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             let TypeRef::Opcode(op) = f else {
                 unreachable!()
             };
-            if !matches!(op, Opcode::IO(_)) {
+            if !matches!(&op.kind, crate::types::opcode::OpcodeKind::IO(_)) {
                 return Ok(None);
             }
-            let Opcode::IO(io_name) = op else {
+            let crate::types::opcode::OpcodeKind::IO(io_name) = &op.kind else {
                 unreachable!()
             };
             match io_name.as_ref().as_str() {
@@ -125,7 +124,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     std::io::stdin().read_line(&mut input).unwrap();
                     let chars = input
                         .chars()
-                        .map(|c| CharacterValue::new(c))
+                        .map(|c| CharacterValue::new(c, None))
                         .collect::<Vec<_>>();
                     Ok(Some(Tuple::new(chars)))
                 }
@@ -139,7 +138,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let repr = arg.represent(&mut FastCycleDetector::new());
                     let chars = repr
                         .chars()
-                        .map(|c| CharacterValue::new(c))
+                        .map(|c| CharacterValue::new(c, None))
                         .collect::<Vec<_>>();
                     Ok(Some(Tuple::new(chars)))
                 }
@@ -147,7 +146,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let disp = arg.display(&mut FastCycleDetector::new());
                     let chars = disp
                         .chars()
-                        .map(|c| CharacterValue::new(c))
+                        .map(|c| CharacterValue::new(c, None))
                         .collect::<Vec<_>>();
                     Ok(Some(Tuple::new(chars)))
                 }
@@ -158,7 +157,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 // 类型结构描述相关
                 "tuple_len" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                        TypeRef::Tuple(v) => Ok(Some(IntegerValue::new(v.len() as i64))),
+                        TypeRef::Tuple(v) => Ok(Some(IntegerValue::new(v.len() as i64, None))),
                         _ => Err(TypeError::TypeMismatch(
                             (arg.clone_data(), "Tuple | List".into()).into(),
                         )),
@@ -198,8 +197,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 "alloc" => {
                     let id = self.allocated_types.alloc(arg.clone());
                     Ok(Some(Tuple::new(vec![
-                        IntegerValue::new(id.index() as i64),
-                        IntegerValue::new(id.generation() as i64),
+                        IntegerValue::new(id.index() as i64, None),
+                        IntegerValue::new(id.generation() as i64, None),
                     ])))
                 }
                 "dealloc" => arg
@@ -397,8 +396,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                     return Err(TypeError::MissingPerformHandler(Box::new(func)));
                                 }
                             };
-                            let perform_invoke =
-                                Invoke::new(perform_handler, *v, None::<Type<T>>, None::<Type<T>>);
+                            let perform_invoke = Invoke::new(
+                                perform_handler,
+                                *v,
+                                None::<Type<T>>,
+                                None::<Type<T>>,
+                                None,
+                            );
                             match continuation_style {
                                 InvokeCountinuationStyle::TailCall => (),
                                 InvokeCountinuationStyle::WithContinuation(v) => {
@@ -454,9 +458,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 }
                             }
                             let break_invoke = match continuation {
-                                Some(continuation) => {
-                                    Invoke::new(continuation, *v, None::<Type<T>>, None::<Type<T>>)
-                                }
+                                Some(continuation) => Invoke::new(
+                                    continuation,
+                                    *v,
+                                    None::<Type<T>>,
+                                    None::<Type<T>>,
+                                    None,
+                                ),
                                 None => *v,
                             };
                             return Ok((break_invoke, true));
@@ -525,7 +533,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     }
                 } {
                     Some(cont) => Ok((
-                        Invoke::new(cont, inner, None::<Type<T>>, None::<Type<T>>),
+                        Invoke::new(cont, inner, None::<Type<T>>, None::<Type<T>>, None),
                         true,
                     )),
                     None => Ok((inner, false)),

@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use crate::types::CoinductiveTypeRef;
+use crate::util::source_info::SourceLocation;
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, type_bound::TypeBound,
+        TypeRef
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -11,12 +14,14 @@ use arc_gc::traceable::GCTraceable;
 
 pub struct Variable<T: GcAllocObject<T, Inner = Type<T>>> {
     debruijn_index: isize,
+    source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<T>,
 }
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Variable<T> {
     fn clone(&self) -> Self {
         Self {
             debruijn_index: self.debruijn_index,
+            source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -100,7 +105,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
             match other {
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::Variable(v) => {
                     let self_idx = self.debruijn_index;
                     let v_idx = v.debruijn_index;
@@ -151,6 +156,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     }
 
     fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.source_info.as_deref()
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Variable<T> {
@@ -200,9 +209,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
-    pub fn new_debruijn(debruijn_index: isize) -> Type<T> {
+    pub fn new_debruijn(
+        debruijn_index: isize,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
         Variable {
             debruijn_index,
+            source_info,
             _phantom: std::marker::PhantomData,
         }
         .dispatch()

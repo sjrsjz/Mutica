@@ -1,21 +1,27 @@
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef, type_bound::TypeBound,
+        Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
     },
     util::{
-        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
 use crate::types::CoinductiveTypeRef;
 
 pub struct SubOf<T: GcAllocObject<T, Inner = Type<T>>> {
-    inner: ArcOpt<(Type<T>, RwLock<ThreeValuedLogic>)>,
+    #[allow(clippy::type_complexity)]
+    inner: ArcOpt<(
+        Type<T>,
+        Option<Arc<SourceLocation>>,
+        RwLock<ThreeValuedLogic>,
+    )>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for SubOf<T> {
@@ -28,14 +34,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for SubOf<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for SubOf<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        let (value, _) = self.inner.as_ref();
+        let (value, _, _) = self.inner.as_ref();
         value.collect(queue);
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for SubOf<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        let (value, _) = self.inner.as_ref();
+        let (value, _, _) = self.inner.as_ref();
         value.upgrade(collected);
     }
 }
@@ -45,7 +51,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for SubOf<T> {
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
-        let (value, _) = self.inner.as_ref();
+        let (value, _, _) = self.inner.as_ref();
         format!("Sub<{}>", value.represent(path))
     }
 }
@@ -83,7 +89,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 // 我们实际上无法找到SubOf所归属的任何类型类，因此只能简单地拒绝其他类型。
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -105,10 +115,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::SubOf(v) => {
-                    let (self_value, _) = self.inner.as_ref();
-                    let (v_value, _) = v.inner.as_ref();
+                    let (self_value, _, _) = self.inner.as_ref();
+                    let (v_value, _, _) = v.inner.as_ref();
                     self_value.subof(v_value.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => Ok(ThreeValuedLogic::False),
@@ -120,19 +134,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
         mut self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self.inner.modify(|(value, is_nf)| {
+        match self.inner.modify(|(value, source_info, is_nf)| {
             let new_value = value.reduce(ctx)?;
             let new_is_nf = new_value.is_normal_form();
             if let Ok(mut nf_lock) = is_nf.write() {
                 *nf_lock = new_is_nf;
             }
-            Ok((new_value, is_nf))
+            Ok((new_value, source_info, is_nf))
         })? {
             Some(()) => Ok(self.dispatch()),
             None => {
-                let (value, _) = self.inner.as_ref();
+                let (value, source_info, _) = self.inner.as_ref();
                 let new_value = value.clone().reduce(ctx)?;
-                Ok(Self::new(new_value))
+                Ok(Self::new(new_value, source_info.clone()))
             }
         }
     }
@@ -145,7 +159,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        let (_, is_nf) = self.inner.as_ref();
+        let (_, _, is_nf) = self.inner.as_ref();
         match is_nf.read() {
             Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
@@ -153,12 +167,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
     }
 
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        let (value, is_nf) = self.inner.as_ref();
+        let (value, _, is_nf) = self.inner.as_ref();
         value.recalculate_normal_form(cycle_detector);
         let new_nf = value.is_normal_form();
         if let Ok(mut nf_lock) = is_nf.write() {
             *nf_lock = new_nf;
         }
+    }
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.inner.as_ref().1.as_deref()
     }
 }
 
@@ -168,7 +186,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        let (value, _) = self.inner.as_ref();
+        let (value, _, _) = self.inner.as_ref();
         other.subof(value.as_ref_dispatcher(), ctx)
     }
 
@@ -179,8 +197,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         match other {
             TypeRef::SubOf(v) => {
-                let (self_value, _) = self.inner.as_ref();
-                let (v_value, _) = v.inner.as_ref();
+                let (self_value, _, _) = self.inner.as_ref();
+                let (v_value, _, _) = v.inner.as_ref();
                 self_value.subof(v_value.as_ref_dispatcher(), ctx)
             }
             _ => other.subof(self.as_ref_dispatcher(), ctx),
@@ -190,11 +208,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> SubOf<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<X: AsDispatcher<Type<T>, T>>(value: X) -> Type<T> {
+    pub fn new<X: AsDispatcher<Type<T>, T>>(
+        value: X,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
         let value = value.into_dispatcher();
         let is_nf = value.is_normal_form();
         Self {
-            inner: ArcOpt::new((value, RwLock::new(is_nf))),
+            inner: ArcOpt::new((value, source_info, RwLock::new(is_nf))),
         }
         .dispatch()
     }

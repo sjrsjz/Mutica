@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use arc_gc::traceable::GCTraceable;
 
 use crate::{
@@ -6,21 +8,33 @@ use crate::{
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
         TypeRef,
     },
-    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{
+        cycle_detector::FastCycleDetector, 
+        source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic
+    },
 };
 
-pub enum TypeBound<T: GcAllocObject<T, Inner = Type<T>>> {
+pub enum TypeBoundKind<T: GcAllocObject<T, Inner = Type<T>>> {
     Top,
     Bottom,
     PandomData(std::marker::PhantomData<T>),
 }
 
+pub struct TypeBound<T: GcAllocObject<T, Inner = Type<T>>> {
+    pub kind: TypeBoundKind<T>,
+    source_info: Option<Arc<SourceLocation>>,
+}
+
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeBound<T> {
     fn clone(&self) -> Self {
-        match self {
-            TypeBound::Top => TypeBound::Top,
-            TypeBound::Bottom => TypeBound::Bottom,
-            TypeBound::PandomData(_) => TypeBound::PandomData(std::marker::PhantomData),
+        Self {
+            kind: match &self.kind {
+                TypeBoundKind::Top => TypeBoundKind::Top,
+                TypeBoundKind::Bottom => TypeBoundKind::Bottom,
+                TypeBoundKind::PandomData(_) => TypeBoundKind::PandomData(std::marker::PhantomData),
+            },
+            source_info: self.source_info.clone(),
         }
     }
 }
@@ -65,13 +79,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                _ => match self {
-                    TypeBound::Top => match other {
-                        TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                _ => match &self.kind {
+                    TypeBoundKind::Top => match other {
+                        TypeRef::Bound(v) => match &v.kind {
+                            TypeBoundKind::Top => Ok(ThreeValuedLogic::True),
+                            _ => Ok(ThreeValuedLogic::False),
+                        },
                         _ => Ok(ThreeValuedLogic::False),
                     },
-                    TypeBound::Bottom => Ok(ThreeValuedLogic::True), // ⊥ 可以满足任何类型
-                    TypeBound::PandomData(_) => Ok(ThreeValuedLogic::False),
+                    TypeBoundKind::Bottom => Ok(ThreeValuedLogic::True), // ⊥ 可以满足任何类型
+                    TypeBoundKind::PandomData(_) => Ok(ThreeValuedLogic::False),
                 },
             }
         })
@@ -89,13 +106,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                _ => match self {
-                    TypeBound::Bottom => Ok(ThreeValuedLogic::True), // ⊥ 是所有类型的子类型
-                    TypeBound::Top => match other {
-                        TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                _ => match &self.kind {
+                    TypeBoundKind::Bottom => Ok(ThreeValuedLogic::True), // ⊥ 是所有类型的子类型
+                    TypeBoundKind::Top => match other {
+                        TypeRef::Bound(v) => match &v.kind {
+                            TypeBoundKind::Top => Ok(ThreeValuedLogic::True),
+                            _ => Ok(ThreeValuedLogic::False),
+                        },
                         _ => Ok(ThreeValuedLogic::False),
                     },
-                    TypeBound::PandomData(_) => Ok(ThreeValuedLogic::False),
+                    TypeBoundKind::PandomData(_) => Ok(ThreeValuedLogic::False),
                 },
             }
         })
@@ -117,24 +137,42 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
     }
 
     fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.source_info.as_deref()
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for TypeBound<T> {
     fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        match self {
-            TypeBound::Top => "⊤".to_string(),
-            TypeBound::Bottom => "⊥".to_string(),
-            TypeBound::PandomData(_) => "<?>".to_string(),
+        match &self.kind {
+            TypeBoundKind::Top => "⊤".to_string(),
+            TypeBoundKind::Bottom => "⊥".to_string(),
+            TypeBoundKind::PandomData(_) => "<?>".to_string(),
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeBound<T> {
     pub fn top() -> Type<T> {
-        Self::Top.dispatch()
+        Self::top_with_info(None)
+    }
+
+    pub fn top_with_info(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        Self {
+            kind: TypeBoundKind::Top,
+            source_info,
+        }.dispatch()
     }
 
     pub fn bottom() -> Type<T> {
-        Self::Bottom.dispatch()
+        Self::bottom_with_info(None)
+    }
+
+    pub fn bottom_with_info(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        Self {
+            kind: TypeBoundKind::Bottom,
+            source_info,
+        }.dispatch()
     }
 }

@@ -21,7 +21,7 @@ use mutica_core::types::integer_value::IntegerValue;
 use mutica_core::types::invoke::Invoke;
 use mutica_core::types::lazy::Lazy;
 use mutica_core::types::namespace::Namespace;
-use mutica_core::types::opcode::Opcode;
+use mutica_core::types::opcode::{Opcode, OpcodeKind};
 use mutica_core::types::ordered_type::OrderedType;
 use mutica_core::types::pattern::Pattern;
 use mutica_core::types::rot::Rotate;
@@ -34,6 +34,7 @@ use mutica_core::util::rootstack::RootStack;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum AtomicOpcode {
@@ -1889,20 +1890,41 @@ impl<'ast> LinearTypeAst<'ast> {
         loc: Option<&SourceLocation>,
     ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError<'ast>>> {
         match self {
-            LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new())),
-            LinearTypeAst::Float => Ok(BuildResult::simple(Float::new())),
-            LinearTypeAst::Char => Ok(BuildResult::simple(Character::new())),
-            LinearTypeAst::OrderedType(v) => Ok(BuildResult::simple(OrderedType::new(*v))),
+            LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new(
+                loc.map(|l| Arc::new(l.clone())),
+            ))),
+            LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(
+                loc.map(|l| Arc::new(l.clone())),
+            ))),
+            LinearTypeAst::Char => Ok(BuildResult::simple(Character::new(
+                loc.map(|l| Arc::new(l.clone())),
+            ))),
+            LinearTypeAst::OrderedType(v) => Ok(BuildResult::simple(OrderedType::new(
+                *v,
+                loc.map(|l| Arc::new(l.clone())),
+            ))),
             LinearTypeAst::Top => Ok(BuildResult::simple(TypeBound::top())),
             LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom())),
-            LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(*v))),
-            LinearTypeAst::FloatLiteral(v) => Ok(BuildResult::simple(FloatValue::new(*v))),
-            LinearTypeAst::CharLiteral(v) => Ok(BuildResult::simple(CharacterValue::new(*v))),
+            LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(
+                *v,
+                loc.map(|l| Arc::new(l.clone())),
+            ))),
+            LinearTypeAst::FloatLiteral(v) => Ok(BuildResult::simple(FloatValue::new(
+                *v,
+                loc.map(|l| Arc::new(l.clone())),
+            ))),
+            LinearTypeAst::CharLiteral(v) => Ok(BuildResult::simple(CharacterValue::new(
+                *v,
+                loc.map(|l| Arc::new(l.clone())),
+            ))),
             LinearTypeAst::Variable(var) => {
                 if let Some(ty) = ctx.current_layer().get(var) {
                     match ty {
                         Ok(t) => Ok(BuildResult::simple(t.clone())), // fixpoint类型
-                        Err(index) => Ok(BuildResult::simple(Variable::new_debruijn(index))),
+                        Err(index) => Ok(BuildResult::simple(Variable::new_debruijn(
+                            index,
+                            loc.map(|l| Arc::new(l.clone())),
+                        ))),
                     }
                 } else {
                     Err(Err(ParseError::UseBeforeDeclaration(
@@ -1945,7 +1967,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 )?;
                 let (types, patterns) = BuildResult::fold(vec![head_type, tail_type]);
                 Ok(BuildResult::complex(
-                    Construct::new(&types[0], &types[1]),
+                    Construct::new(&types[0], &types[1], loc.map(|l| Arc::new(l.clone()))),
                     patterns,
                 ))
             }
@@ -2120,19 +2142,19 @@ impl<'ast> LinearTypeAst<'ast> {
             }
             LinearTypeAst::AtomicOpcode(atomic_opcode) => {
                 Ok(BuildResult::simple(Opcode::new(match atomic_opcode {
-                    AtomicOpcode::Opcode => Opcode::Opcode,
-                    AtomicOpcode::Add => Opcode::Add,
-                    AtomicOpcode::Sub => Opcode::Sub,
-                    AtomicOpcode::Mul => Opcode::Mul,
-                    AtomicOpcode::Div => Opcode::Div,
-                    AtomicOpcode::Mod => Opcode::Mod,
-                    AtomicOpcode::Less => Opcode::Less,
-                    AtomicOpcode::Greater => Opcode::Greater,
-                    AtomicOpcode::Neg => Opcode::Neg,
-                    AtomicOpcode::Is => Opcode::Is,
-                    AtomicOpcode::Set => Opcode::Set,
-                    AtomicOpcode::BuildFixPoint => Opcode::BuildFixPoint,
-                    AtomicOpcode::IO(v) => Opcode::IO(v.clone().into()),
+                    AtomicOpcode::Opcode => OpcodeKind::Opcode,
+                    AtomicOpcode::Add => OpcodeKind::Add,
+                    AtomicOpcode::Sub => OpcodeKind::Sub,
+                    AtomicOpcode::Mul => OpcodeKind::Mul,
+                    AtomicOpcode::Div => OpcodeKind::Div,
+                    AtomicOpcode::Mod => OpcodeKind::Mod,
+                    AtomicOpcode::Less => OpcodeKind::Less,
+                    AtomicOpcode::Greater => OpcodeKind::Greater,
+                    AtomicOpcode::Neg => OpcodeKind::Neg,
+                    AtomicOpcode::Is => OpcodeKind::Is,
+                    AtomicOpcode::Set => OpcodeKind::Set,
+                    AtomicOpcode::BuildFixPoint => OpcodeKind::BuildFixPoint,
+                    AtomicOpcode::IO(v) => OpcodeKind::IO(v.clone().into()),
                 })))
             }
             LinearTypeAst::Namespace { tag, expr } => {

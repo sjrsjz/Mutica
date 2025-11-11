@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use arc_gc::traceable::GCTraceable;
 
 use crate::{
@@ -5,12 +7,18 @@ use crate::{
         closure::{Closure, ClosureEnv}, fixpoint::FixPoint, float_value::FloatValue, integer_value::IntegerValue, invoke::Invoke, pattern::Pattern, tuple::Tuple, type_bound::TypeBound, variable::Variable, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
     },
     util::{
-        collector::Collector, cycle_detector::FastCycleDetector,
+        collector::Collector, cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
 
-pub enum Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
+pub struct Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
+    pub kind: OpcodeKind,
+    source_info: Option<Arc<SourceLocation>>,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+pub enum OpcodeKind {
     // Super type
     Opcode,
     // Arithmetic
@@ -27,26 +35,36 @@ pub enum Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
     BuildFixPoint,
     // I/O
     IO(Box<String>),
-    Pandom(std::marker::PhantomData<T>),
+    Pandom,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Opcode<T> {
     fn clone(&self) -> Self {
+        Self {
+            kind: self.kind.clone(),
+            source_info: self.source_info.clone(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl Clone for OpcodeKind {
+    fn clone(&self) -> Self {
         match self {
-            Opcode::Opcode => Opcode::Opcode,
-            Opcode::Add => Opcode::Add,
-            Opcode::Sub => Opcode::Sub,
-            Opcode::Mul => Opcode::Mul,
-            Opcode::Div => Opcode::Div,
-            Opcode::Mod => Opcode::Mod,
-            Opcode::Less => Opcode::Less,
-            Opcode::Greater => Opcode::Greater,
-            Opcode::Is => Opcode::Is,
-            Opcode::Neg => Opcode::Neg,
-            Opcode::Set => Opcode::Set,
-            Opcode::BuildFixPoint => Opcode::BuildFixPoint,
-            Opcode::IO(v) => Opcode::IO(v.clone()),
-            Opcode::Pandom(_) => Opcode::Pandom(std::marker::PhantomData),
+            OpcodeKind::Opcode => OpcodeKind::Opcode,
+            OpcodeKind::Add => OpcodeKind::Add,
+            OpcodeKind::Sub => OpcodeKind::Sub,
+            OpcodeKind::Mul => OpcodeKind::Mul,
+            OpcodeKind::Div => OpcodeKind::Div,
+            OpcodeKind::Mod => OpcodeKind::Mod,
+            OpcodeKind::Less => OpcodeKind::Less,
+            OpcodeKind::Greater => OpcodeKind::Greater,
+            OpcodeKind::Is => OpcodeKind::Is,
+            OpcodeKind::Neg => OpcodeKind::Neg,
+            OpcodeKind::Set => OpcodeKind::Set,
+            OpcodeKind::BuildFixPoint => OpcodeKind::BuildFixPoint,
+            OpcodeKind::IO(v) => OpcodeKind::IO(v.clone()),
+            OpcodeKind::Pandom => OpcodeKind::Pandom,
         }
     }
 }
@@ -90,24 +108,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
-                TypeRef::Opcode(v) => match (self, v) {
-                    (Opcode::Add, Opcode::Opcode) |
-                    (Opcode::Sub, Opcode::Opcode) |
-                    (Opcode::Mul, Opcode::Opcode) |
-                    (Opcode::Div, Opcode::Opcode) |
-                    (Opcode::Mod, Opcode::Opcode) |
-                    (Opcode::Less, Opcode::Opcode) |
-                    (Opcode::Greater, Opcode::Opcode) |
-                    (Opcode::Is, Opcode::Opcode) |
-                    (Opcode::Neg, Opcode::Opcode) |
-                    (Opcode::Set, Opcode::Opcode) |
-                    (Opcode::BuildFixPoint, Opcode::Opcode) |
-                    (Opcode::IO(_), Opcode::Opcode) |
-                    (Opcode::Pandom(_), Opcode::Opcode) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v) => match &v.kind {
+                    crate::types::type_bound::TypeBoundKind::Top => Ok(ThreeValuedLogic::True),
                     _ => Ok(ThreeValuedLogic::False),
                 },
-                TypeRef::OrderedType(v) if matches!(self, Opcode::Opcode) => Ok((v.level() == 0).into()),
+                TypeRef::Opcode(v) => match (&self.kind, &v.kind) {
+                    (OpcodeKind::Add, OpcodeKind::Opcode) |
+                    (OpcodeKind::Sub, OpcodeKind::Opcode) |
+                    (OpcodeKind::Mul, OpcodeKind::Opcode) |
+                    (OpcodeKind::Div, OpcodeKind::Opcode) |
+                    (OpcodeKind::Mod, OpcodeKind::Opcode) |
+                    (OpcodeKind::Less, OpcodeKind::Opcode) |
+                    (OpcodeKind::Greater, OpcodeKind::Opcode) |
+                    (OpcodeKind::Is, OpcodeKind::Opcode) |
+                    (OpcodeKind::Neg, OpcodeKind::Opcode) |
+                    (OpcodeKind::Set, OpcodeKind::Opcode) |
+                    (OpcodeKind::BuildFixPoint, OpcodeKind::Opcode) |
+                    (OpcodeKind::IO(_), OpcodeKind::Opcode) |
+                    (OpcodeKind::Pandom, OpcodeKind::Opcode) => Ok(ThreeValuedLogic::True),
+                    _ => Ok(ThreeValuedLogic::False),
+                },
+                TypeRef::OrderedType(v) if matches!(&self.kind, OpcodeKind::Opcode) => Ok((v.level() == 0).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -127,22 +148,25 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
-                TypeRef::Opcode(v) => Ok(match (self, v) {
-                    (Opcode::Opcode, Opcode::Opcode) |
-                    (Opcode::Add, Opcode::Add) |
-                    (Opcode::Sub, Opcode::Sub) |
-                    (Opcode::Mul, Opcode::Mul) |
-                    (Opcode::Div, Opcode::Div) |
-                    (Opcode::Mod, Opcode::Mod) |
-                    (Opcode::Less, Opcode::Less) |
-                    (Opcode::Greater, Opcode::Greater) |
-                    (Opcode::Is, Opcode::Is) |
-                    (Opcode::Neg, Opcode::Neg) |
-                    (Opcode::Set, Opcode::Set) |
-                    (Opcode::BuildFixPoint, Opcode::BuildFixPoint) => ThreeValuedLogic::True,
-                    (Opcode::IO(a), Opcode::IO(b)) => (a == b).into(),
-                    (Opcode::Pandom(_), Opcode::Pandom(_)) => ThreeValuedLogic::True,
+                TypeRef::Bound(v) => match &v.kind {
+                    crate::types::type_bound::TypeBoundKind::Top => Ok(ThreeValuedLogic::True),
+                    _ => Ok(ThreeValuedLogic::False),
+                },
+                TypeRef::Opcode(v) => Ok(match (&self.kind, &v.kind) {
+                    (OpcodeKind::Opcode, OpcodeKind::Opcode) |
+                    (OpcodeKind::Add, OpcodeKind::Add) |
+                    (OpcodeKind::Sub, OpcodeKind::Sub) |
+                    (OpcodeKind::Mul, OpcodeKind::Mul) |
+                    (OpcodeKind::Div, OpcodeKind::Div) |
+                    (OpcodeKind::Mod, OpcodeKind::Mod) |
+                    (OpcodeKind::Less, OpcodeKind::Less) |
+                    (OpcodeKind::Greater, OpcodeKind::Greater) |
+                    (OpcodeKind::Is, OpcodeKind::Is) |
+                    (OpcodeKind::Neg, OpcodeKind::Neg) |
+                    (OpcodeKind::Set, OpcodeKind::Set) |
+                    (OpcodeKind::BuildFixPoint, OpcodeKind::BuildFixPoint) => ThreeValuedLogic::True,
+                    (OpcodeKind::IO(a), OpcodeKind::IO(b)) => (a == b).into(),
+                    (OpcodeKind::Pandom, OpcodeKind::Pandom) => ThreeValuedLogic::True,
                     _ => ThreeValuedLogic::False,
                 }),
                 _ => Ok(ThreeValuedLogic::False),
@@ -164,9 +188,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
         ctx: InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg
-            .take(&mut FastCycleDetector::new(), |_, arg| match self {
-                Opcode::Opcode => Err(TypeError::NonApplicableType(self.dispatch().into())),
-                Opcode::Set => {
+            .take(&mut FastCycleDetector::new(), |_, arg| match &self.kind {
+                OpcodeKind::Opcode => Err(TypeError::NonApplicableType(self.dispatch().into())),
+                OpcodeKind::Set => {
                     if let Type::Tuple(tuple) = arg {
                         if tuple.len() == 2 {
                             let mut elements = tuple.take().into_iter();
@@ -192,35 +216,35 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         ))
                     }
                 }
-                Opcode::BuildFixPoint => {
+                OpcodeKind::BuildFixPoint => {
                     let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
                     let call_back: Type<T> = Closure::new(
-                        vec![(Pattern::new(0, TypeBound::<T>::top()), Invoke::new(
-                            Opcode::Set.dispatch(), 
-                            Tuple::new(vec![place_holder.clone(), Variable::new_debruijn(0)]), 
+                        vec![(Pattern::new(0, TypeBound::<T>::top(), self.source_info.clone()), Invoke::new(
+                            Self { kind: OpcodeKind::Set, source_info: None, _phantom: std::marker::PhantomData }.dispatch(), 
+                            Tuple::new(vec![place_holder.clone(), Variable::new_debruijn(0, None)], self.source_info.clone()), 
                             None::<Type<T>>, 
-                            None::<Type<T>>), 0, 1)],
+                            None::<Type<T>>, self.source_info.clone()), 0, 1)],
                         vec![ClosureEnv::new(Vec::<Type<T>>::new())]
                     );
-                    Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>))
+                    Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>, self.source_info.clone()))
                 }
-                Opcode::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                OpcodeKind::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
                     std::io::Error::other(
                         format!("Unhandled IO operation: {}", v),
                     ),
                 ))),
-                Opcode::Neg => {
+                OpcodeKind::Neg => {
                     if let Type::IntegerValue(n) = arg {
-                        Ok(IntegerValue::new(-n.value()))
+                        Ok(IntegerValue::new(-n.value(), None))
                     } else if let Type::FloatValue(n) = arg {
-                        Ok(FloatValue::new(-n.value()))
+                        Ok(FloatValue::new(-n.value(), None))
                     } else {
                         Err(TypeError::TypeMismatch(
                             (arg, "IntegerValue | FloatValue".into()).into(),
                         ))
                     }
                 }
-                Opcode::Is => {
+                OpcodeKind::Is => {
                     if let Type::Tuple(tuple) = arg {
                         if tuple.len() == 4 {
                             let mut elements = tuple.take().into_iter();
@@ -256,11 +280,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         ))
                     }
                 }
-                Opcode::Add
-                | Opcode::Sub
-                | Opcode::Mul
-                | Opcode::Div
-                | Opcode::Mod => {
+                OpcodeKind::Add
+                | OpcodeKind::Sub
+                | OpcodeKind::Mul
+                | OpcodeKind::Div
+                | OpcodeKind::Mod => {
                     if let Type::Tuple(tuple) = arg {
                         if tuple.len() == 2 {
                             let mut elements = tuple.take().into_iter();
@@ -269,64 +293,64 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             left.take(&mut FastCycleDetector::new(), |_, left| {
                                 right.take(&mut FastCycleDetector::new(), |_, right| {
                                     match (left, right) {
-                            (Type::IntegerValue(l), Type::IntegerValue(r)) => match self {
-                                Opcode::Add => Ok(IntegerValue::new(l.value() + r.value())),
-                                Opcode::Sub => Ok(IntegerValue::new(l.value() - r.value())),
-                                Opcode::Mul => Ok(IntegerValue::new(l.value() * r.value())),
-                                Opcode::Div => {
+                            (Type::IntegerValue(l), Type::IntegerValue(r)) => match &self.kind {
+                                OpcodeKind::Add => Ok(IntegerValue::new(l.value() + r.value(), None)),
+                                OpcodeKind::Sub => Ok(IntegerValue::new(l.value() - r.value(), None)),
+                                OpcodeKind::Mul => Ok(IntegerValue::new(l.value() * r.value(), None)),
+                                OpcodeKind::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
                                             (l.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
-                                        Ok(IntegerValue::new(l.value() / r.value()))
+                                        Ok(IntegerValue::new(l.value() / r.value(), None))
                                     }
                                 }
-                                Opcode::Mod => {
+                                OpcodeKind::Mod => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
                                             (r.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
-                                        Ok(IntegerValue::new(l.value() % r.value()))
+                                        Ok(IntegerValue::new(l.value() % r.value(), None))
                                     }
                                 }
                                 _ => unreachable!(),
                             },
-                            (Type::FloatValue(l), Type::FloatValue(r)) => match self {
-                                Opcode::Add => Ok(FloatValue::new(l.value() + r.value())),
-                                Opcode::Sub => Ok(FloatValue::new(l.value() - r.value())),
-                                Opcode::Mul => Ok(FloatValue::new(l.value() * r.value())),
-                                Opcode::Div => {
+                            (Type::FloatValue(l), Type::FloatValue(r)) => match &self.kind {
+                                OpcodeKind::Add => Ok(FloatValue::new(l.value() + r.value(), None)),
+                                OpcodeKind::Sub => Ok(FloatValue::new(l.value() - r.value(), None)),
+                                OpcodeKind::Mul => Ok(FloatValue::new(l.value() * r.value(), None)),
+                                OpcodeKind::Div => {
                                     if r.value() == 0.0 {
                                         Err(TypeError::TypeMismatch(
                                             (r.dispatch(), "Non-zero float".into()).into(),
                                         ))
                                     } else {
-                                        Ok(FloatValue::new(l.value() / r.value()))
+                                        Ok(FloatValue::new(l.value() / r.value(), None))
                                     }
                                 }
-                                Opcode::Mod => {
+                                OpcodeKind::Mod => {
                                     if r.value() == 0.0 {
                                         Err(TypeError::TypeMismatch(
                                             (r.dispatch(), "Non-zero float".into()).into(),
                                         ))
                                     } else {
-                                        Ok(FloatValue::new(l.value() % r.value()))
+                                        Ok(FloatValue::new(l.value() % r.value(), None))
                                     }
                                 }
                                 _ => unreachable!(),
                             },
-                            (Type::Closure(l), Type::Closure(r)) => match self {
-                                Opcode::Add => Ok(l.impls(r)),
+                            (Type::Closure(l), Type::Closure(r)) => match &self.kind {
+                                OpcodeKind::Add => Ok(l.impls(r)),
                                 _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                                     std::io::Error::other(
                                         "Only 'Add' operation is supported for Closure types",
                                     ),
                                 ))),
                             },
-                            (Type::Tuple(l), Type::Tuple(r)) => match self {
-                                Opcode::Add => Ok(l.concat(r)),
+                            (Type::Tuple(l), Type::Tuple(r)) => match &self.kind {
+                                OpcodeKind::Add => Ok(l.concat(r)),
                                 _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                                     std::io::Error::other(
                                         "Only 'Add' operation is supported for Tuple types",
@@ -335,7 +359,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             },
                             (l, r) => Err(TypeError::TypeMismatch(
                                 (
-                                    Tuple::new(vec![l, r]),
+                                    Tuple::new(vec![l, r], self.source_info.clone()),
                                     "(IntegerValue, IntegerValue) | (FloatValue, FloatValue) | (Closure, Closure) | (Tuple, Tuple)".into()
                                 )
                                     .into(),
@@ -354,7 +378,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         ))
                     }
                 }
-                Opcode::Less | Opcode::Greater => {
+                OpcodeKind::Less | OpcodeKind::Greater => {
                     if let Type::Tuple(tuple) = arg {
                         if tuple.len() == 4 {
                             let mut elements = tuple.take().into_iter();
@@ -366,9 +390,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 right.take(&mut FastCycleDetector::new(), move |_, right| {
                                     match (left, right) {
                                         (Type::IntegerValue(l), Type::IntegerValue(r)) => {
-                                            let condition = match self {
-                                                Opcode::Less => l.value() < r.value(),
-                                                Opcode::Greater => l.value() > r.value(),
+                                            let condition = match &self.kind {
+                                                OpcodeKind::Less => l.value() < r.value(),
+                                                OpcodeKind::Greater => l.value() > r.value(),
                                                 _ => unreachable!(),
                                             };
                                             let result = if condition {
@@ -379,9 +403,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                             Ok(result)
                                         }
                                         (Type::FloatValue(l), Type::FloatValue(r)) => {
-                                            let condition = match self {
-                                                Opcode::Less => l.value() < r.value(),
-                                                Opcode::Greater => l.value() > r.value(),
+                                            let condition = match &self.kind {
+                                                OpcodeKind::Less => l.value() < r.value(),
+                                                OpcodeKind::Greater => l.value() > r.value(),
                                                 _ => unreachable!(),
                                             };
                                             let result = if condition {
@@ -393,7 +417,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                         }
                                         (l, r) => Err(TypeError::TypeMismatch(
                                             (
-                                                Tuple::new(vec![l, r]),
+                                                Tuple::new(vec![l, r], self.source_info.clone()),
                                                 "(IntegerValue, IntegerValue, Any, Any) | (FloatValue, FloatValue, Any, Any)".into()
                                             )
                                                 .into(),
@@ -422,7 +446,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         ))
                     }
                 }
-                Opcode::Pandom(_) => {
+                OpcodeKind::Pandom => {
                     unreachable!()
                 }
             })?.unwrap_or(Err(TypeError::UnresolvableType("Could not resolve argument".into())))
@@ -433,32 +457,40 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     }
 
     fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.source_info.as_deref()
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
     fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        match self {
-            Opcode::Opcode => "Opcode".to_string(),
-            Opcode::Add => "Add".to_string(),
-            Opcode::Sub => "Sub".to_string(),
-            Opcode::Mul => "Mul".to_string(),
-            Opcode::Div => "Div".to_string(),
-            Opcode::Mod => "Mod".to_string(),
-            Opcode::Less => "Less".to_string(),
-            Opcode::Greater => "Greater".to_string(),
-            Opcode::Neg => "Neg".to_string(),
-            Opcode::Is => "Is".to_string(),
-            Opcode::Set => "Set".to_string(),
-            Opcode::BuildFixPoint => "InjectFixPointPlaceholder".to_string(),
-            Opcode::IO(v) => format!("IO({})", v),
-            Opcode::Pandom(_) => "Pandom".to_string(),
+        match &self.kind {
+            OpcodeKind::Opcode => "Opcode".to_string(),
+            OpcodeKind::Add => "Add".to_string(),
+            OpcodeKind::Sub => "Sub".to_string(),
+            OpcodeKind::Mul => "Mul".to_string(),
+            OpcodeKind::Div => "Div".to_string(),
+            OpcodeKind::Mod => "Mod".to_string(),
+            OpcodeKind::Less => "Less".to_string(),
+            OpcodeKind::Greater => "Greater".to_string(),
+            OpcodeKind::Neg => "Neg".to_string(),
+            OpcodeKind::Is => "Is".to_string(),
+            OpcodeKind::Set => "Set".to_string(),
+            OpcodeKind::BuildFixPoint => "InjectFixPointPlaceholder".to_string(),
+            OpcodeKind::IO(v) => format!("IO({})", v),
+            OpcodeKind::Pandom => "Pandom".to_string(),
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(op: Opcode<T>) -> Type<T> {
-        op.dispatch()
+    pub fn new(kind: OpcodeKind, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        Self {
+            kind,
+            source_info,
+            _phantom: std::marker::PhantomData,
+        }.dispatch()
     }
 }

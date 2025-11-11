@@ -1,5 +1,5 @@
 use core::panic;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -11,7 +11,8 @@ use crate::{
         TypeRef, type_bound::TypeBound,
     },
     util::{
-        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -19,6 +20,7 @@ use crate::{
 pub struct Tuple<T: GcAllocObject<T, Inner = Type<T>>> {
     elements: ArcOpt<Vec<Type<T>>>,
     is_nf: ArcOpt<RwLock<ThreeValuedLogic>>,
+    source_info: Option<Arc<SourceLocation>>,
     head: usize,
 }
 
@@ -27,6 +29,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Tuple<T> {
         Self {
             elements: self.elements.clone(),
             is_nf: self.is_nf.clone(),
+            source_info: self.source_info.clone(),
             head: self.head,
         }
     }
@@ -103,7 +106,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::Tuple(v) => {
                     if self.len() != v.len() {
                         return Ok(ThreeValuedLogic::False);
@@ -151,7 +158,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::Tuple(v) => {
                     if self.len() != v.len() {
                         return Ok(ThreeValuedLogic::False);
@@ -216,7 +227,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     .iter()
                     .map(|t| t.clone().reduce(ctx))
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(Self::new(new_elements))
+                Ok(Self::new(new_elements, self.source_info.clone()))
             }
         }
     }
@@ -264,6 +275,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
             *nf_lock = new_nf;
         }
     }
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.source_info.as_deref()
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
@@ -291,7 +306,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
     }
 
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<I, X>(types: I) -> Type<T>
+    pub fn new<I, X>(types: I, source_info: Option<Arc<SourceLocation>>) -> Type<T>
     where
         I: IntoIterator<Item = X>,
         X: AsDispatcher<Type<T>, T>,
@@ -304,6 +319,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         Self {
             elements: ArcOpt::new(elements),
             head: 0,
+            source_info,
             is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()
@@ -325,6 +341,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         Self {
             elements: self.elements.clone(),
             head: self.head + start,
+            source_info: self.source_info.clone(),
             is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()
@@ -343,11 +360,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
 
     pub fn concat(self, other: Tuple<T>) -> Type<T> {
         let is_nf = self.is_normal_form() & other.is_normal_form();
+        let source_info = self.source_info.clone();
         let mut new_elements = self.take();
         new_elements.extend(other.take());
         Self {
             elements: ArcOpt::new(new_elements),
             head: 0,
+            source_info,
             is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()

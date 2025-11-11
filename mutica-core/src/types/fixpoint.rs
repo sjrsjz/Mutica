@@ -11,10 +11,10 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, type_bound::TypeBound,
+        TypeRef
     },
     util::{
-        cycle_detector::FastCycleDetector, rootstack::RootStack,
+        cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -42,6 +42,7 @@ use crate::types::CoinductiveTypeRef;
 pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
     reference: GCArcWeak<T>,
     is_nf: Arc<RwLock<ThreeValuedLogic>>,
+    source_info: Option<Arc<SourceLocation>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
@@ -49,6 +50,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
         Self {
             reference: self.reference.clone(),
             is_nf: self.is_nf.clone(),
+            source_info: self.source_info.clone(),
         }
     }
 }
@@ -109,10 +111,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     /// - 未初始化的 `FixPoint`
     /// - 对应的强引用以保证 GC 安全
     pub fn new_placeholder(gc: &mut GC<T>, roots: &mut RootStack<Type<T>, T>) -> Type<T> {
+        Self::new_placeholder_with_info(gc, roots, None)
+    }
+
+    pub fn new_placeholder_with_info(
+        gc: &mut GC<T>,
+        roots: &mut RootStack<Type<T>, T>,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
         let pointer = gc.create(T::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
             is_nf: Arc::new(RwLock::new(ThreeValuedLogic::Unknown)),
+            source_info,
         };
         roots.push(pointer);
         Type::FixPoint(fix_point)
@@ -191,7 +202,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     v.accept(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {
@@ -238,7 +249,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     v.superof(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {
@@ -356,6 +367,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         if let Ok(mut nf_lock) = self.is_nf.write() {
             *nf_lock = is_nf;
         }
+    }
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.source_info.as_deref()
     }
 }
 

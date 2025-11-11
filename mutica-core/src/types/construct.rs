@@ -1,4 +1,4 @@
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -6,15 +6,22 @@ use crate::{
     test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef, type_bound::TypeBound,
+        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef,
     },
     util::{
-        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic,
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
 pub struct Construct<T: GcAllocObject<T, Inner = Type<T>>> {
-    inner: ArcOpt<(Type<T>, Type<T>, RwLock<ThreeValuedLogic>)>,
+    #[allow(clippy::type_complexity)]
+    inner: ArcOpt<(
+        Type<T>,
+        Type<T>,
+        Option<Arc<SourceLocation>>,
+        RwLock<ThreeValuedLogic>,
+    )>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Construct<T> {
@@ -27,7 +34,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Construct<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Construct<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        let (head, tail, _) = self.inner.as_ref();
+        let (head, tail, _, _) = self.inner.as_ref();
         head.collect(queue);
         tail.collect(queue);
     }
@@ -35,7 +42,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Construct<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Construct<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        let (head, tail, _) = self.inner.as_ref();
+        let (head, tail, _, _) = self.inner.as_ref();
         head.upgrade(collected);
         tail.upgrade(collected);
     }
@@ -46,7 +53,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Construct<T> {
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
     ) -> String {
-        let (head, tail, _) = self.inner.as_ref();
+        let (head, tail, _, _) = self.inner.as_ref();
         format!("Cons<{}, {}>", head.represent(path), tail.represent(path))
     }
 }
@@ -84,10 +91,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::Construct(v) => {
-                    let (head, tail, _) = self.inner.as_ref();
-                    let (v_head, v_tail, _) = v.inner.as_ref();
+                    let (head, tail, _, _) = self.inner.as_ref();
+                    let (v_head, v_tail, _, _) = v.inner.as_ref();
                     Ok(
                         test_true!(head.check(v_head.as_ref_dispatcher(), &mut inner_ctx)?)
                             & test_true!(tail.check(v_tail.as_ref_dispatcher(), &mut inner_ctx)?),
@@ -100,7 +111,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                     }
                     let head = v.get(0).unwrap();
                     let tail = v.tail().unwrap();
-                    let (self_head, self_tail, _) = self.inner.as_ref();
+                    let (self_head, self_tail, _, _) = self.inner.as_ref();
                     Ok(
                         test_true!(self_head.check(head.as_ref_dispatcher(), &mut inner_ctx)?)
                             & test_true!(
@@ -128,10 +139,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::Construct(v) => {
-                    let (head, tail, _) = self.inner.as_ref();
-                    let (v_head, v_tail, _) = v.inner.as_ref();
+                    let (head, tail, _, _) = self.inner.as_ref();
+                    let (v_head, v_tail, _, _) = v.inner.as_ref();
                     Ok(
                         test_true!(head.subof(v_head.as_ref_dispatcher(), &mut inner_ctx)?)
                             & test_true!(tail.subof(v_tail.as_ref_dispatcher(), &mut inner_ctx)?),
@@ -144,7 +159,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                     }
                     let head = v.get(0).unwrap();
                     let tail = v.tail().unwrap();
-                    let (self_head, self_tail, _) = self.inner.as_ref();
+                    let (self_head, self_tail, _, _) = self.inner.as_ref();
                     Ok(
                         test_true!(self_head.subof(head.as_ref_dispatcher(), &mut inner_ctx)?)
                             & test_true!(
@@ -161,21 +176,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
         mut self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        match self.inner.modify(|(head, tail, is_nf)| {
+        match self.inner.modify(|(head, tail, source_info, is_nf)| {
             let new_head = head.reduce(ctx)?;
             let new_tail = tail.reduce(ctx)?;
             let new_is_nf = new_head.is_normal_form() & new_tail.is_normal_form();
             if let Ok(mut nf_lock) = is_nf.write() {
                 *nf_lock = new_is_nf;
             }
-            Ok((new_head, new_tail, is_nf))
+            Ok((new_head, new_tail, source_info, is_nf))
         })? {
             Some(()) => Ok(self.dispatch()),
             None => {
-                let (head, tail, _) = self.inner.as_ref();
+                let (head, tail, source_info, _) = self.inner.as_ref();
                 let new_head = head.clone().reduce(ctx)?;
                 let new_tail = tail.clone().reduce(ctx)?;
-                Ok(Self::new(new_head, new_tail))
+                Ok(Self::new(new_head, new_tail, source_info.clone()))
             }
         }
     }
@@ -188,20 +203,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self.inner.as_ref().2.read() {
+        match self.inner.as_ref().3.read() {
             Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
         }
     }
 
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        let (head, tail, is_nf) = self.inner.as_ref();
+        let (head, tail, _, is_nf) = self.inner.as_ref();
         head.recalculate_normal_form(cycle_detector);
         tail.recalculate_normal_form(cycle_detector);
         let new_nf = head.is_normal_form() & tail.is_normal_form();
         if let Ok(mut nf_lock) = is_nf.write() {
             *nf_lock = new_nf;
         }
+    }
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.inner.as_ref().2.as_deref()
     }
 }
 
@@ -210,12 +229,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Construct<T> {
     pub fn new<U: AsDispatcher<Type<T>, T>, V: AsDispatcher<Type<T>, T>>(
         head: U,
         tail: V,
+        source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let head = head.into_dispatcher();
         let tail = tail.into_dispatcher();
         let is_nf = head.is_normal_form() & tail.is_normal_form();
         Self {
-            inner: ArcOpt::new((head, tail, RwLock::new(is_nf))),
+            inner: ArcOpt::new((head, tail, source_info, RwLock::new(is_nf))),
         }
         .dispatch()
     }

@@ -1,15 +1,18 @@
+use std::sync::Arc;
+
 use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable, Type,
-        TypeCheckContext, TypeError, TypeRef, type_bound::TypeBound,
+        TypeCheckContext, TypeError, TypeRef
     },
-    util::{rootstack::Rootable, three_valued_logic::ThreeValuedLogic},
+    util::{rootstack::Rootable, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct OrderedType<T: GcAllocObject<T, Inner = Type<T>>> {
     level: usize,
+    source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -17,6 +20,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for OrderedType<T> {
     fn clone(&self) -> Self {
         Self {
             level: self.level,
+            source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -43,9 +47,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> OrderedType<T> {
     }
 
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(level: usize) -> Type<T> {
+    pub fn new(level: usize, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         Self {
             level,
+            source_info,
             _phantom: std::marker::PhantomData,
         }
         .dispatch()
@@ -89,7 +94,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(crate::types::type_bound::TypeBound::Top) => {
+                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => {
                     Ok(ThreeValuedLogic::True)
                 }
                 TypeRef::OrderedType(v) => Ok((self.level < v.level).into()),
@@ -112,7 +117,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
                 TypeRef::OrderedType(v) => Ok((self.level == v.level).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -141,5 +146,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
         _ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Ok(self.dispatch())
+    }
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.source_info.as_deref()
     }
 }

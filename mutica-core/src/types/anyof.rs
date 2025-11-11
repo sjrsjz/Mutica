@@ -7,9 +7,9 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, type_bound::TypeBound,
+        TypeRef
     },
-    util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
+    util::{cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 use crate::types::CoinductiveTypeRef;
@@ -21,6 +21,7 @@ use crate::types::CoinductiveTypeRef;
 /// - Any<A₁, ..., Aₙ> : Any<B₁, ..., Bₙ>  当且仅当  ∀i. ∃j. Aⱼ : Bᵢ
 pub struct AnyOf<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
+    source_info: Option<Arc<SourceLocation>>,
     is_nf: Arc<RwLock<ThreeValuedLogic>>, // 仅仅只是为了能可变的存储ThreeValuedLogic
                                           // 也许存在更好的方法
 }
@@ -29,6 +30,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for AnyOf<T> {
     fn clone(&self) -> Self {
         Self {
             types: self.types.clone(),
+            source_info: self.source_info.clone(),
             is_nf: self.is_nf.clone(),
         }
     }
@@ -107,7 +109,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(TypeBound::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
                 _ => {
                     let mut found = ThreeValuedLogic::True;
                     for sub in self.types.iter() {
@@ -127,7 +129,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
         for sub in self.types.iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
-        Ok(Self::new(result))
+        Ok(Self::new(result, self.source_info.clone()))
     }
 
     fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
@@ -150,6 +152,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
         if let Ok(mut nf_lock) = self.is_nf.write() {
             *nf_lock = new_nf;
         }
+    }
+
+    fn source_info(&self) -> Option<&SourceLocation> {
+        self.source_info.as_deref()
     }
 }
 
@@ -206,7 +212,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AnyOf<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<I, X>(types: I) -> Type<T>
+    pub fn new<I, X>(types: I, source_info: Option<Arc<SourceLocation>>) -> Type<T>
     where
         I: IntoIterator<Item = X>,
         X: AsDispatcher<Type<T>, T>,
@@ -217,6 +223,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
             1 => collected.into_iter().next().unwrap(),
             _ => Self {
                 types: Arc::from(collected),
+                source_info,
                 is_nf: Arc::new(RwLock::new(ThreeValuedLogic::False)),
             }
             .dispatch(),
