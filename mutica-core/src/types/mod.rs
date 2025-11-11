@@ -596,6 +596,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::TypeMismatch(info) => {
+                let ty_repr = info.0.represent(&mut FastCycleDetector::new(), 0, 3);
                 if let Some(loc) = info.0.source_info() {
                     let span =
                         byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
@@ -607,7 +608,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .with_message(format!("Type mismatch: expected {}", info.1))
                         .with_label(
                             ariadne::Label::new((filepath, span))
-                                .with_message(format!("Found this type instead of {}", info.1)),
+                                .with_message(format!("Found {}", ty_repr)),
                         )
                         .finish()
                 } else {
