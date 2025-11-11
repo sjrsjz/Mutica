@@ -2,5 +2,6 @@ pub mod scheduler;
 pub mod types;
 pub mod util;
 pub use arc_gc;
-pub use stacksafe;
+pub use ariadne;
 pub use smallvec;
+pub use stacksafe;

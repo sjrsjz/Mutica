@@ -5,9 +5,11 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable, Type,
-        TypeCheckContext, TypeError, TypeRef
+        TypeCheckContext, TypeError, TypeRef,
     },
-    util::{rootstack::Rootable, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
+    util::{
+        rootstack::Rootable, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub struct OrderedType<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -36,6 +38,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for OrderedType<T> {
     fn represent(
         &self,
         _path: &mut crate::util::cycle_detector::FastCycleDetector<crate::types::TaggedPtr<()>>,
+        _depth: usize,
+        _max_depth: usize,
     ) -> String {
         format!("Type<level={}>", self.level)
     }
@@ -94,7 +98,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => {
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
                     Ok(ThreeValuedLogic::True)
                 }
                 TypeRef::OrderedType(v) => Ok((self.level < v.level).into()),
@@ -117,7 +123,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::OrderedType(v) => Ok((self.level == v.level).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -148,7 +158,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
         Ok(self.dispatch())
     }
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.source_info.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = &self.source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Ordered type at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span)).with_message("Ordered type defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Ordered type has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }

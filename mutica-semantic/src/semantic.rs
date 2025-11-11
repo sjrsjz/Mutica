@@ -1,7 +1,8 @@
 use mutica_compiler::parser::{
-    SourceFile, WithLocation,
+    WithLocation,
     ast::{FlowedMetaData, LinearTypeAst},
 };
+use mutica_core::util::source_info::SourceFile;
 
 pub struct SourceMapping<'ast> {
     mapping: Vec<Option<&'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>, // 按字节偏移存储对应的 AST 节点
@@ -194,8 +195,9 @@ mod test {
     use mutica_compiler::{
         ariadne,
         logos::Source,
-        parser::{ParseContext, ast::LinearizeContext, colorize::TokenColor},
+        parser::{ParseContext, ast::LinearizeContext},
     };
+    use mutica_core::util::colorize::TokenColor;
 
     use crate::semantic::SourceMapping;
 

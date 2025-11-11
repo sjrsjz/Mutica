@@ -219,14 +219,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 OpcodeKind::BuildFixPoint => {
                     let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
                     let call_back: Type<T> = Closure::new(
-                        vec![(Pattern::new(0, TypeBound::<T>::top(), self.source_info.clone()), Invoke::new(
-                            Self { kind: OpcodeKind::Set, source_info: None, _phantom: std::marker::PhantomData }.dispatch(), 
-                            Tuple::new(vec![place_holder.clone(), Variable::new_debruijn(0, None)], self.source_info.clone()), 
+                        vec![(Pattern::new(0, TypeBound::<T>::top(ctx.source_info.cloned()), self.source_info.clone()), Invoke::new(
+                            Self { kind: OpcodeKind::Set, source_info: ctx.source_info.cloned(), _phantom: std::marker::PhantomData }.dispatch(), 
+                            Tuple::new(vec![place_holder.clone(), Variable::new(0, ctx.source_info.cloned())], ctx.source_info.cloned()), 
                             None::<Type<T>>, 
-                            None::<Type<T>>, self.source_info.clone()), 0, 1)],
-                        vec![ClosureEnv::new(Vec::<Type<T>>::new())]
+                            None::<Type<T>>, ctx.source_info.cloned()), 0, 1)],
+                        vec![ClosureEnv::new(Vec::<Type<T>>::new())],
+                        ctx.source_info.cloned(),
                     );
-                    Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>, self.source_info.clone()))
+                    Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>, ctx.source_info.cloned()))
                 }
                 OpcodeKind::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
                     std::io::Error::other(
@@ -235,9 +236,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 ))),
                 OpcodeKind::Neg => {
                     if let Type::IntegerValue(n) = arg {
-                        Ok(IntegerValue::new(-n.value(), None))
+                        Ok(IntegerValue::new(-n.value(), ctx.source_info.cloned()))
                     } else if let Type::FloatValue(n) = arg {
-                        Ok(FloatValue::new(-n.value(), None))
+                        Ok(FloatValue::new(-n.value(), ctx.source_info.cloned()))
                     } else {
                         Err(TypeError::TypeMismatch(
                             (arg, "IntegerValue | FloatValue".into()).into(),
@@ -294,16 +295,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 right.take(&mut FastCycleDetector::new(), |_, right| {
                                     match (left, right) {
                             (Type::IntegerValue(l), Type::IntegerValue(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(IntegerValue::new(l.value() + r.value(), None)),
-                                OpcodeKind::Sub => Ok(IntegerValue::new(l.value() - r.value(), None)),
-                                OpcodeKind::Mul => Ok(IntegerValue::new(l.value() * r.value(), None)),
+                                OpcodeKind::Add => Ok(IntegerValue::new(l.value() + r.value(), ctx.source_info.cloned())),
+                                OpcodeKind::Sub => Ok(IntegerValue::new(l.value() - r.value(), ctx.source_info.cloned())),
+                                OpcodeKind::Mul => Ok(IntegerValue::new(l.value() * r.value(), ctx.source_info.cloned())),
                                 OpcodeKind::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
                                             (l.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
-                                        Ok(IntegerValue::new(l.value() / r.value(), None))
+                                        Ok(IntegerValue::new(l.value() / r.value(), ctx.source_info.cloned()))
                                     }
                                 }
                                 OpcodeKind::Mod => {
@@ -312,22 +313,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                             (r.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
-                                        Ok(IntegerValue::new(l.value() % r.value(), None))
+                                        Ok(IntegerValue::new(l.value() % r.value(), ctx.source_info.cloned()))
                                     }
                                 }
                                 _ => unreachable!(),
                             },
                             (Type::FloatValue(l), Type::FloatValue(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(FloatValue::new(l.value() + r.value(), None)),
-                                OpcodeKind::Sub => Ok(FloatValue::new(l.value() - r.value(), None)),
-                                OpcodeKind::Mul => Ok(FloatValue::new(l.value() * r.value(), None)),
+                                OpcodeKind::Add => Ok(FloatValue::new(l.value() + r.value(), ctx.source_info.cloned())),
+                                OpcodeKind::Sub => Ok(FloatValue::new(l.value() - r.value(), ctx.source_info.cloned())),
+                                OpcodeKind::Mul => Ok(FloatValue::new(l.value() * r.value(), ctx.source_info.cloned())),
                                 OpcodeKind::Div => {
                                     if r.value() == 0.0 {
                                         Err(TypeError::TypeMismatch(
                                             (r.dispatch(), "Non-zero float".into()).into(),
                                         ))
                                     } else {
-                                        Ok(FloatValue::new(l.value() / r.value(), None))
+                                        Ok(FloatValue::new(l.value() / r.value(), ctx.source_info.cloned()))
                                     }
                                 }
                                 OpcodeKind::Mod => {
@@ -336,7 +337,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                             (r.dispatch(), "Non-zero float".into()).into(),
                                         ))
                                     } else {
-                                        Ok(FloatValue::new(l.value() % r.value(), None))
+                                        Ok(FloatValue::new(l.value() % r.value(), ctx.source_info.cloned()))
                                     }
                                 }
                                 _ => unreachable!(),
@@ -458,13 +459,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
 
     fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.source_info.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = &self.source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Opcode type at {}", filepath))
+                .with_label(ariadne::Label::new((filepath, span)).with_message("Opcode defined here"))
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Opcode type has no source location")
+                .with_label(ariadne::Label::new(("<unknown>".to_string(), 0..0)).with_message("Location unknown"))
+                .finish()
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
-    fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>, _depth: usize, _max_depth: usize) -> String {
         match &self.kind {
             OpcodeKind::Opcode => "Opcode".to_string(),
             OpcodeKind::Add => "Add".to_string(),

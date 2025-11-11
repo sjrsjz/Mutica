@@ -39,10 +39,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Tuple<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
     ) -> String {
+        if depth > max_depth {
+            return "...".to_string();
+        }
         let mut repr = String::from("(");
         for (i, element) in self.iter().enumerate() {
-            repr.push_str(&element.represent(path));
+            repr.push_str(&element.represent(path, depth + 1, max_depth));
             if i != self.len() - 1 {
                 repr.push_str(", ");
             }
@@ -209,7 +214,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
             let mut is_nf = ThreeValuedLogic::True;
             for element in elements.iter_mut().skip(self.head) {
                 // 手动提供一个占位符值，然后换出旧值
-                let owned_element = std::mem::replace(element, TypeBound::bottom());
+                let owned_element = std::mem::replace(element, TypeBound::bottom(None));
                 let reduced = owned_element.reduce(ctx)?;
                 is_nf &= reduced.is_normal_form();
                 // 将计算结果写回
@@ -247,7 +252,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                         )),
                     }
                 }
-                _ => Ok(TypeBound::bottom()),
+                _ => Ok(TypeBound::bottom(ctx.source_info.cloned())),
             })?
             .unwrap_or(Err(TypeError::UnresolvableType(
                 "Could not resolve argument".into(),
@@ -276,8 +281,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         }
     }
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.source_info.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = &self.source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Tuple type at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span)).with_message("Tuple defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Tuple type has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 

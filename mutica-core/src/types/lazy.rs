@@ -48,9 +48,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lazy<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
     ) -> String {
+        if depth > max_depth {
+            return "...".to_string();
+        }
         let (value, _, _) = self.inner.as_ref();
-        format!("Lazy<{}>", value.represent(path))
+        format!("Lazy<{}>", value.represent(path, depth + 1, max_depth))
     }
 }
 
@@ -176,8 +181,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
         }
     }
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.inner.as_ref().1.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.inner.as_ref().1.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = self.inner.as_ref().1.as_ref() {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Lazy type at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span)).with_message("Lazy type defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Lazy type has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 

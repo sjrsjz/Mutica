@@ -11,7 +11,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef
+        TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation,
@@ -202,7 +202,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     v.accept(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {
@@ -249,7 +253,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     v.superof(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {
@@ -369,8 +377,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         }
     }
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.source_info.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = &self.source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Fixpoint type at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span)).with_message("Fixpoint defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Fixpoint type has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 
@@ -429,10 +458,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<T> {
     /// - `内容` 是类型的展开形式（如果没有循环）
     ///
     /// 对于循环引用，只显示地址以避免无限递归打印。
-    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
+        if depth > max_depth {
+            return "...".to_string();
+        }
         match self.reference.upgrade() {
             Some(inner) => match inner.as_ref().get_value() {
-                Some(t) => match path.with_guard(t.tagged_ptr(), |path| t.represent(path)) {
+                Some(t) => match path.with_guard(t.tagged_ptr(), |path| {
+                    t.represent(path, depth + 1, max_depth)
+                }) {
                     Some(s) => format!("μ.{:?} {}", t as *const _ as *const (), s),
                     None => format!("{:?}", t as *const _ as *const ()),
                 },

@@ -7,7 +7,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef
+        TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -108,7 +108,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 _ => {
                     let mut matched = ThreeValuedLogic::False;
                     for sub in self.types.iter() {
@@ -153,8 +157,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
         }
     }
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.source_info.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = &self.source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Type 'All<...>' at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span)).with_message("All<...> defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Type 'All<...>' has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 
@@ -195,14 +220,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AllOf<T> {
-    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
+        if depth > max_depth {
+            return "...".to_string();
+        }
         let mut result = String::new();
         result.push_str("All<");
         for (i, sub) in self.types.iter().enumerate() {
             if i > 0 {
                 result.push_str(", ");
             }
-            result.push_str(&sub.represent(path));
+            result.push_str(&sub.represent(path, depth + 1, max_depth));
         }
         result.push('>');
         result

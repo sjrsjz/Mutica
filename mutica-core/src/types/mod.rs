@@ -69,6 +69,8 @@ use crate::{
     },
 };
 
+pub type TypeReport = ariadne::Report<'static, (String, std::ops::Range<usize>)>;
+
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
     fn clone(&self) -> Self {
         match self {
@@ -350,6 +352,62 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn as_ref_dispatcher(&self) -> Self {
         *self
     }
+
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        match self {
+            TypeRef::Bound(v) => v.source_info(),
+            TypeRef::Integer(v) => v.source_info(),
+            TypeRef::IntegerValue(v) => v.source_info(),
+            TypeRef::Float(v) => v.source_info(),
+            TypeRef::FloatValue(v) => v.source_info(),
+            TypeRef::Char(v) => v.source_info(),
+            TypeRef::CharValue(v) => v.source_info(),
+            TypeRef::Tuple(v) => v.source_info(),
+            TypeRef::Any(v) => v.source_info(),
+            TypeRef::All(v) => v.source_info(),
+            TypeRef::FixPoint(v) => v.source_info(),
+            TypeRef::Invoke(v) => v.source_info(),
+            TypeRef::Variable(v) => v.source_info(),
+            TypeRef::Closure(v) => v.source_info(),
+            TypeRef::Opcode(v) => v.source_info(),
+            TypeRef::Namespace(v) => v.source_info(),
+            TypeRef::Pattern(v) => v.source_info(),
+            TypeRef::Lazy(v) => v.source_info(),
+            TypeRef::Rot(v) => v.source_info(),
+            TypeRef::Construct(v) => v.source_info(),
+            TypeRef::OrderedType(v) => v.source_info(),
+            TypeRef::EqOf(v) => v.source_info(),
+            TypeRef::SubOf(v) => v.source_info(),
+        }
+    }
+
+    fn report_source_info(&self) -> TypeReport {
+        match self {
+            TypeRef::Bound(v) => v.report_source_info(),
+            TypeRef::Integer(v) => v.report_source_info(),
+            TypeRef::IntegerValue(v) => v.report_source_info(),
+            TypeRef::Float(v) => v.report_source_info(),
+            TypeRef::FloatValue(v) => v.report_source_info(),
+            TypeRef::Char(v) => v.report_source_info(),
+            TypeRef::CharValue(v) => v.report_source_info(),
+            TypeRef::Tuple(v) => v.report_source_info(),
+            TypeRef::Any(v) => v.report_source_info(),
+            TypeRef::All(v) => v.report_source_info(),
+            TypeRef::FixPoint(v) => v.report_source_info(),
+            TypeRef::Invoke(v) => v.report_source_info(),
+            TypeRef::Variable(v) => v.report_source_info(),
+            TypeRef::Closure(v) => v.report_source_info(),
+            TypeRef::Opcode(v) => v.report_source_info(),
+            TypeRef::Namespace(v) => v.report_source_info(),
+            TypeRef::Pattern(v) => v.report_source_info(),
+            TypeRef::Lazy(v) => v.report_source_info(),
+            TypeRef::Rot(v) => v.report_source_info(),
+            TypeRef::Construct(v) => v.report_source_info(),
+            TypeRef::OrderedType(v) => v.report_source_info(),
+            TypeRef::EqOf(v) => v.report_source_info(),
+            TypeRef::SubOf(v) => v.report_source_info(),
+        }
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
@@ -401,7 +459,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'a, T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Debug for Type<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.represent(&mut FastCycleDetector::new()))
+        write!(f, "{}", self.represent(&mut FastCycleDetector::new(), 0, 2))
     }
 }
 
@@ -472,6 +530,305 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
 impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> Debug for TypeError<U, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
+    /// Generate an ariadne Report with source location information for the error
+    pub fn to_report(&self) -> TypeReport {
+        match self {
+            TypeError::NonApplicableType(ty) => {
+                if let Some(loc) = ty.source_info() {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message("Non-applicable type")
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("This type cannot be applied as a function"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message("Non-applicable type (no source location)")
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Type cannot be applied"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::TypeMismatch(info) => {
+                if let Some(loc) = info.0.source_info() {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message(format!("Type mismatch: expected {}", info.1))
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message(format!("Found this type instead of {}", info.1)),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message(format!("Type mismatch: expected {}", info.1))
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Type mismatch (no source location)"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::AssertFailed(types) => {
+                let lhs_loc = types.0.source_info();
+                let rhs_loc = types.1.source_info();
+
+                if let Some(loc) = lhs_loc {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    let mut builder = ariadne::Report::build(
+                        ariadne::ReportKind::Error,
+                        filepath.clone(),
+                        span.start,
+                    )
+                    .with_message("Type assertion failed")
+                    .with_label(
+                        ariadne::Label::new((filepath.clone(), span)).with_message("This type"),
+                    );
+
+                    if let Some(rhs) = rhs_loc {
+                        let rhs_span = rhs.span().clone();
+                        let rhs_filepath = rhs.source().filepath().to_string();
+                        builder = builder.with_label(
+                            ariadne::Label::new((rhs_filepath, rhs_span))
+                                .with_message("doesn't accept this type"),
+                        );
+                    }
+
+                    builder.finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message("Type assertion failed (no source location)")
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Assertion failed"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::TupleIndexOutOfBounds(types) => {
+                let index_loc = types.0.source_info();
+                let tuple_loc = types.1.source_info();
+
+                if let Some(loc) = index_loc {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    let mut builder = ariadne::Report::build(
+                        ariadne::ReportKind::Error,
+                        filepath.clone(),
+                        span.start,
+                    )
+                    .with_message("Tuple index out of bounds")
+                    .with_label(ariadne::Label::new((filepath, span)).with_message("Index value"));
+
+                    if let Some(tuple) = tuple_loc {
+                        let tuple_span = tuple.span().clone();
+                        let tuple_filepath = tuple.source().filepath().to_string();
+                        builder = builder.with_label(
+                            ariadne::Label::new((tuple_filepath, tuple_span))
+                                .with_message("Tuple type"),
+                        );
+                    }
+
+                    builder.finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message("Tuple index out of bounds (no source location)")
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Index out of bounds"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::MissingContinuation(ty) => {
+                if let Some(loc) = ty.source_info() {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message("Missing continuation")
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("Continuation expected here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message("Missing continuation (no source location)")
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Continuation missing"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::MissingPerformHandler(ty) => {
+                if let Some(loc) = ty.source_info() {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message("Missing perform handler")
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("Perform handler expected here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message("Missing perform handler (no source location)")
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Handler missing"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::Perform(ty) => {
+                if let Some(loc) = ty.source_info() {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message("Perform raised")
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("Perform effect raised here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message("Perform raised (no source location)")
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Effect raised"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::Break(ty) => {
+                if let Some(loc) = ty.source_info() {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message("Break raised")
+                        .with_label(
+                            ariadne::Label::new((filepath, span)).with_message("Break raised here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message("Break raised (no source location)")
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Break raised"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::Resume(ty) => {
+                if let Some(loc) = ty.source_info() {
+                    let span = loc.span().clone();
+                    let filepath = loc.source().filepath().to_string();
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message("Resume raised")
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("Resume raised here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message("Resume raised (no source location)")
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Resume raised"),
+                        )
+                        .finish()
+                }
+            }
+            // For errors without type information, create a generic report
+            TypeError::UnresolvableType(msg) => {
+                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                    .with_message(format!("Unresolvable type: {}", msg))
+                    .with_label(
+                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                            .with_message(msg.as_ref()),
+                    )
+                    .finish()
+            }
+            TypeError::InfiniteRecursion => {
+                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                    .with_message("Infinite recursion detected")
+                    .with_label(
+                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                            .with_message("Recursion limit exceeded"),
+                    )
+                    .finish()
+            }
+            TypeError::RedeclaredType => {
+                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                    .with_message("Type redeclared")
+                    .with_label(
+                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                            .with_message("Type was already declared"),
+                    )
+                    .finish()
+            }
+            TypeError::UnboundVariable(id) => {
+                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                    .with_message(format!("Unbound variable: id = {}", id))
+                    .with_label(
+                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                            .with_message(format!("Variable {} not found", id)),
+                    )
+                    .finish()
+            }
+            TypeError::UndefinedPatternVariable(id) => {
+                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                    .with_message(format!("Undefined pattern variable: id = {}", id))
+                    .with_label(
+                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                            .with_message(format!("Pattern variable {} not defined", id)),
+                    )
+                    .finish()
+            }
+            TypeError::RuntimeError(err) => {
+                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                    .with_message(format!("Runtime error: {}", err))
+                    .with_label(
+                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                            .with_message("Runtime error occurred"),
+                    )
+                    .finish()
+            }
+            TypeError::OtherError(msg) => {
+                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                    .with_message(format!("Error: {}", msg))
+                    .with_label(
+                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                            .with_message(msg.as_ref()),
+                    )
+                    .finish()
+            }
+            TypeError::Pandom(_) => {
+                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                    .with_message("Phantom error")
+                    .with_label(
+                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                            .with_message("Internal phantom error"),
+                    )
+                    .finish()
+            }
+        }
     }
 }
 
@@ -622,17 +979,35 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         type_dispatch!(self, subof, other, ctx)
     }
+
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        type_dispatch!(self, source_info)
+    }
+
+    fn report_source_info(&self) -> TypeReport {
+        type_dispatch!(self, report_source_info)
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Type<T> {
     #[stacksafe::stacksafe]
-    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        type_dispatch!(self, represent, path)
+    fn represent(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
+        type_dispatch!(self, represent, path, depth, max_depth)
     }
 
     #[stacksafe::stacksafe]
-    fn display(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        type_dispatch!(self, display, path)
+    fn display(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
+        type_dispatch!(self, display, path, depth, max_depth)
     }
 }
 
@@ -854,6 +1229,7 @@ pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
+    pub source_info: Option<&'a Arc<SourceLocation>>,
 }
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a, 'roots, U, V> {
@@ -864,6 +1240,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
+        source_info: Option<&'a Arc<SourceLocation>>,
     ) -> Self {
         Self {
             arg,
@@ -872,6 +1249,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
             rec_assumptions,
             gc,
             roots,
+            source_info,
         }
     }
 }
@@ -915,9 +1293,9 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     // 类型应用
     fn invoke(self, ctx: InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        None
-    }
+    fn source_info(&self) -> Option<&Arc<SourceLocation>>;
+
+    fn report_source_info(&self) -> TypeReport;
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         TaggedPtr::new_unique(self as *const _ as *const ())
@@ -977,9 +1355,9 @@ pub trait CoinductiveTypeRef<
         Ok(sub_ab & sub_ba)
     }
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        None
-    }
+    fn source_info(&self) -> Option<&Arc<SourceLocation>>;
+
+    fn report_source_info(&self) -> TypeReport;
 
     fn tagged_ptr(&self) -> TaggedPtr<()>;
 
@@ -1008,9 +1386,19 @@ pub trait CoinductiveTypeWithAny<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
 }
 
 pub trait Representable {
-    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String;
-    fn display(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        self.represent(path)
+    fn represent(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String;
+    fn display(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
+        self.represent(path, depth, max_depth)
     }
 }
 
@@ -1018,13 +1406,15 @@ impl<T: Representable> Representable for Vec<T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
     ) -> String {
         let mut repr = String::from("[");
         for (i, item) in self.iter().enumerate() {
             if i != 0 {
                 repr.push_str(", ");
             }
-            repr.push_str(&item.represent(path));
+            repr.push_str(&item.represent(path, depth, max_depth));
         }
         repr.push(']');
         repr

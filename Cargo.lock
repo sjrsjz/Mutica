@@ -425,7 +425,6 @@ dependencies = [
 name = "mutica-compiler"
 version = "0.2.5"
 dependencies = [
- "ariadne",
  "lalrpop",
  "lalrpop-util",
  "logos",
@@ -437,6 +436,7 @@ dependencies = [
 name = "mutica-core"
 version = "0.2.5"
 dependencies = [
+ "ariadne",
  "rust-arc-gc",
  "smallvec",
  "stacksafe",

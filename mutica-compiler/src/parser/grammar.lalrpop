@@ -1,11 +1,11 @@
 use crate::parser::ast::TypeAst;
 use lalrpop_util::ErrorRecovery;
 use crate::parser::lexer::{LexerToken, LexicalError};
-use crate::parser::SourceFile;
-use crate::parser::SourceLocation;
+use mutica_core::util::source_info::SourceFile;
+use mutica_core::util::source_info::SourceLocation;
+use mutica_core::util::colorize::TokenColor;
 use crate::parser::WithLocation;
 use crate::parser::calculate_full_error_span;
-use crate::parser::colorize::TokenColor;
 use std::sync::Arc;
 grammar(source: &Arc<SourceFile>, colors: &mut Vec<TokenColor>);
 

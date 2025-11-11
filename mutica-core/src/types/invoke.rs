@@ -343,26 +343,59 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
         }
     }
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.inner.as_ref().3.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.inner.as_ref().3.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = self.inner.as_ref().3.as_ref() {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Function invocation type at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span)).with_message("Invocation defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Function invocation type has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
-    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
+        if depth > max_depth {
+            return "...".to_string();
+        }
         let (func, arg, cont_style, _, _) = self.inner.as_ref();
-        let func_repr = func.represent(path);
-        let arg_repr = arg.represent(path);
+        let func_repr = func.represent(path, depth + 1, max_depth);
+        let arg_repr = arg.represent(path, depth + 1, max_depth);
         let cont_repr = match cont_style {
             InvokeCountinuationStyle::TailCall => "tail".to_string(),
             InvokeCountinuationStyle::WithContinuation(cont) => {
-                format!("cps({})", cont.represent(path))
+                format!("cps({})", cont.represent(path, depth + 1, max_depth))
             }
             InvokeCountinuationStyle::WithPerformHandler(cont) => {
-                format!("hps({})", cont.represent(path))
+                format!("hps({})", cont.represent(path, depth + 1, max_depth))
             }
             InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
-                format!("chps({}, {})", cont1.represent(path), cont2.represent(path))
+                format!(
+                    "chps({}, {})",
+                    cont1.represent(path, depth + 1, max_depth),
+                    cont2.represent(path, depth + 1, max_depth)
+                )
             }
         };
         format!(
@@ -448,12 +481,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
         &self.inner.as_ref().2
     }
 
-    pub fn take(self) -> (Type<T>, Type<T>, InvokeCountinuationStyle<T>) {
+    pub fn take(
+        self,
+    ) -> (
+        Type<T>,
+        Type<T>,
+        InvokeCountinuationStyle<T>,
+        Option<Arc<SourceLocation>>,
+    ) {
         match self.inner.take() {
-            Ok((func, arg, cont_style, _, _)) => (func, arg, cont_style),
+            Ok((func, arg, cont_style, source_info, _)) => (func, arg, cont_style, source_info),
             Err(v) => {
-                let (func, arg, cont_style, _, _) = v.as_ref();
-                (func.clone(), arg.clone(), cont_style.clone())
+                let (func, arg, cont_style, source_info, _) = v.as_ref();
+                (
+                    func.clone(),
+                    arg.clone(),
+                    cont_style.clone(),
+                    source_info.clone(),
+                )
             }
         }
     }

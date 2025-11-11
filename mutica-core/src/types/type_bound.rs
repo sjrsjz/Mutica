@@ -9,9 +9,8 @@ use crate::{
         TypeRef,
     },
     util::{
-        cycle_detector::FastCycleDetector, 
-        source_info::SourceLocation,
-        three_valued_logic::ThreeValuedLogic
+        cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -138,13 +137,39 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
 
     fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.source_info.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = &self.source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Type bound at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span)).with_message("Type bound defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Type bound has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for TypeBound<T> {
-    fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(
+        &self,
+        _path: &mut FastCycleDetector<TaggedPtr<()>>,
+        _depth: usize,
+        _max_depth: usize,
+    ) -> String {
         match &self.kind {
             TypeBoundKind::Top => "⊤".to_string(),
             TypeBoundKind::Bottom => "⊥".to_string(),
@@ -154,25 +179,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for TypeBound<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeBound<T> {
-    pub fn top() -> Type<T> {
-        Self::top_with_info(None)
-    }
-
-    pub fn top_with_info(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+    pub fn top(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         Self {
             kind: TypeBoundKind::Top,
             source_info,
-        }.dispatch()
+        }
+        .dispatch()
     }
 
-    pub fn bottom() -> Type<T> {
-        Self::bottom_with_info(None)
-    }
-
-    pub fn bottom_with_info(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+    pub fn bottom(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         Self {
             kind: TypeBoundKind::Bottom,
             source_info,
-        }.dispatch()
+        }
+        .dispatch()
     }
 }

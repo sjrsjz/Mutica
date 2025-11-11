@@ -1891,39 +1891,41 @@ impl<'ast> LinearTypeAst<'ast> {
     ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError<'ast>>> {
         match self {
             LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new(
-                loc.map(|l| Arc::new(l.clone())),
+                loc.cloned().map(Arc::new),
             ))),
-            LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(
-                loc.map(|l| Arc::new(l.clone())),
-            ))),
+            LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(loc.cloned().map(Arc::new)))),
             LinearTypeAst::Char => Ok(BuildResult::simple(Character::new(
-                loc.map(|l| Arc::new(l.clone())),
+                loc.cloned().map(Arc::new),
             ))),
             LinearTypeAst::OrderedType(v) => Ok(BuildResult::simple(OrderedType::new(
                 *v,
-                loc.map(|l| Arc::new(l.clone())),
+                loc.cloned().map(Arc::new),
             ))),
-            LinearTypeAst::Top => Ok(BuildResult::simple(TypeBound::top())),
-            LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom())),
+            LinearTypeAst::Top => Ok(BuildResult::simple(TypeBound::top(
+                loc.cloned().map(Arc::new),
+            ))),
+            LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom(
+                loc.cloned().map(Arc::new),
+            ))),
             LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(
                 *v,
-                loc.map(|l| Arc::new(l.clone())),
+                loc.cloned().map(Arc::new),
             ))),
             LinearTypeAst::FloatLiteral(v) => Ok(BuildResult::simple(FloatValue::new(
                 *v,
-                loc.map(|l| Arc::new(l.clone())),
+                loc.cloned().map(Arc::new),
             ))),
             LinearTypeAst::CharLiteral(v) => Ok(BuildResult::simple(CharacterValue::new(
                 *v,
-                loc.map(|l| Arc::new(l.clone())),
+                loc.cloned().map(Arc::new),
             ))),
             LinearTypeAst::Variable(var) => {
                 if let Some(ty) = ctx.current_layer().get(var) {
                     match ty {
                         Ok(t) => Ok(BuildResult::simple(t.clone())), // fixpoint类型
-                        Err(index) => Ok(BuildResult::simple(Variable::new_debruijn(
+                        Err(index) => Ok(BuildResult::simple(Variable::new(
                             index,
-                            loc.map(|l| Arc::new(l.clone())),
+                            loc.cloned().map(Arc::new),
                         ))),
                     }
                 } else {
@@ -1946,7 +1948,10 @@ impl<'ast> LinearTypeAst<'ast> {
                     )?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
-                Ok(BuildResult::complex(Tuple::new(&types), patterns))
+                Ok(BuildResult::complex(
+                    Tuple::new(&types, loc.cloned().map(Arc::new)),
+                    patterns,
+                ))
             }
             LinearTypeAst::Cons { head, tail } => {
                 let head_type = head.to_type(
@@ -1967,7 +1972,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 )?;
                 let (types, patterns) = BuildResult::fold(vec![head_type, tail_type]);
                 Ok(BuildResult::complex(
-                    Construct::new(&types[0], &types[1], loc.map(|l| Arc::new(l.clone()))),
+                    Construct::new(&types[0], &types[1], loc.cloned().map(Arc::new)),
                     patterns,
                 ))
             }
@@ -1984,7 +1989,10 @@ impl<'ast> LinearTypeAst<'ast> {
                     )?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
-                Ok(BuildResult::complex(AnyOf::new(types), patterns))
+                Ok(BuildResult::complex(
+                    AnyOf::new(types, loc.cloned().map(Arc::new)),
+                    patterns,
+                ))
             }
             LinearTypeAst::Specialize(basic_type_asts) => {
                 let mut types = Vec::new();
@@ -1999,7 +2007,10 @@ impl<'ast> LinearTypeAst<'ast> {
                     )?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
-                Ok(BuildResult::complex(AllOf::new(types), patterns))
+                Ok(BuildResult::complex(
+                    AllOf::new(types, loc.cloned().map(Arc::new)),
+                    patterns,
+                ))
             }
             LinearTypeAst::Invoke {
                 func,
@@ -2053,6 +2064,7 @@ impl<'ast> LinearTypeAst<'ast> {
                         &types[1],
                         continuation_type.as_ref().map(|t| &t.ty),
                         perform_handler_type.as_ref().map(|t| &t.ty),
+                        loc.cloned().map(Arc::new),
                     ),
                     patterns,
                 ))
@@ -2066,15 +2078,17 @@ impl<'ast> LinearTypeAst<'ast> {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect::<Vec<(String, WithLocation<()>)>>();
                 let mut closure_env = Vec::new();
-                for (var, loc) in &auto_captures {
+                for (var, capture_loc) in &auto_captures {
                     if let Some(ty) = ctx.current_layer().get(var) {
                         match ty {
                             Ok(t) => closure_env.push(t.clone()), // fixpoint类型
-                            Err(index) => closure_env.push(Variable::new_debruijn(index)),
+                            Err(index) => {
+                                closure_env.push(Variable::new(index, loc.cloned().map(Arc::new)))
+                            }
                         }
                     } else {
                         return Err(Err(ParseError::UseBeforeDeclaration(
-                            WithLocation::new(self.clone(), loc.location()),
+                            WithLocation::new(self.clone(), capture_loc.location()),
                             var.clone(),
                         )));
                     }
@@ -2120,6 +2134,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 Ok(BuildResult::simple(Closure::new::<Type<T>, Type<T>>(
                     new_branches,
                     vec![closure_env],
+                    loc.cloned().map(Arc::new),
                 )))
             }
             LinearTypeAst::StaticFixPoint { param_name, expr } => {
@@ -2140,8 +2155,8 @@ impl<'ast> LinearTypeAst<'ast> {
                     .map_err(Ok)?;
                 Ok(BuildResult::complex(placeholder, expr_type.patterns))
             }
-            LinearTypeAst::AtomicOpcode(atomic_opcode) => {
-                Ok(BuildResult::simple(Opcode::new(match atomic_opcode {
+            LinearTypeAst::AtomicOpcode(atomic_opcode) => Ok(BuildResult::simple(Opcode::new(
+                match atomic_opcode {
                     AtomicOpcode::Opcode => OpcodeKind::Opcode,
                     AtomicOpcode::Add => OpcodeKind::Add,
                     AtomicOpcode::Sub => OpcodeKind::Sub,
@@ -2155,8 +2170,9 @@ impl<'ast> LinearTypeAst<'ast> {
                     AtomicOpcode::Set => OpcodeKind::Set,
                     AtomicOpcode::BuildFixPoint => OpcodeKind::BuildFixPoint,
                     AtomicOpcode::IO(v) => OpcodeKind::IO(v.clone().into()),
-                })))
-            }
+                },
+                loc.cloned().map(Arc::new),
+            ))),
             LinearTypeAst::Namespace { tag, expr } => {
                 let expr_type = expr.to_type(
                     ctx,
@@ -2167,7 +2183,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     expr.location(),
                 )?;
                 Ok(BuildResult::complex(
-                    Namespace::new(tag.clone(), &expr_type.ty),
+                    Namespace::new(tag.clone(), &expr_type.ty, loc.cloned().map(Arc::new)),
                     expr_type.patterns,
                 ))
             }
@@ -2189,7 +2205,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 let debruijn_index = pattern_counter.alloc(name.clone());
                 patterns.extend(vec![WithLocation::new(name.clone(), loc)]);
                 Ok(BuildResult::complex(
-                    Pattern::new(debruijn_index, &expr_type.ty),
+                    Pattern::new(debruijn_index, &expr_type.ty, loc.cloned().map(Arc::new)),
                     patterns,
                 ))
             }
@@ -2203,7 +2219,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     inner.location(),
                 )?;
                 Ok(BuildResult::complex(
-                    Lazy::new(&inner_type.ty),
+                    Lazy::new(&inner_type.ty, loc.cloned().map(Arc::new)),
                     inner_type.patterns,
                 ))
             }
@@ -2217,7 +2233,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     value.location(),
                 )?;
                 Ok(BuildResult::complex(
-                    Rotate::new(&value_type.ty),
+                    Rotate::new(&value_type.ty, loc.cloned().map(Arc::new)),
                     value_type.patterns,
                 ))
             }
@@ -2231,7 +2247,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     value.location(),
                 )?;
                 Ok(BuildResult::complex(
-                    EqOf::new(&value_type.ty),
+                    EqOf::new(&value_type.ty, loc.cloned().map(Arc::new)),
                     value_type.patterns,
                 ))
             }
@@ -2245,7 +2261,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     value.location(),
                 )?;
                 Ok(BuildResult::complex(
-                    SubOf::new(&value_type.ty),
+                    SubOf::new(&value_type.ty, loc.cloned().map(Arc::new)),
                     value_type.patterns,
                 ))
             }

@@ -11,7 +11,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-ariadne = "0.4.1"
 lalrpop-util = "0.22.2"
 logos = "0.15.1"
 stacksafe = "0.1.4"

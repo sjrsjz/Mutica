@@ -20,6 +20,7 @@ use crate::{
         collector::Collector,
         cycle_detector::FastCycleDetector,
         rootstack::RootStack,
+        source_info::SourceLocation,
     },
 };
 
@@ -88,7 +89,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         }
     }
 
-    fn io(&mut self, f: &Type<T>, arg: &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>> {
+    fn io(
+        &mut self,
+        f: &Type<T>,
+        arg: &Type<T>,
+        source_info: Option<&Arc<SourceLocation>>,
+    ) -> Result<Option<Type<T>>, TypeError<Type<T>, T>> {
         if let Some(outer_handler) = &self.outer_io_handler
             && let Some(result) = outer_handler(f, arg)?
         {
@@ -110,45 +116,54 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             match io_name.as_ref().as_str() {
                 // 基本IO操作
                 "print" => {
-                    let str = arg.display(&mut FastCycleDetector::new());
+                    let str = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
                     print!("{}", str);
-                    Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
+                    Ok(Some(Tuple::new(
+                        Vec::<Type<T>>::new(),
+                        source_info.cloned(),
+                    )))
                 }
                 "println" => {
-                    let str = arg.display(&mut FastCycleDetector::new());
+                    let str = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
                     println!("{}", str);
-                    Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
+                    Ok(Some(Tuple::new(
+                        Vec::<Type<T>>::new(),
+                        source_info.cloned(),
+                    )))
                 }
                 "input" => {
                     let mut input = String::new();
                     std::io::stdin().read_line(&mut input).unwrap();
                     let chars = input
                         .chars()
-                        .map(|c| CharacterValue::new(c, None))
+                        .map(|c| CharacterValue::new(c, source_info.cloned()))
                         .collect::<Vec<_>>();
-                    Ok(Some(Tuple::new(chars)))
+                    Ok(Some(Tuple::new(chars, source_info.cloned())))
                 }
                 "flush" => {
                     use std::io;
                     io::stdout().flush().unwrap();
-                    Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
+                    Ok(Some(Tuple::new(
+                        Vec::<Type<T>>::new(),
+                        source_info.cloned(),
+                    )))
                 }
                 // 类型表示相关
                 "repr" => {
-                    let repr = arg.represent(&mut FastCycleDetector::new());
+                    let repr = arg.represent(&mut FastCycleDetector::new(), 0, usize::MAX);
                     let chars = repr
                         .chars()
-                        .map(|c| CharacterValue::new(c, None))
+                        .map(|c| CharacterValue::new(c, source_info.cloned()))
                         .collect::<Vec<_>>();
-                    Ok(Some(Tuple::new(chars)))
+                    Ok(Some(Tuple::new(chars, source_info.cloned())))
                 }
                 "display" => {
-                    let disp = arg.display(&mut FastCycleDetector::new());
+                    let disp = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
                     let chars = disp
                         .chars()
-                        .map(|c| CharacterValue::new(c, None))
+                        .map(|c| CharacterValue::new(c, source_info.cloned()))
                         .collect::<Vec<_>>();
-                    Ok(Some(Tuple::new(chars)))
+                    Ok(Some(Tuple::new(chars, source_info.cloned())))
                 }
                 // 代数效应相关
                 "perform" => Err(TypeError::Perform(arg.clone().into())),
@@ -157,7 +172,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 // 类型结构描述相关
                 "tuple_len" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                        TypeRef::Tuple(v) => Ok(Some(IntegerValue::new(v.len() as i64, None))),
+                        TypeRef::Tuple(v) => Ok(Some(IntegerValue::new(
+                            v.len() as i64,
+                            source_info.cloned(),
+                        ))),
                         _ => Err(TypeError::TypeMismatch(
                             (arg.clone_data(), "Tuple | List".into()).into(),
                         )),
@@ -173,14 +191,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             for ty in v.types() {
                                 elements.push(ty.clone());
                             }
-                            Ok(Some(Tuple::new(elements)))
+                            Ok(Some(Tuple::new(elements, source_info.cloned())))
                         }
                         TypeRef::All(v) => {
                             let mut elements = Vec::new();
                             for ty in v.types() {
                                 elements.push(ty.clone());
                             }
-                            Ok(Some(Tuple::new(elements)))
+                            Ok(Some(Tuple::new(elements, source_info.cloned())))
                         }
                         _ => Err(TypeError::TypeMismatch(
                             (
@@ -196,10 +214,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 // 可变状态相关
                 "alloc" => {
                     let id = self.allocated_types.alloc(arg.clone());
-                    Ok(Some(Tuple::new(vec![
-                        IntegerValue::new(id.index() as i64, None),
-                        IntegerValue::new(id.generation() as i64, None),
-                    ])))
+                    Ok(Some(Tuple::new(
+                        vec![
+                            IntegerValue::new(id.index() as i64, source_info.cloned()),
+                            IntegerValue::new(id.generation() as i64, source_info.cloned()),
+                        ],
+                        source_info.cloned(),
+                    )))
                 }
                 "dealloc" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| {
@@ -222,7 +243,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 let generation = gen_iv.value() as u32;
                                 self.allocated_types
                                     .dealloc(Id::from_parts(index, generation));
-                                Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
+                                Ok(Some(Tuple::new(
+                                    Vec::<Type<T>>::new(),
+                                    source_info.cloned(),
+                                )))
                             } else {
                                 Err(TypeError::TypeMismatch(
                                     (arg.clone_data(), "Tuple of two IntegerValues".into()).into(),
@@ -308,7 +332,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                             match self.allocated_types.get_mut(id) {
                                                 Some(v) => {
                                                     *v = value_ty.clone();
-                                                    Ok(Some(Tuple::new(Vec::<Type<T>>::new())))
+                                                    Ok(Some(Tuple::new(
+                                                        Vec::<Type<T>>::new(),
+                                                        source_info.cloned(),
+                                                    )))
                                                 }
                                                 None => Err(TypeError::RuntimeError(Arc::new(
                                                     std::io::Error::new(
@@ -376,8 +403,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         let (next_type, updated) = reduced
             .take(&mut FastCycleDetector::new(), |_, inner| match inner {
                 Type::Invoke(invoke) => {
-                    let (func, arg, continuation_style) = invoke.take();
-                    let io_result = self.io(&func, &arg);
+                    let (func, arg, continuation_style, source_info) = invoke.take();
+                    let io_result = self.io(&func, &arg, source_info.as_ref());
                     let invoke_context = InvokeContext::new(
                         arg,
                         &empty_v,
@@ -385,6 +412,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         &mut rec_assumptions,
                         gc,
                         &mut self.roots,
+                        source_info.as_ref(),
                     );
                     let io_result = match io_result {
                         Ok(v) => v,
@@ -532,10 +560,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         None => break None,
                     }
                 } {
-                    Some(cont) => Ok((
-                        Invoke::new(cont, inner, None::<Type<T>>, None::<Type<T>>, None),
-                        true,
-                    )),
+                    Some(cont) => {
+                        let source_info = cont.source_info().cloned();
+                        Ok((
+                            Invoke::new(cont, inner, None::<Type<T>>, None::<Type<T>>, source_info),
+                            true,
+                        ))
+                    }
                     None => Ok((inner, false)),
                 },
             })?

@@ -6,7 +6,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef
+        TypeRef,
     },
     util::{cycle_detector::FastCycleDetector, three_valued_logic::ThreeValuedLogic},
 };
@@ -105,7 +105,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
             match other {
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::Variable(v) => {
                     let self_idx = self.debruijn_index;
                     let v_idx = v.debruijn_index;
@@ -157,8 +161,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
 
     fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.source_info.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = &self.source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Type variable at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span))
+                        .with_message("Type variable defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Type variable has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 
@@ -203,16 +229,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
-    fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(
+        &self,
+        _path: &mut FastCycleDetector<TaggedPtr<()>>,
+        _depth: usize,
+        _max_depth: usize,
+    ) -> String {
         format!("λ.{}", self.debruijn_index)
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
-    pub fn new_debruijn(
-        debruijn_index: isize,
-        source_info: Option<Arc<SourceLocation>>,
-    ) -> Type<T> {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(debruijn_index: isize, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         Variable {
             debruijn_index,
             source_info,

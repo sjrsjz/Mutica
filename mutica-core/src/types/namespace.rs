@@ -47,9 +47,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Namespace<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Namespace<T> {
-    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
+        if depth > max_depth {
+            return "...".to_string();
+        }
         let (tag, expr, _, _) = self.inner.as_ref();
-        format!("{}::{}", tag, expr.represent(path))
+        format!("{}::{}", tag, expr.represent(path, depth + 1, max_depth))
     }
 }
 
@@ -187,8 +195,31 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
         }
     }
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.inner.as_ref().2.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.inner.as_ref().2.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = self.inner.as_ref().2.as_ref() {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            let ns_name = &self.inner.as_ref().0;
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Namespace '{}' at {}", ns_name, filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span))
+                        .with_message(format!("Namespace '{}' defined here", ns_name)),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Namespace has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 

@@ -6,9 +6,12 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef
+        TypeRef,
     },
-    util::{cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
+    util::{
+        cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub struct CharacterValue<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -65,7 +68,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::Char(_) => Ok(ThreeValuedLogic::True),
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -87,7 +94,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::CharValue(v) => Ok((self.value == v.value).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -111,17 +122,52 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
 
     fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 
-    fn source_info(&self) -> Option<&SourceLocation> {
-        self.source_info.as_deref()
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        self.source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        if let Some(loc) = &self.source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Character value {:?} at {}", self.value, filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span))
+                        .with_message(format!("Character value {:?} defined here", self.value)),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message(format!(
+                    "Character value {:?} has no source location",
+                    self.value
+                ))
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for CharacterValue<T> {
-    fn represent(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(
+        &self,
+        _path: &mut FastCycleDetector<TaggedPtr<()>>,
+        _depth: usize,
+        _max_depth: usize,
+    ) -> String {
         format!("{:?}", self.value)
     }
 
-    fn display(&self, _path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn display(
+        &self,
+        _path: &mut FastCycleDetector<TaggedPtr<()>>,
+        _depth: usize,
+        _max_depth: usize,
+    ) -> String {
         format!("{}", self.value)
     }
 }

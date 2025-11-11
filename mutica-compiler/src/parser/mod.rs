@@ -26,8 +26,8 @@ use crate::{
     },
     util::{byte_offset_to_char_offset, byte_offset_to_position},
 };
-use ariadne::{Color, Label, Report, ReportKind};
 use lalrpop_util::ErrorRecovery;
+use mutica_core::ariadne::{Color, Label, Report, ReportKind};
 
 /// Calculate the full error span including all dropped tokens
 /// Returns (byte_start, byte_end) tuple

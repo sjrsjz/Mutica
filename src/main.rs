@@ -249,7 +249,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
     #[cfg(debug_assertions)]
     println!(
         "Built type: {}\n",
-        built_type.ty().display(&mut FastCycleDetector::new())
+        built_type.ty().display(&mut FastCycleDetector::new(), 0, 2)
     );
 
     let mut linear_scheduler =
@@ -279,6 +279,9 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
 
     fn dump_stack(stack: &Stack<ContinuationOrHandler<TypeGcOnceLock>>) -> String {
         let mut result = String::new();
+        if stack.is_empty() {
+            return "## <empty stack>\n".to_string();
+        }
         for (i, ty) in stack.iter().enumerate() {
             result.push_str(&format!(
                 "## [{}]: {}\n",
@@ -286,11 +289,11 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
                 match ty {
                     ContinuationOrHandler::Continuation(t) => format!(
                         "Continuation - {}",
-                        t.display(&mut FastCycleDetector::new())
+                        t.display(&mut FastCycleDetector::new(), 0, 2)
                     ),
                     ContinuationOrHandler::PerformHandler(v) => format!(
                         "Perform Handler - {}",
-                        v.display(&mut FastCycleDetector::new())
+                        v.display(&mut FastCycleDetector::new(), 0, 2)
                     ),
                 }
             ));
@@ -303,18 +306,22 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
             .map(&mut FastCycleDetector::new(), |_, ty| match ty {
                 TypeRef::Tuple(tuple) if tuple.is_empty() => (),
                 _ => {
-                    println!("{}", v.display(&mut FastCycleDetector::new()));
+                    println!(
+                        "{}",
+                        v.display(&mut FastCycleDetector::new(), 0, usize::MAX)
+                    );
                 }
             })
             .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e))
             .unwrap_or(()),
         Err(e) => {
             eprintln!("--- Type Reduction Error ---");
-            eprintln!(
-                "Continuation stack:\n{}",
-                dump_stack(linear_scheduler.stack())
-            );
-            eprintln!("Runtime Error: {:?}", e);
+            eprintln!("{}", dump_stack(linear_scheduler.stack()));
+            let filepath = source.filepath();
+            let source_content = source.content().to_string();
+            e.to_report()
+                .eprint((filepath, ariadne::Source::from(source_content)))
+                .ok();
         }
     }
 }

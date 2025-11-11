@@ -1,4 +1,8 @@
-use std::{marker::PhantomData, ops::Deref, sync::RwLock};
+use std::{
+    marker::PhantomData,
+    ops::Deref,
+    sync::{Arc, RwLock},
+};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -7,11 +11,11 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef
+        TypeRef,
     },
     util::{
         arc_opt::ArcOpt, collector::Collector, cycle_detector::FastCycleDetector,
-        three_valued_logic::ThreeValuedLogic,
+        source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -54,7 +58,12 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Default for ClosureEnv<U, V>
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Representable for ClosureEnv<U, V> {
-    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
+    fn represent(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
         let mut repr = String::from("(");
         for (i, v) in self.0.iter().enumerate().rev() {
             if i != self.0.len() - 1 {
@@ -63,7 +72,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Representable for ClosureEnv
             repr.push_str("λ.");
             repr.push_str(&(-1 - i as isize).to_string());
             repr.push_str(" => ");
-            repr.push_str(&v.represent(path));
+            repr.push_str(&v.represent(path, depth, max_depth));
         }
         repr.push(')');
         repr
@@ -219,6 +228,7 @@ pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
         Vec<(ClosureBranch<Type<T>, T>, usize, usize)>, // 第一个 usize 用于记录分支指向的环境索引， 第二个 usize 用于记录分支的模式共有多少个待匹配变量
         Vec<ClosureEnv<Type<T>, T>>,                    // 环境列表
         RwLock<ThreeValuedLogic>,
+        Option<Arc<SourceLocation>>,
     )>,
 }
 
@@ -232,7 +242,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Closure<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        let (branches, env, _) = self.inner.as_ref();
+        let (branches, env, _, _) = self.inner.as_ref();
         for (inner, _, _) in branches.iter() {
             inner.collect(queue);
         }
@@ -244,7 +254,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Closure<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        let (branches, env, _) = self.inner.as_ref();
+        let (branches, env, _, _) = self.inner.as_ref();
         for (inner, _, _) in branches.iter() {
             inner.upgrade(collected);
         }
@@ -287,10 +297,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::Closure(v) => {
-                    let (self_branches, self_env, _) = self.inner.as_ref();
-                    let (v_branches, v_env, _) = v.inner.as_ref();
+                    let (self_branches, self_env, _, _) = self.inner.as_ref();
+                    let (v_branches, v_env, _, _) = v.inner.as_ref();
 
                     if self_branches.len() != v_branches.len() {
                         return Ok(ThreeValuedLogic::False);
@@ -359,10 +373,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v) if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) => Ok(ThreeValuedLogic::True),
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
+                }
                 TypeRef::Closure(v) => {
-                    let (self_branches, self_env, _) = self.inner.as_ref();
-                    let (v_branches, v_env, _) = v.inner.as_ref();
+                    let (self_branches, self_env, _, _) = self.inner.as_ref();
+                    let (v_branches, v_env, _, _) = v.inner.as_ref();
 
                     if self_branches.len() != v_branches.len() {
                         return Ok(ThreeValuedLogic::False);
@@ -420,7 +438,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         mut self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self.inner.modify(|(branches, env, is_nf)| {
+        match self.inner.modify(|(branches, env, is_nf, source_info)| {
             let mut is_env_nf = env
                 .iter()
                 .map(|e| e.all_nf())
@@ -480,11 +498,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 *nf_lock = is_env_nf & is_branches_nf;
             }
 
-            Ok((reduced_branches, reduced_env, is_nf))
+            Ok((reduced_branches, reduced_env, is_nf, source_info))
         })? {
             Some(()) => Ok(self.dispatch()),
             None => {
-                let (branches, env, _) = self.inner.as_ref();
+                let (branches, env, _, source_info) = self.inner.as_ref();
                 // 化简env
                 let reduced_env = env
                     .iter()
@@ -509,13 +527,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 Ok(Closure::new::<Type<T>, Type<T>>(
                     reduced_branches,
                     reduced_env,
+                    source_info.clone(),
                 ))
             }
         }
     }
 
     fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        let (branches, env, _) = self.inner.as_ref();
+        let (branches, env, _, _) = self.inner.as_ref();
         let empty_closure_env = ClosureEnv::new(Vec::<Type<T>>::new());
         let mut matched_pattern = Collector::new();
         let mut assumptions_temp = smallvec::smallvec![];
@@ -556,7 +575,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {
-        let (_, _, is_nf) = self.inner.as_ref();
+        let (_, _, is_nf, _) = self.inner.as_ref();
         match is_nf.read() {
             Ok(v) => *v,
             Err(_) => ThreeValuedLogic::False,
@@ -564,7 +583,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     }
 
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        let (branches, env, is_nf) = self.inner.as_ref();
+        let (branches, env, is_nf, _) = self.inner.as_ref();
         for (inner, _, _) in branches.iter() {
             inner.pattern.recalculate_normal_form(cycle_detector);
         }
@@ -585,22 +604,57 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             *nf_lock = new_nf;
         }
     }
+
+    fn source_info(&self) -> Option<&Arc<SourceLocation>> {
+        let (_, _, _, source_info) = self.inner.as_ref();
+        source_info.as_ref()
+    }
+
+    fn report_source_info(&self) -> crate::types::TypeReport {
+        let (_, _, _, source_info) = self.inner.as_ref();
+        if let Some(loc) = source_info {
+            let span = loc.span().clone();
+            let filepath = loc.source().filepath().to_string();
+            ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                .with_message(format!("Closure type at {}", filepath))
+                .with_label(
+                    ariadne::Label::new((filepath, span)).with_message("Closure defined here"),
+                )
+                .finish()
+        } else {
+            ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                .with_message("Closure type has no source location")
+                .with_label(
+                    ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                        .with_message("Location unknown"),
+                )
+                .finish()
+        }
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
-    fn represent(&self, path: &mut FastCycleDetector<TaggedPtr<()>>) -> String {
-        let (branches, env, _) = self.inner.as_ref();
+    fn represent(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
+    ) -> String {
+        if depth > max_depth {
+            return "...".to_string();
+        }
+        let (branches, env, _, _) = self.inner.as_ref();
         let mut repr = String::from("match");
         if !env.is_empty() {
             repr.push_str(" capture<");
-            repr.push_str(&env.represent(path));
+            repr.push_str(&env.represent(path, depth + 1, max_depth));
             repr.push('>');
         }
         for (inner, closure_idx, _) in branches.iter() {
+            repr.push_str(&inner.pattern.represent(path, depth + 1, max_depth));
             repr.push_str(&format!(" | c.{} ", closure_idx));
-            repr.push_str(&inner.pattern.represent(path));
             repr.push_str(" => ");
-            repr.push_str(&inner.expr.represent(path));
+            repr.push_str(&inner.expr.represent(path, depth + 1, max_depth));
         }
         repr.push_str(" | panic");
         repr
@@ -615,6 +669,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
     pub fn new<U, V>(
         branches: Vec<(U, V, usize, usize)>,
         closure_env: Vec<ClosureEnv<Type<T>, T>>,
+        source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T>
     where
         U: AsDispatcher<Type<T>, T>,
@@ -645,7 +700,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         }
 
         Type::Closure(Closure {
-            inner: ArcOpt::new((branches_vec, closure_env, RwLock::new(is_nf))),
+            inner: ArcOpt::new((branches_vec, closure_env, RwLock::new(is_nf), source_info)),
         })
     }
 
@@ -670,7 +725,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         }
         let is_nf = self.is_normal_form() & other.is_normal_form();
         Closure {
-            inner: ArcOpt::new((new_branches, new_closure_env, RwLock::new(is_nf))),
+            inner: ArcOpt::new((
+                new_branches,
+                new_closure_env,
+                RwLock::new(is_nf),
+                self.source_info().cloned(),
+            )),
         }
         .into_dispatcher()
     }
