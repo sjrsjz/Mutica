@@ -317,11 +317,9 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         Err(e) => {
             eprintln!("--- Type Reduction Error ---");
             eprintln!("{}", dump_stack(linear_scheduler.stack()));
-            let filepath = source.filepath();
-            let source_content = source.content().to_string();
-            e.to_report()
-                .eprint((filepath, ariadne::Source::from(source_content)))
-                .ok();
+
+            // TypeErrorReport now bundles the report with all needed source files
+            e.to_report().eprint().ok();
         }
     }
 }

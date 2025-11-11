@@ -64,7 +64,7 @@ use crate::{
         collector::Collector,
         cycle_detector::FastCycleDetector,
         rootstack::{RootStack, Rootable},
-        source_info::SourceLocation,
+        source_info::{SourceLocation, byte_offset_to_char_offset},
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -465,6 +465,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Debug for Type<T> {
 
 use thiserror::Error;
 
+/// A report bundle that includes both the ariadne report and source files needed to display it
+pub struct TypeErrorReport {
+    pub report: TypeReport,
+    pub sources: Vec<(String, String)>, // (filepath, content) pairs
+}
+
+impl TypeErrorReport {
+    pub fn new(report: TypeReport, sources: Vec<(String, String)>) -> Self {
+        Self { report, sources }
+    }
+
+    /// Print the report with all required sources
+    pub fn eprint(&self) -> std::io::Result<()> {
+        let cache = ariadne::sources(
+            self.sources
+                .iter()
+                .map(|(path, content)| (path.clone(), content.clone()))
+                .collect::<std::collections::HashMap<_, _>>(),
+        );
+        self.report.eprint(cache)
+    }
+}
+
 #[derive(Clone, Error)]
 pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     UnresolvableType(Box<str>),
@@ -535,14 +558,28 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> Debug for TypeError<
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
     /// Generate an ariadne Report with source location information for the error
-    pub fn to_report(&self) -> TypeReport {
-        match self {
+    pub fn to_report(&self) -> TypeErrorReport {
+        let mut sources = Vec::new();
+
+        let byte_offset_span_to_char_span =
+            |content: &str, byte_span: std::ops::Range<usize>| -> std::ops::Range<usize> {
+                let start = byte_offset_to_char_offset(content, byte_span.start);
+                let end = byte_offset_to_char_offset(content, byte_span.end);
+                start..end
+            };
+
+        let report = match self {
             TypeError::NonApplicableType(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
                 if let Some(loc) = ty.source_info() {
-                    let span = loc.span().clone();
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message("Non-applicable type")
+                        .with_message(format!("Non-applicable type: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new((filepath, span))
                                 .with_message("This type cannot be applied as a function"),
@@ -550,7 +587,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .finish()
                 } else {
                     ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message("Non-applicable type (no source location)")
+                        .with_message(format!("Non-applicable type: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Type cannot be applied"),
@@ -560,8 +597,12 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
             }
             TypeError::TypeMismatch(info) => {
                 if let Some(loc) = info.0.source_info() {
-                    let span = loc.span().clone();
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
                         .with_message(format!("Type mismatch: expected {}", info.1))
                         .with_label(
@@ -580,35 +621,56 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::AssertFailed(types) => {
-                let lhs_loc = types.0.source_info();
-                let rhs_loc = types.1.source_info();
+                let repr_a = types.0.represent(&mut FastCycleDetector::new(), 0, 3);
+                let repr_b = types.1.represent(&mut FastCycleDetector::new(), 0, 3);
+                let loc_a = types.0.source_info();
+                let loc_b = types.1.source_info();
 
-                if let Some(loc) = lhs_loc {
-                    let span = loc.span().clone();
+                if let Some(loc) = loc_a {
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     let mut builder = ariadne::Report::build(
                         ariadne::ReportKind::Error,
                         filepath.clone(),
                         span.start,
                     )
-                    .with_message("Type assertion failed")
+                    .with_message(format!(
+                        "Type assertion failed: {} doesn't accept {}",
+                        repr_a, repr_b
+                    ))
                     .with_label(
-                        ariadne::Label::new((filepath.clone(), span)).with_message("This type"),
+                        ariadne::Label::new((filepath.clone(), span))
+                            .with_message(format!("Expected type: {}", repr_a)),
                     );
 
-                    if let Some(rhs) = rhs_loc {
-                        let rhs_span = rhs.span().clone();
+                    if let Some(rhs) = loc_b {
+                        let rhs_span = byte_offset_span_to_char_span(
+                            rhs.source().content(),
+                            rhs.span().clone(),
+                        );
                         let rhs_filepath = rhs.source().filepath().to_string();
+                        let rhs_content = rhs.source().content().to_string();
+                        // Only add source if it's different from lhs
+                        if rhs_filepath != filepath {
+                            sources.push((rhs_filepath.clone(), rhs_content));
+                        }
                         builder = builder.with_label(
                             ariadne::Label::new((rhs_filepath, rhs_span))
-                                .with_message("doesn't accept this type"),
+                                .with_message(format!("Provided type: {}", repr_b)),
                         );
                     }
 
                     builder.finish()
                 } else {
                     ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message("Type assertion failed (no source location)")
+                        .with_message(format!(
+                            "Type assertion failed: {} doesn't accept {}",
+                            repr_a, repr_b
+                        ))
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Assertion failed"),
@@ -617,33 +679,56 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::TupleIndexOutOfBounds(types) => {
-                let index_loc = types.0.source_info();
-                let tuple_loc = types.1.source_info();
+                let tuple_repr = types.0.represent(&mut FastCycleDetector::new(), 0, 3);
+                let index_repr = types.1.represent(&mut FastCycleDetector::new(), 0, 3);
+                let tuple_loc = types.0.source_info();
+                let index_loc = types.1.source_info();
 
                 if let Some(loc) = index_loc {
-                    let span = loc.span().clone();
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     let mut builder = ariadne::Report::build(
                         ariadne::ReportKind::Error,
                         filepath.clone(),
                         span.start,
                     )
-                    .with_message("Tuple index out of bounds")
-                    .with_label(ariadne::Label::new((filepath, span)).with_message("Index value"));
+                    .with_message(format!(
+                        "Tuple index out of bounds: index {} for tuple {}",
+                        index_repr, tuple_repr
+                    ))
+                    .with_label(
+                        ariadne::Label::new((filepath.clone(), span))
+                            .with_message(format!("Index: {}", index_repr)),
+                    );
 
                     if let Some(tuple) = tuple_loc {
-                        let tuple_span = tuple.span().clone();
+                        let tuple_span = byte_offset_span_to_char_span(
+                            tuple.source().content(),
+                            tuple.span().clone(),
+                        );
                         let tuple_filepath = tuple.source().filepath().to_string();
+                        let tuple_content = tuple.source().content().to_string();
+                        // Only add source if it's different from index's source
+                        if tuple_filepath != filepath {
+                            sources.push((tuple_filepath.clone(), tuple_content));
+                        }
                         builder = builder.with_label(
                             ariadne::Label::new((tuple_filepath, tuple_span))
-                                .with_message("Tuple type"),
+                                .with_message(format!("Tuple type: {}", tuple_repr)),
                         );
                     }
 
                     builder.finish()
                 } else {
                     ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message("Tuple index out of bounds (no source location)")
+                        .with_message(format!(
+                            "Tuple index out of bounds: index {} for tuple {}",
+                            index_repr, tuple_repr
+                        ))
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Index out of bounds"),
@@ -652,11 +737,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::MissingContinuation(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
                 if let Some(loc) = ty.source_info() {
-                    let span = loc.span().clone();
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message("Missing continuation")
+                        .with_message(format!("Missing continuation for type: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new((filepath, span))
                                 .with_message("Continuation expected here"),
@@ -664,7 +754,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .finish()
                 } else {
                     ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message("Missing continuation (no source location)")
+                        .with_message(format!("Missing continuation for type: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Continuation missing"),
@@ -673,11 +763,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::MissingPerformHandler(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
                 if let Some(loc) = ty.source_info() {
-                    let span = loc.span().clone();
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message("Missing perform handler")
+                        .with_message(format!("Missing perform handler for type: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new((filepath, span))
                                 .with_message("Perform handler expected here"),
@@ -685,7 +780,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .finish()
                 } else {
                     ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message("Missing perform handler (no source location)")
+                        .with_message(format!("Missing perform handler for type: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Handler missing"),
@@ -694,11 +789,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::Perform(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
                 if let Some(loc) = ty.source_info() {
-                    let span = loc.span().clone();
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message("Perform raised")
+                        .with_message(format!("Perform raised: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new((filepath, span))
                                 .with_message("Perform effect raised here"),
@@ -706,7 +806,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .finish()
                 } else {
                     ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message("Perform raised (no source location)")
+                        .with_message(format!("Perform raised: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Effect raised"),
@@ -715,18 +815,23 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::Break(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
                 if let Some(loc) = ty.source_info() {
-                    let span = loc.span().clone();
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message("Break raised")
+                        .with_message(format!("Break raised: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new((filepath, span)).with_message("Break raised here"),
                         )
                         .finish()
                 } else {
                     ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message("Break raised (no source location)")
+                        .with_message(format!("Break raised: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Break raised"),
@@ -735,11 +840,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::Resume(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
                 if let Some(loc) = ty.source_info() {
-                    let span = loc.span().clone();
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
                     let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
                     ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message("Resume raised")
+                        .with_message(format!("Resume raised: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new((filepath, span))
                                 .with_message("Resume raised here"),
@@ -747,7 +857,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .finish()
                 } else {
                     ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message("Resume raised (no source location)")
+                        .with_message(format!("Resume raised: {}", ty_repr))
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Resume raised"),
@@ -828,7 +938,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                     )
                     .finish()
             }
-        }
+        };
+
+        TypeErrorReport::new(report, sources)
     }
 }
 

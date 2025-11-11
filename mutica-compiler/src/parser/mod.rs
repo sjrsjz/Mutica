@@ -6,7 +6,9 @@ use mutica_core::{
     types::{GcAllocObject, Type},
     util::{
         cycle_detector::FastCycleDetector,
-        source_info::{SourceFile, SourceLocation},
+        source_info::{
+            SourceFile, SourceLocation, byte_offset_to_char_offset, byte_offset_to_position,
+        },
     },
 };
 
@@ -24,7 +26,6 @@ use crate::{
         ast::{BasicTypeAst, LinearTypeAst},
         lexer::{LexerToken, LexicalError},
     },
-    util::{byte_offset_to_char_offset, byte_offset_to_position},
 };
 use lalrpop_util::ErrorRecovery;
 use mutica_core::ariadne::{Color, Label, Report, ReportKind};
