@@ -11,7 +11,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeRef, anyof::AnyOf,
     },
     util::{
         arc_opt::ArcOpt, collector::Collector, cycle_detector::FastCycleDetector,
@@ -569,8 +569,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 return inner.expr.clone().reduce(&mut reduce_ctx);
             }
         }
+        let expect_arg = self
+            .branches()
+            .iter()
+            .map(|(b, _, _)| b.pattern())
+            .collect::<Vec<_>>();
         Err(TypeError::AssertFailed(
-            (self.clone().dispatch(), ctx.arg.clone()).into(),
+            (
+                AnyOf::new(expect_arg, self.source_info().cloned()),
+                ctx.arg.clone(),
+            )
+                .into(),
         ))
     }
 
