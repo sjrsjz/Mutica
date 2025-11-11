@@ -114,7 +114,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Integ
             .arg
             .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                 TypeRef::IntegerValue(_) => Ok(arg.clone_data()),
-                TypeRef::CharValue(c) => Ok(IntegerValue::new(c.value() as i64, None)),
+                TypeRef::CharValue(c) => {
+                    Ok(IntegerValue::new(c.value() as i64, ctx.source_info.cloned()).dispatch())
+                }
                 _ => Err(TypeError::TypeMismatch(
                     (ctx.arg.clone(), "IntegerValue or CharValue".into()).into(),
                 )),

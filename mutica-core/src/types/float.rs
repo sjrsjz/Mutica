@@ -114,7 +114,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
             .take(&mut FastCycleDetector::new(), |_, arg| match arg {
                 Type::FloatValue(_) => Ok(arg),
                 Type::IntegerValue(v) => {
-                    let float_value = FloatValue::<T>::new(v.value() as f64, None);
+                    let float_value =
+                        FloatValue::<T>::new(v.value() as f64, ctx.source_info.cloned());
                     Ok(float_value)
                 }
                 _ => Err(super::TypeError::TypeMismatch(

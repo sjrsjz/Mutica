@@ -300,32 +300,45 @@ impl<'ast> LinearizeResult<'ast> {
     pub fn finalize(self) -> WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
         let mut ty = self.tail_type;
         for (f, a, handler, tmpvar) in self.bindings.into_iter().rev() {
-            ty = WithLocation::from(LinearTypeAst::Invoke {
-                func: Box::new(f),
-                arg: Box::new(a),
-                continuation: {
-                    if let LinearTypeAst::Variable(v) = ty.value()
-                        && v.eq(&tmpvar)
-                    {
-                        None // TCO（尾调用优化）
-                    } else {
-                        Some(
-                            WithLocation::from(LinearTypeAst::Match {
-                                auto_captures: HashMap::new(),
-                                branches: vec![(
-                                    WithLocation::from(LinearTypeAst::Pattern {
-                                        name: tmpvar,
-                                        expr: Box::new(WithLocation::from(LinearTypeAst::Top)),
-                                    }),
-                                    ty.clone(),
-                                )],
-                            })
-                            .into(),
-                        )
-                    }
+            let f_loc = f.location().cloned();
+            ty = WithLocation::new(
+                LinearTypeAst::Invoke {
+                    func: Box::new(f),
+                    arg: Box::new(a),
+                    continuation: {
+                        if let LinearTypeAst::Variable(v) = ty.value()
+                            && v.eq(&tmpvar)
+                        {
+                            None // TCO（尾调用优化）
+                        } else {
+                            Some(
+                                WithLocation::new(
+                                    LinearTypeAst::Match {
+                                        auto_captures: HashMap::new(),
+                                        branches: vec![(
+                                            WithLocation::new(
+                                                LinearTypeAst::Pattern {
+                                                    name: tmpvar,
+                                                    expr: Box::new(WithLocation::new(
+                                                        LinearTypeAst::Top,
+                                                        ty.location(),
+                                                    )),
+                                                },
+                                                ty.location(),
+                                            ),
+                                            ty.clone(),
+                                        )],
+                                    },
+                                    ty.location(),
+                                )
+                                .into(),
+                            )
+                        }
+                    },
+                    perform_handler: handler.map(Box::new),
                 },
-                perform_handler: handler.map(Box::new),
-            })
+                f_loc.as_ref(),
+            )
         }
         ty
     }

@@ -343,7 +343,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 _ => unreachable!(),
                             },
                             (Type::Closure(l), Type::Closure(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(l.impls(r)),
+                                OpcodeKind::Add => Ok(l.impls(r, ctx.source_info.cloned())),
                                 _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                                     std::io::Error::other(
                                         "Only 'Add' operation is supported for Closure types",
@@ -351,7 +351,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 ))),
                             },
                             (Type::Tuple(l), Type::Tuple(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(l.concat(r)),
+                                OpcodeKind::Add => Ok(l.concat(r, ctx.source_info.cloned())),
                                 _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                                     std::io::Error::other(
                                         "Only 'Add' operation is supported for Tuple types",

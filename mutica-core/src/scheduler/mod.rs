@@ -429,7 +429,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 *v,
                                 None::<Type<T>>,
                                 None::<Type<T>>,
-                                None,
+                                source_info,
                             );
                             match continuation_style {
                                 InvokeCountinuationStyle::TailCall => (),
@@ -491,7 +491,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                     *v,
                                     None::<Type<T>>,
                                     None::<Type<T>>,
-                                    None,
+                                    source_info,
                                 ),
                                 None => *v,
                             };

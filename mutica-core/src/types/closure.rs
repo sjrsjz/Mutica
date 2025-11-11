@@ -722,7 +722,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         &self.inner.as_ref().0
     }
 
-    pub fn impls(self, other: Self) -> Type<T> {
+    pub fn impls(self, other: Self, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         let mut new_closure_env = self.env().to_vec();
         new_closure_env.extend_from_slice(other.env());
         let mut new_branches = self.branches().to_vec();
@@ -738,7 +738,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
                 new_branches,
                 new_closure_env,
                 RwLock::new(is_nf),
-                self.source_info().cloned(),
+                source_info,
             )),
         }
         .into_dispatcher()

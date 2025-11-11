@@ -384,9 +384,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         Some(self.view(1))
     }
 
-    pub fn concat(self, other: Tuple<T>) -> Type<T> {
+    pub fn concat(self, other: Tuple<T>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         let is_nf = self.is_normal_form() & other.is_normal_form();
-        let source_info = self.source_info.clone();
         let mut new_elements = self.take();
         new_elements.extend(other.take());
         Self {
