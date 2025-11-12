@@ -51,7 +51,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> ContinuationOrHandler<T> {
     }
 }
 
-type AsyncIoHandler<T> = Box<
+pub type AsyncIoHandler<T> = Box<
     dyn Fn(
             &Type<T>,
             &Type<T>,
