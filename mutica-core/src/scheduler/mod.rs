@@ -1,6 +1,6 @@
 pub mod stack;
 
-use std::{io::Write, sync::Arc};
+use std::{future::Future, io::Write, pin::Pin, sync::Arc};
 
 use arc_gc::gc::GC;
 
@@ -51,15 +51,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> ContinuationOrHandler<T> {
     }
 }
 
+type AsyncIoHandler<T> = Box<
+    dyn Fn(
+            &Type<T>,
+            &Type<T>,
+        )
+            -> Pin<Box<dyn Future<Output = Result<Option<Type<T>>, TypeError<Type<T>, T>>> + Send>>
+        + Send
+        + Sync,
+>;
+
 pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
-    #[allow(clippy::type_complexity)]
-    outer_io_handler: Option<
-        Box<
-            dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
-                + Send
-                + Sync,
-        >,
-    >,
+    outer_io_handler: Option<AsyncIoHandler<T>>,
     cont_stack: Stack<ContinuationOrHandler<T>>,
     current_type: Option<Type<T>>,
     allocated_types: IdAllocator<Type<T>>,
@@ -67,17 +70,7 @@ pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
-    #[allow(clippy::type_complexity)]
-    pub fn new(
-        initial_type: Type<T>,
-        outer_io_handler: Option<
-            Box<
-                dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
-                    + Send
-                    + Sync,
-            >,
-        >,
-    ) -> Self {
+    pub fn new(initial_type: Type<T>, outer_io_handler: Option<AsyncIoHandler<T>>) -> Self {
         let mut roots = RootStack::new();
         roots.attach(&initial_type);
         Self {
@@ -89,14 +82,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         }
     }
 
-    fn io(
+    async fn io(
         &mut self,
         f: &Type<T>,
         arg: &Type<T>,
         source_info: Option<&Arc<SourceLocation>>,
     ) -> Result<Option<Type<T>>, TypeError<Type<T>, T>> {
         if let Some(outer_handler) = &self.outer_io_handler
-            && let Some(result) = outer_handler(f, arg)?
+            && let Some(result) = outer_handler(f, arg).await?
         {
             return Ok(Some(result));
         }
@@ -383,7 +376,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         )))
     }
 
-    pub fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
+    pub async fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
         let empty_v = ClosureEnv::new(Vec::<Type<T>>::new());
         let empty_p = ParamEnv::from_collector(&mut Collector::new(), 0)
             .unwrap()
@@ -400,142 +393,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))
         })?;
         let reduced = current_type.reduce(&mut reduction_ctx)?;
-        let (next_type, updated) = reduced
-            .take(&mut FastCycleDetector::new(), |_, inner| match inner {
-                Type::Invoke(invoke) => {
-                    let (func, arg, continuation_style, source_info) = invoke.take();
-                    let io_result = self.io(&func, &arg, source_info.as_ref());
-                    let invoke_context = InvokeContext::new(
-                        arg,
-                        &empty_v,
-                        &empty_p,
-                        &mut rec_assumptions,
-                        gc,
-                        &mut self.roots,
-                        source_info.as_ref(),
+
+        // 检查是否是 Invoke 类型
+        let is_invoke = matches!(reduced.as_ref_dispatcher(), TypeRef::Invoke(_));
+
+        let (next_type, updated) = if is_invoke {
+            // 处理 Invoke 类型
+            let (func, arg, continuation_style, source_info) = if let Type::Invoke(invoke) = reduced
+            {
+                invoke.take()
+            } else {
+                unreachable!()
+            };
+
+            let io_result = self.io(&func, &arg, source_info.as_ref()).await;
+            let invoke_context = InvokeContext::new(
+                arg.clone(),
+                &empty_v,
+                &empty_p,
+                &mut rec_assumptions,
+                gc,
+                &mut self.roots,
+                source_info.as_ref(),
+            );
+
+            let io_result = match io_result {
+                Ok(v) => v,
+                Err(TypeError::Perform(v)) => {
+                    let view = self.cont_stack.view();
+                    let (perform_handler, index) = match find_last_perform_handler(&view) {
+                        Some(handler) => handler,
+                        None => {
+                            return Err(TypeError::MissingPerformHandler(Box::new(func)));
+                        }
+                    };
+                    let perform_invoke = Invoke::new(
+                        perform_handler.clone(),
+                        *v,
+                        None::<Type<T>>,
+                        None::<Type<T>>,
+                        source_info.clone(),
                     );
-                    let io_result = match io_result {
-                        Ok(v) => v,
-                        Err(TypeError::Perform(v)) => {
-                            let view = self.cont_stack.view();
-                            let (perform_handler, index) = match find_last_perform_handler(&view) {
-                                Some(handler) => handler,
-                                None => {
-                                    return Err(TypeError::MissingPerformHandler(Box::new(func)));
-                                }
-                            };
-                            let perform_invoke = Invoke::new(
-                                perform_handler,
-                                *v,
-                                None::<Type<T>>,
-                                None::<Type<T>>,
-                                source_info,
-                            );
-                            match continuation_style {
-                                InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::WithContinuation(v) => {
-                                    self.cont_stack.push(ContinuationOrHandler::Continuation(v))
-                                }
-                                InvokeCountinuationStyle::WithPerformHandler(v) => {
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(v));
-                                }
-                                InvokeCountinuationStyle::WithBoth(a, b) => {
-                                    self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(b));
-                                }
-                            }
-                            self.cont_stack.fork(index); // 踢掉perform handler及其上面的frame
-                            return Ok((perform_invoke, true));
-                        }
-                        Err(TypeError::Break(v)) => {
-                            // 找到最近的Perform Handler并删除它以及其上面的所有continuation
-                            loop {
-                                match self.cont_stack.pop_and_auto_defork() {
-                                    Some(ContinuationOrHandler::Continuation(_)) => continue,
-                                    Some(ContinuationOrHandler::PerformHandler(_)) => break,
-                                    None => {
-                                        return Err(TypeError::MissingPerformHandler(Box::new(
-                                            func,
-                                        )));
-                                    }
-                                }
-                            }
-                            // 然后找到最近的Continuation
-                            let continuation = loop {
-                                match self.cont_stack.pop_and_auto_defork() {
-                                    Some(ContinuationOrHandler::Continuation(v)) => break Some(v),
-                                    Some(ContinuationOrHandler::PerformHandler(_)) => continue,
-                                    None => break None,
-                                }
-                            };
-                            match continuation_style {
-                                InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::WithContinuation(v) => {
-                                    self.cont_stack.push(ContinuationOrHandler::Continuation(v))
-                                }
-                                InvokeCountinuationStyle::WithPerformHandler(v) => {
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(v));
-                                }
-                                InvokeCountinuationStyle::WithBoth(a, b) => {
-                                    self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(b));
-                                }
-                            }
-                            let break_invoke = match continuation {
-                                Some(continuation) => Invoke::new(
-                                    continuation,
-                                    *v,
-                                    None::<Type<T>>,
-                                    None::<Type<T>>,
-                                    source_info,
-                                ),
-                                None => *v,
-                            };
-                            return Ok((break_invoke, true));
-                        }
-                        Err(TypeError::Resume(v)) => {
-                            match continuation_style {
-                                InvokeCountinuationStyle::TailCall => (),
-                                InvokeCountinuationStyle::WithContinuation(v) => {
-                                    self.cont_stack.push(ContinuationOrHandler::Continuation(v))
-                                }
-                                InvokeCountinuationStyle::WithPerformHandler(v) => {
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(v));
-                                }
-                                InvokeCountinuationStyle::WithBoth(a, b) => {
-                                    self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                                    self.cont_stack
-                                        .push(ContinuationOrHandler::PerformHandler(b));
-                                }
-                            }
-                            let view = match self.cont_stack.skip_frames(1) {
-                                Some(view) => view,
-                                None => {
-                                    return Err(TypeError::RuntimeError(Arc::new(
-                                        std::io::Error::other("No continuation to resume"),
-                                    )));
-                                }
-                            };
-                            let cont = find_last_continuation(&view).map(|(v, _)| v.clone());
-                            self.cont_stack.fork_frame(view.len(), view.frame_index());
-                            if let Some(v) = cont {
-                                self.cont_stack.push(ContinuationOrHandler::Continuation(v));
-                            }
-
-                            return Ok((*v, true));
-                        }
-                        Err(e) => return Err(e),
-                    };
-                    let invoke_result = match io_result {
-                        Some(io_result) => io_result,
-                        None => func.invoke(invoke_context)?,
-                    };
-
                     match continuation_style {
                         InvokeCountinuationStyle::TailCall => (),
                         InvokeCountinuationStyle::WithContinuation(v) => {
@@ -550,29 +448,137 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             self.cont_stack
                                 .push(ContinuationOrHandler::PerformHandler(b));
                         }
-                    };
-                    Ok((invoke_result, true))
+                    }
+                    self.cont_stack.fork(index); // 踢掉perform handler及其上面的frame
+                    self.current_type = Some(perform_invoke);
+                    return Ok(true);
                 }
-                _ => match loop {
-                    match self.cont_stack.pop_and_auto_defork() {
-                        Some(ContinuationOrHandler::Continuation(v)) => break Some(v),
-                        Some(ContinuationOrHandler::PerformHandler(_)) => continue,
-                        None => break None,
+                Err(TypeError::Break(v)) => {
+                    // 找到最近的Perform Handler并删除它以及其上面的所有continuation
+                    loop {
+                        match self.cont_stack.pop_and_auto_defork() {
+                            Some(ContinuationOrHandler::Continuation(_)) => continue,
+                            Some(ContinuationOrHandler::PerformHandler(_)) => break,
+                            None => {
+                                return Err(TypeError::MissingPerformHandler(Box::new(func)));
+                            }
+                        }
                     }
-                } {
-                    Some(cont) => {
-                        let source_info = cont.source_info().cloned();
-                        Ok((
-                            Invoke::new(cont, inner, None::<Type<T>>, None::<Type<T>>, source_info),
-                            true,
-                        ))
+                    // 然后找到最近的Continuation
+                    let continuation = loop {
+                        match self.cont_stack.pop_and_auto_defork() {
+                            Some(ContinuationOrHandler::Continuation(v)) => break Some(v),
+                            Some(ContinuationOrHandler::PerformHandler(_)) => continue,
+                            None => break None,
+                        }
+                    };
+                    match continuation_style {
+                        InvokeCountinuationStyle::TailCall => (),
+                        InvokeCountinuationStyle::WithContinuation(v) => {
+                            self.cont_stack.push(ContinuationOrHandler::Continuation(v))
+                        }
+                        InvokeCountinuationStyle::WithPerformHandler(v) => {
+                            self.cont_stack
+                                .push(ContinuationOrHandler::PerformHandler(v));
+                        }
+                        InvokeCountinuationStyle::WithBoth(a, b) => {
+                            self.cont_stack.push(ContinuationOrHandler::Continuation(a));
+                            self.cont_stack
+                                .push(ContinuationOrHandler::PerformHandler(b));
+                        }
                     }
-                    None => Ok((inner, false)),
-                },
-            })?
-            .unwrap_or(Err(TypeError::UnresolvableType(
-                "Could not resolve continuation".into(),
-            )))?;
+                    let break_invoke = match continuation {
+                        Some(continuation) => Invoke::new(
+                            continuation,
+                            *v,
+                            None::<Type<T>>,
+                            None::<Type<T>>,
+                            source_info.clone(),
+                        ),
+                        None => *v,
+                    };
+                    self.current_type = Some(break_invoke);
+                    return Ok(true);
+                }
+                Err(TypeError::Resume(v)) => {
+                    match continuation_style {
+                        InvokeCountinuationStyle::TailCall => (),
+                        InvokeCountinuationStyle::WithContinuation(v) => {
+                            self.cont_stack.push(ContinuationOrHandler::Continuation(v))
+                        }
+                        InvokeCountinuationStyle::WithPerformHandler(v) => {
+                            self.cont_stack
+                                .push(ContinuationOrHandler::PerformHandler(v));
+                        }
+                        InvokeCountinuationStyle::WithBoth(a, b) => {
+                            self.cont_stack.push(ContinuationOrHandler::Continuation(a));
+                            self.cont_stack
+                                .push(ContinuationOrHandler::PerformHandler(b));
+                        }
+                    }
+                    let view = match self.cont_stack.skip_frames(1) {
+                        Some(view) => view,
+                        None => {
+                            return Err(TypeError::RuntimeError(Arc::new(std::io::Error::other(
+                                "No continuation to resume",
+                            ))));
+                        }
+                    };
+                    let cont = find_last_continuation(&view).map(|(v, _)| v.clone());
+                    self.cont_stack.fork_frame(view.len(), view.frame_index());
+                    if let Some(v) = cont {
+                        self.cont_stack.push(ContinuationOrHandler::Continuation(v));
+                    }
+
+                    self.current_type = Some(*v);
+                    return Ok(true);
+                }
+                Err(e) => return Err(e),
+            };
+
+            let invoke_result = match io_result {
+                Some(io_result) => io_result,
+                None => func.invoke(invoke_context)?,
+            };
+
+            match continuation_style {
+                InvokeCountinuationStyle::TailCall => (),
+                InvokeCountinuationStyle::WithContinuation(v) => {
+                    self.cont_stack.push(ContinuationOrHandler::Continuation(v))
+                }
+                InvokeCountinuationStyle::WithPerformHandler(v) => {
+                    self.cont_stack
+                        .push(ContinuationOrHandler::PerformHandler(v));
+                }
+                InvokeCountinuationStyle::WithBoth(a, b) => {
+                    self.cont_stack.push(ContinuationOrHandler::Continuation(a));
+                    self.cont_stack
+                        .push(ContinuationOrHandler::PerformHandler(b));
+                }
+            };
+            (invoke_result, true)
+        } else {
+            // 处理非 Invoke 类型
+            let continuation = loop {
+                match self.cont_stack.pop_and_auto_defork() {
+                    Some(ContinuationOrHandler::Continuation(v)) => break Some(v),
+                    Some(ContinuationOrHandler::PerformHandler(_)) => continue,
+                    None => break None,
+                }
+            };
+
+            match continuation {
+                Some(cont) => {
+                    let source_info = cont.source_info().cloned();
+                    (
+                        Invoke::new(cont, reduced, None::<Type<T>>, None::<Type<T>>, source_info),
+                        true,
+                    )
+                }
+                None => (reduced, false),
+            }
+        };
+
         self.current_type = Some(next_type);
         // println!(
         //     "-> Current type: {}",
@@ -633,29 +639,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         &self.roots
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn io_handler(
-        &self,
-    ) -> &Option<
-        Box<
-            dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
-                + Send
-                + Sync,
-        >,
-    > {
+    pub fn io_handler(&self) -> &Option<AsyncIoHandler<T>> {
         &self.outer_io_handler
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn io_handler_mut(
-        &mut self,
-    ) -> &mut Option<
-        Box<
-            dyn Fn(&Type<T>, &Type<T>) -> Result<Option<Type<T>>, TypeError<Type<T>, T>>
-                + Send
-                + Sync,
-        >,
-    > {
+    pub fn io_handler_mut(&mut self) -> &mut Option<AsyncIoHandler<T>> {
         &mut self.outer_io_handler
     }
 

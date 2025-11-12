@@ -12,6 +12,7 @@ use mutica_core::{
     arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
     scheduler::{self, ContinuationOrHandler, stack::Stack},
     stacksafe::{set_minimum_stack_size, set_stack_allocation_size},
+    tokio,
     types::{AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef},
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
@@ -90,7 +91,8 @@ enum Command {
     Version,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     set_stack_allocation_size(16 * 1024 * 1024); // 设置栈大小为16MB
     set_minimum_stack_size(512 * 1024); // 设置最小栈大小为512KB
     let cli = Cli::parse();
@@ -103,7 +105,7 @@ fn main() {
                     process::exit(1);
                 }
             };
-            parse_and_reduce(&code, PathBuf::from(file));
+            parse_and_reduce(&code, PathBuf::from(file)).await;
         }
         Command::Version => {
             println!("Mutica version {}", env!("CARGO_PKG_VERSION"));
@@ -111,7 +113,7 @@ fn main() {
     }
 }
 
-pub fn parse_and_reduce(expr: &str, path: PathBuf) {
+pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
     #[cfg(debug_assertions)]
     println!("Parsing expression:\n{}\n", expr);
 
@@ -264,7 +266,7 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         #[cfg(debug_assertions)]
         linear_scheduler.sweep_roots();
 
-        match linear_scheduler.step(&mut gc) {
+        match linear_scheduler.step(&mut gc).await {
             Ok(true) => (),
             Ok(false) => break Ok(linear_scheduler.current().clone()),
             Err(e) => break Err(e),

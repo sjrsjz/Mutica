@@ -5,3 +5,4 @@ pub use arc_gc;
 pub use ariadne;
 pub use smallvec;
 pub use stacksafe;
+pub use tokio;
