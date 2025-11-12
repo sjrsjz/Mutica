@@ -381,18 +381,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         let empty_p = ParamEnv::from_collector(&mut Collector::new(), 0)
             .unwrap()
             .unwrap();
-        let mut rec_assumptions = smallvec::SmallVec::new();
-        let mut reduction_ctx = ReductionContext::new(
-            &empty_v,
-            &empty_p,
-            &mut rec_assumptions,
-            gc,
-            &mut self.roots,
-        );
-        let current_type = self.current_type.take().ok_or_else(|| {
-            TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))
-        })?;
-        let reduced = current_type.reduce(&mut reduction_ctx)?;
+
+        // 在 await 之前完成所有需要 rec_assumptions 的工作
+        let reduced = {
+            let mut rec_assumptions = smallvec::SmallVec::new();
+            let mut reduction_ctx = ReductionContext::new(
+                &empty_v,
+                &empty_p,
+                &mut rec_assumptions,
+                gc,
+                &mut self.roots,
+            );
+            let current_type = self.current_type.take().ok_or_else(|| {
+                TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))
+            })?;
+            current_type.reduce(&mut reduction_ctx)?
+        };
 
         // 检查是否是 Invoke 类型
         let is_invoke = matches!(reduced.as_ref_dispatcher(), TypeRef::Invoke(_));
@@ -407,15 +411,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             };
 
             let io_result = self.io(&func, &arg, source_info.as_ref()).await;
-            let invoke_context = InvokeContext::new(
-                arg.clone(),
-                &empty_v,
-                &empty_p,
-                &mut rec_assumptions,
-                gc,
-                &mut self.roots,
-                source_info.as_ref(),
-            );
 
             let io_result = match io_result {
                 Ok(v) => v,
@@ -538,7 +533,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 
             let invoke_result = match io_result {
                 Some(io_result) => io_result,
-                None => func.invoke(invoke_context)?,
+                None => {
+                    // 在独立作用域中处理 invoke,确保 rec_assumptions 被 drop
+                    let mut rec_assumptions = smallvec::SmallVec::new();
+                    let invoke_context = InvokeContext::new(
+                        arg.clone(),
+                        &empty_v,
+                        &empty_p,
+                        &mut rec_assumptions,
+                        gc,
+                        &mut self.roots,
+                        source_info.as_ref(),
+                    );
+                    func.invoke(invoke_context)?
+                }
             };
 
             match continuation_style {
