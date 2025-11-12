@@ -64,7 +64,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
         format!(
             "λ.{} : {}",
             debruijn_index,
-            expr.represent(path, depth + 1, max_depth)
+            expr.represent(path, depth, max_depth)
         )
     }
 }

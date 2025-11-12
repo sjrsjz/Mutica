@@ -277,28 +277,84 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
         }
     };
 
-    fn dump_stack(stack: &Stack<ContinuationOrHandler<TypeGcOnceLock>>) -> String {
-        let mut result = String::new();
+    struct StackTraceReport {
+        pub report: mutica_compiler::ariadne::Report<'static, (String, std::ops::Range<usize>)>,
+        pub sources: Vec<(String, String)>, // (filepath, content) pairs
+    }
+
+    impl StackTraceReport {
+        pub fn new(
+            report: mutica_compiler::ariadne::Report<'static, (String, std::ops::Range<usize>)>,
+            sources: Vec<(String, String)>,
+        ) -> Self {
+            Self { report, sources }
+        }
+
+        /// Print the report with all required sources
+        pub fn eprint(&self) -> std::io::Result<()> {
+            let cache = mutica_compiler::ariadne::sources(
+                self.sources
+                    .iter()
+                    .map(|(path, content)| (path.clone(), content.clone()))
+                    .collect::<std::collections::HashMap<_, _>>(),
+            );
+            self.report.eprint(cache)
+        }
+    }
+
+    fn dump_stack_report(stack: &Stack<ContinuationOrHandler<TypeGcOnceLock>>) -> StackTraceReport {
+        use mutica_compiler::ariadne::{Color, Label, Report, ReportKind};
+        use mutica_core::types::CoinductiveType;
+        use mutica_core::util::source_info::byte_offset_to_char_offset;
+
+        let mut sources = Vec::new();
+
         if stack.is_empty() {
-            return "## <empty stack>\n".to_string();
+            let report = Report::build(ReportKind::Error, "<stack>".to_string(), 0)
+                .with_message("Stack Trace")
+                .with_note("Stack is empty")
+                .finish();
+            return StackTraceReport::new(report, sources);
         }
+
+        let mut builder =
+            Report::build(ReportKind::Error, "<stack>".to_string(), 0).with_message("Stack Trace");
+
         for (i, ty) in stack.iter().enumerate() {
-            result.push_str(&format!(
-                "## [{}]: {}\n",
-                i,
-                match ty {
-                    ContinuationOrHandler::Continuation(t) => format!(
-                        "Continuation - {}",
-                        t.display(&mut FastCycleDetector::new(), 0, 2)
-                    ),
-                    ContinuationOrHandler::PerformHandler(v) => format!(
-                        "Perform Handler - {}",
-                        v.display(&mut FastCycleDetector::new(), 0, 2)
-                    ),
+            let (kind, ty_ref) = match ty {
+                ContinuationOrHandler::Continuation(t) => ("Continuation", t),
+                ContinuationOrHandler::PerformHandler(v) => ("Perform Handler", v),
+            };
+
+            let display = ty_ref.display(&mut FastCycleDetector::new(), 0, 2);
+
+            // 尝试获取源位置信息
+            if let Some(loc) = ty_ref.source_info() {
+                let filepath = loc.source().filepath().to_string();
+                let content = loc.source().content().to_string();
+                let span = loc.span().clone();
+
+                // 将字节偏移转换为字符偏移
+                let char_start = byte_offset_to_char_offset(&content, span.start);
+                let char_end = byte_offset_to_char_offset(&content, span.end);
+
+                // 添加源文件（如果还没有添加过）
+                if !sources.iter().any(|(path, _)| path == &filepath) {
+                    sources.push((filepath.clone(), content.clone()));
                 }
-            ));
+
+                builder = builder.with_label(
+                    Label::new((filepath, char_start..char_end))
+                        .with_message(format!("[{}] {}: {}", i, kind, display))
+                        .with_color(Color::Cyan),
+                );
+            } else {
+                builder = builder.with_note(format!("[{}] {}: {}", i, kind, display));
+            }
         }
-        result
+
+        let report = builder.finish();
+        StackTraceReport::new(report, sources)
     }
 
     match result {
@@ -315,8 +371,8 @@ pub fn parse_and_reduce(expr: &str, path: PathBuf) {
             .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e))
             .unwrap_or(()),
         Err(e) => {
-            eprintln!("--- Type Reduction Error ---");
-            eprintln!("{}", dump_stack(linear_scheduler.stack()));
+            // Print stack trace as a report
+            dump_stack_report(linear_scheduler.stack()).eprint().ok();
 
             // TypeErrorReport now bundles the report with all needed source files
             e.to_report().eprint().ok();

@@ -655,13 +655,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
         let (branches, env, _, _) = self.inner.as_ref();
         let mut repr = String::from("match");
         if !env.is_empty() {
-            repr.push_str(" capture<");
+            repr.push_str(" capture ");
             repr.push_str(&env.represent(path, depth + 1, max_depth));
-            repr.push('>');
         }
         for (inner, closure_idx, _) in branches.iter() {
-            repr.push_str(&inner.pattern.represent(path, depth + 1, max_depth));
             repr.push_str(&format!(" | c.{} ", closure_idx));
+            repr.push_str(&inner.pattern.represent(path, depth + 1, max_depth));
             repr.push_str(" => ");
             repr.push_str(&inner.expr.represent(path, depth + 1, max_depth));
         }

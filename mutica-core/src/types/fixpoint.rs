@@ -470,7 +470,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<T> {
         match self.reference.upgrade() {
             Some(inner) => match inner.as_ref().get_value() {
                 Some(t) => match path.with_guard(t.tagged_ptr(), |path| {
-                    t.represent(path, depth + 1, max_depth)
+                    t.represent(path, depth, max_depth)
                 }) {
                     Some(s) => format!("μ.{:?} {}", t as *const _ as *const (), s),
                     None => format!("{:?}", t as *const _ as *const ()),
