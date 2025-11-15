@@ -2,35 +2,36 @@
 
 <div align="center">
 
-**An experimental, statically-typed programming language based on a pure Continuation-Passing Style (CPS) core.**
+**An experimental, statically-typed functional programming language with advanced coinductive type system.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) 
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org/)
 
 </div>
 
 ## 📖 Overview
 
-Mutica is an experimental, statically-typed functional programming language that uses Continuation-Passing Style (CPS) as its core computation model. Its primary innovation is an advanced **constraint validation system** built upon a coinductive core, enabling precise, structural type checks far beyond traditional subtyping.
+Mutica is an experimental, statically-typed functional programming language featuring an advanced **coinductive type system** for precise structural type checking. The language supports powerful pattern matching, effect handlers, and a rule-based constraint validation system that goes far beyond traditional subtyping.
 
 ### Key Features
 
-- 🔄 **Continuation-Passing Style**: All expressions are automatically converted to CPS, making control flow explicit and powerful.
-- 🎯 **Coinductive Core**: Natively supports recursive types and the validation of potentially infinite data structures.
-- 🔀 **Rule-Based Constraint System**: A powerful (`<:`) operator for checking type compatibility and validating complex invariants, governed by a purely syntactic set of rules.
-- 🎭 **Advanced Pattern Matching**: Sophisticated destructuring and exhaustive pattern matching capabilities.
-- 📦 **Label-based Namespaces**: Provides type isolation and allows for the creation of algebraic data types like `Maybe`.
-- 🛡️ **Meta-level Type Modifiers**: Unique operators like `neg` and `rot` that manipulate the constraint validation process itself, enabling powerful type-level metaprogramming.
-- ♻️ **Automatic Garbage Collection**: Employs `arc-gc` for efficient cycle detection and memory management.
+- 🎯 **Coinductive Type System**: Natively supports recursive types and validation of potentially infinite data structures through coinductive reasoning.
+- 🔀 **Rule-Based Constraint Validation**: A powerful (`is`) operator for checking type compatibility, governed by a purely syntactic set of rules beyond traditional subtyping.
+- 🎭 **Advanced Pattern Matching**: Sophisticated destructuring with exhaustive pattern matching and type-safe guards.
+- 📦 **Label-based Namespaces**: Type isolation through labels, enabling algebraic data types like `Maybe` and `Either`.
+- 💫 **Effect Handlers**: Built-in support for algebraic effects through `perform!` and `handle...with` constructs.
+- 🛡️ **Meta-level Type Operators**: Unique operators like `eq`, `rot`, and `subof` that manipulate constraint validation at the type level.
+- 📚 **Module System**: Import-based modular code organization with `import` statements.
+- ♻️ **Automatic Garbage Collection**: Employs `arc-gc` with cycle detection for efficient memory management.
 
 ## 🚀 Quick Start
 
 ### Installation
 
-Ensure you have the Rust toolchain installed. Then, clone and build the project:
+Ensure you have Rust 1.80+ installed. Then, clone and build the project:
 
 ```bash
-git clone https://github.com/yourusername/Mutica.git
+git clone https://github.com/sjrsjz/Mutica.git
 cd Mutica
 cargo build --release
 ```
@@ -43,6 +44,9 @@ cargo run -- run examples/fib.mu
 
 # Or use the compiled executable directly
 ./target/release/mutica run examples/fib.mu
+
+# Check version
+cargo run -- version
 ```
 
 ## 📚 Syntax Overview
@@ -76,13 +80,12 @@ let _ = 42;             // An underscore can be used directly to assert a type c
 // A function that accepts an integer
 let add_one: any = (x: int) => x + 1; // `=>` defines a function
 
-// A recursive function using `rec`
-let fib: any = rec f: (n: int) => 
-    match n
-        | eq 0 => 0
-        | eq 1 => 1
-        | _ => f(n - 1) + f(n - 2)
-        | panic; // Asserts that the match is exhaustive for the input `n: int`
+// A recursive function using `rec` with pattern matching
+let fib: any = rec f: match
+    | eq 0 => 0
+    | eq 1 => 1
+    | n: int => f(n - 1) + f(n - 2)
+    | panic; // Asserts that the match is exhaustive for the input `n: int`
 ```
 
 ### Constraint Checks (`is`)
@@ -108,23 +111,69 @@ let Nothing: any = Nothing::();
 let Maybe: any = T: any => (Just T | Nothing);
 
 // Use pattern matching on labeled types
-match some_maybe_value
-    | Just::(x: int) => x + 1
-    | Nothing::() => 0
-    | panic;
+let map: any = v: Maybe(any) => f: any => 
+    match v
+        | Just::(x: any) => Just(f(x))
+        | Nothing::() => Nothing
+        | panic;
 ```
 
 ### Struct-like Representation
 
 ```mutica
 // Use intersection types to simulate a struct
-let Point: any = (x_val: int, y_val: int) => { x::x_val & y::y_val };
+let Point: any = (x: int, y: int, z: int) => { x::x & y::y & z::z };
 
-let p: any = Point(3, 4);
+let p: any = Point(1, 2, 3);
 
 // Deconstructuring
-let x::(x_value: int) = p;
-let y::(y_value: int) = p;
+let { x::(x: int) & z::(z: int) } = p;
+```
+
+### Effect Handlers
+
+```mutica
+// Define effect handlers
+let handler: any = match
+    | GetA::() => 42
+    | GetB::() => 84
+    | panic;
+
+// Use effects with handlers
+handle z: int = 1 with handler;
+let x: int = perform! GetA::();
+let y: int = perform! GetB::();
+x, y, z  // Results: 42, 84, 1
+```
+
+### Module System
+
+```mutica
+// Import from another file
+let pkg: any = import "lib/maybe.mu";
+
+// Destructure imported values
+let {
+    Just::(Just: any) &
+    Nothing::(Nothing: any) &
+    map::(map: any)
+} = pkg;
+
+// Use imported functions
+let v1: any = Just(41);
+map(v1)(x: int => x + 1)  // Results: Just(42)
+```
+
+### UFCS
+
+```mutica
+let {
+    Just::(Just: any) &
+    map::(map: any)
+} = import "lib/maybe.mu";
+// Using UFCS to call functions as methods
+let v1: any = Just(41);
+v1.map(x: int => x + 1)  // Results: Just(42)
 ```
 
 ## 🎯 Example Programs
@@ -154,24 +203,34 @@ let print_chars: any = rec print_chars: str: List(char) =>
 print_chars("Hello, world!\n")
 ```
 
-## 🏗️ Compiler
+## 🏗️ Architecture
 
-The Mutica compiler is written in Rust and uses the following libraries:
+The Mutica implementation is organized into multiple crates:
 
-- **`clap`**: for command-line argument parsing.
-- **`lalrpop`**: for parsing the Mutica grammar.
-- **`logos`**: for lexical analysis.
-- **`ariadne`**: for generating beautiful error reports.
-- **`arc-gc`**: for garbage collection.
-- **`stacksafe`**: for stack safety.
+- **`mutica-compiler`**: Parsing and AST construction using `lalrpop` and `logos`
+- **`mutica-core`**: Type system, scheduler, and runtime
+- **`mutica-semantic`**: Semantic analysis and LSP support
+- **`mutica`**: Main CLI binary
 
-The compilation process consists of the following stages:
+### Key Dependencies
 
-1.  **Parsing**: The source code is parsed into an Abstract Syntax Tree (AST).
-2.  **Linearization**: The AST is linearized to make control flow explicit.
-3.  **Flow Analysis**: The linearized AST is analyzed to ensure that all variables are defined before they are used.
-4.  **Type Building**: The AST is converted into a `Type` representation.
-5.  **Reduction**: The `Type` is reduced to its normal form.
+- **`clap`**: Command-line argument parsing
+- **`lalrpop`**: Parser generator for Mutica grammar
+- **`logos`**: Fast lexical analysis
+- **`ariadne`**: Beautiful diagnostic error reports
+- **`arc-gc`**: Cycle-detecting garbage collector
+- **`stacksafe`**: Stack overflow protection
+- **`tokio`**: Async runtime for the scheduler
+
+### Compilation Pipeline
+
+1.  **Parsing**: Source code is parsed into an Abstract Syntax Tree (AST) using LALRPOP
+2.  **Multi-file Building**: Import resolution and module system handling
+3.  **Linearization**: AST is linearized to explicit control flow representation
+4.  **Flow Analysis**: Variable definedness and usage validation with warnings/errors
+5.  **Type Building**: AST is converted into coinductive `Type` representation
+6.  **Reduction**: Types are reduced to normal form through the constraint system
+7.  **Execution**: Linear scheduler evaluates the reduced type with effect handling
 
 ## 🤝 Contributing
 

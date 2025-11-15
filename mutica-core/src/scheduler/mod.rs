@@ -537,7 +537,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     // 在独立作用域中处理 invoke,确保 rec_assumptions 被 drop
                     let mut rec_assumptions = smallvec::SmallVec::new();
                     let invoke_context = InvokeContext::new(
-                        arg.clone(),
+                        arg,
                         &empty_v,
                         &empty_p,
                         &mut rec_assumptions,

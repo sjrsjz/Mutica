@@ -398,6 +398,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
     }
 
     pub fn take(self) -> Vec<Type<T>> {
-        self.elements.take().unwrap_or_else(|v| v.as_ref().clone())
+        match self.elements.take() {
+            Ok(mut vec) => {
+                // 拥有唯一所有权,直接 drain 前面的元素
+                vec.drain(..self.head);
+                vec
+            }
+            Err(arc) => {
+                // 共享引用,只克隆需要的部分
+                arc.as_ref()[self.head..].to_vec()
+            }
+        }
     }
 }
