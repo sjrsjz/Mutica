@@ -1,5 +1,89 @@
 let maybe_pkg: any = import "maybe.mu";
+
 let List: any = T: any => rec list: (() | T @ list);
+
+let Greater: any = (T: any, n: int) => {
+    let go: any = rec go: match
+        | eq 0 => List(T)
+        | m: int => {
+            if m > 0
+                then T @ go(m - 1)
+                else {
+                    let none = "Cannot create Greater with negative length"; // panic
+                }
+        }
+        | panic;
+    go(n)
+};
+
+let Range: any = (T: any, min: int, max: int) => {
+    let go: any = rec go: match
+        | (eq 0, eq 0) => ()
+        | (eq 0, m: int) => {
+            if m > 0
+                then (() | T @ go(0, m - 1))
+                else {
+                    let none = "Invalid range: max must be >= 0"; // panic
+                }
+        }
+        | (n: int, m: int) => {
+            if n > 0 then {
+                if m >= n
+                    then T @ go(n - 1, m - 1)
+                    else {
+                        let none = "Invalid range: max must be >= min"; // panic
+                    }
+            }
+            else {
+                let none = "Invalid range: min must be > 0 in this branch"; // panic
+            }
+        }
+        | panic;
+    go(min, max)
+};
+
+let Exact: any = (T: any, n: int) => {
+    let go: any = rec go: match
+        | eq 0 => ()
+        | m: int => {
+            if m > 0
+                then (T,) + go(m - 1)
+                else {
+                    let none = "Cannot create Exact with negative length"; // panic
+                }
+        }
+        | panic;
+    go(n)
+};
+
+let Modular: any = (T: any, a: int, b: int) => {
+    let cycle: any = dyn_rec cycle: {
+        let add_a: any = rec add_a: (count: int, tail_type: any) => match count
+            | eq 0 => tail_type
+            | c: int => {
+                if c > 0 
+                    then T @ add_a((c - 1, tail_type))
+                    else {
+                        let none = "Invalid Modular: a must be > 0"; // panic
+                    }
+            }
+            | panic;
+        (() | add_a((a, cycle)))
+    };
+    
+    let add_b: any = rec add_b: (count: int, tail_type: any) => match count
+        | eq 0 => tail_type
+        | c: int => {
+            if c >= 0 
+                then T @ add_b((c - 1, tail_type))
+                else {
+                    let none = "Invalid Modular: b must be >= 0"; // panic
+                }
+            }
+        | panic;
+    add_b((b, cycle))
+};
+
 let Nil: any = ();
 let cons: any = (head: any, tail: any) => (head,) + tail;
 let head: any = match
@@ -127,6 +211,11 @@ let list_any: any = lst: List(any) => pred: any => {
 };
 
 List::List &
+Nat::List &
+Greater::Greater &
+Range::Range &
+Exact::Exact &
+Modular::Modular &
 Nil::Nil &
 cons::cons &
 head::head &
