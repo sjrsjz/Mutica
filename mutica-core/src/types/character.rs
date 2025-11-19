@@ -6,7 +6,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, character_value::CharacterValue,
+        TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -110,29 +110,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
         Ok(self.dispatch())
     }
 
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        ctx.arg
-            .take(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::IntegerValue(iv) => {
-                    let v = iv.value();
-                    if v > std::char::MAX as i64 || v < 0 {
-                        return Err(TypeError::TypeMismatch(
-                            (iv.dispatch(), "Expected a valid Unicode code point".into()).into(),
-                        ));
-                    }
-                    Ok(CharacterValue::new(
-                        std::char::from_u32(v as u32).unwrap(),
-                        None,
-                    ))
-                }
-                Type::CharValue(_) => Ok(arg),
-                _ => Err(TypeError::TypeMismatch(
-                    (arg, "IntegerValue or CharValue".into()).into(),
-                )),
-            })?
-            .unwrap_or(Err(TypeError::UnresolvableType(
-                "Could not resolve argument".into(),
-            )))
+    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Err(TypeError::NonApplicableType(self.into_dispatcher().into()))
     }
 
     fn is_normal_form(&self) -> ThreeValuedLogic {

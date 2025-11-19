@@ -11,7 +11,7 @@ use crate::{
         Representable, Type, TypeError, TypeRef,
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
-        integer_value::IntegerValue,
+        nature_number::NatureNumber,
         invoke::{Invoke, InvokeCountinuationStyle},
         tuple::Tuple,
     },
@@ -165,7 +165,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 // 类型结构描述相关
                 "tuple_len" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                        TypeRef::Tuple(v) => Ok(Some(IntegerValue::new(
+                        TypeRef::Tuple(v) => Ok(Some(NatureNumber::new(
                             v.len() as i64,
                             source_info.cloned(),
                         ))),
@@ -209,8 +209,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let id = self.allocated_types.alloc(arg.clone());
                     Ok(Some(Tuple::new(
                         vec![
-                            IntegerValue::new(id.index() as i64, source_info.cloned()),
-                            IntegerValue::new(id.generation() as i64, source_info.cloned()),
+                            NatureNumber::new(id.index() as i64, source_info.cloned()),
+                            NatureNumber::new(id.generation() as i64, source_info.cloned()),
                         ],
                         source_info.cloned(),
                     )))
@@ -226,8 +226,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             let index_ty = tuple.get(0).unwrap();
                             let generation_ty = tuple.get(1).unwrap();
                             if let (
-                                TypeRef::IntegerValue(index_iv),
-                                TypeRef::IntegerValue(gen_iv),
+                                TypeRef::NatureNumber(index_iv),
+                                TypeRef::NatureNumber(gen_iv),
                             ) = (
                                 index_ty.as_ref_dispatcher(),
                                 generation_ty.as_ref_dispatcher(),
@@ -264,7 +264,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             }
                             let index_ty = tuple.get(0).unwrap();
                             let generation_ty = tuple.get(1).unwrap();
-                            if let (Type::IntegerValue(index_iv), Type::IntegerValue(gen_iv)) =
+                            if let (Type::NatureNumber(index_iv), Type::NatureNumber(gen_iv)) =
                                 (index_ty, generation_ty)
                             {
                                 let index = index_iv.value() as usize;
@@ -315,8 +315,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                         let index_ty = id_tup.get(0).unwrap();
                                         let generation_ty = id_tup.get(1).unwrap();
                                         if let (
-                                            Type::IntegerValue(index_iv),
-                                            Type::IntegerValue(gen_iv),
+                                            Type::NatureNumber(index_iv),
+                                            Type::NatureNumber(gen_iv),
                                         ) = (index_ty, generation_ty)
                                         {
                                             let index = index_iv.value() as usize;

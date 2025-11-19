@@ -243,7 +243,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         ctx.arg
             .take(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::IntegerValue(iv) => {
+                Type::NatureNumber(iv) => {
                     let index = iv.value() as usize;
                     match self.get(index) {
                         Some(t) => Ok(t.clone()),

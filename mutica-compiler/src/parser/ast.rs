@@ -16,8 +16,8 @@ use mutica_core::types::eqof::EqOf;
 use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
-use mutica_core::types::integer::Integer;
-use mutica_core::types::integer_value::IntegerValue;
+use mutica_core::types::range::Range;
+use mutica_core::types::nature_number::NatureNumber;
 use mutica_core::types::invoke::Invoke;
 use mutica_core::types::lazy::Lazy;
 use mutica_core::types::namespace::Namespace;
@@ -1903,7 +1903,7 @@ impl<'ast> LinearTypeAst<'ast> {
         loc: Option<&SourceLocation>,
     ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError<'ast>>> {
         match self {
-            LinearTypeAst::Int => Ok(BuildResult::simple(Integer::new(
+            LinearTypeAst::Int => Ok(BuildResult::simple(Range::new(
                 loc.cloned().map(Arc::new),
             ))),
             LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(loc.cloned().map(Arc::new)))),
@@ -1920,7 +1920,7 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom(
                 loc.cloned().map(Arc::new),
             ))),
-            LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(IntegerValue::new(
+            LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(NatureNumber::new(
                 *v,
                 loc.cloned().map(Arc::new),
             ))),

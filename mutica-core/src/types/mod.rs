@@ -10,8 +10,8 @@ pub mod eqof;
 pub mod fixpoint;
 pub mod float;
 pub mod float_value;
-pub mod integer;
-pub mod integer_value;
+pub mod range;
+pub mod nature_number;
 pub mod invoke;
 pub mod lazy;
 pub mod namespace;
@@ -46,8 +46,8 @@ use crate::{
         fixpoint::FixPoint,
         float::Float,
         float_value::FloatValue,
-        integer::Integer,
-        integer_value::IntegerValue,
+        range::Range,
+        nature_number::NatureNumber,
         invoke::Invoke,
         lazy::Lazy,
         namespace::Namespace,
@@ -75,8 +75,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
     fn clone(&self) -> Self {
         match self {
             Type::Bound(v) => Type::<T>::Bound(v.clone()),
-            Type::Integer(v) => Type::<T>::Integer(v.clone()),
-            Type::IntegerValue(v) => Type::<T>::IntegerValue(v.clone()),
+            Type::Range(v) => Type::<T>::Range(v.clone()),
+            Type::NatureNumber(v) => Type::<T>::NatureNumber(v.clone()),
             Type::Float(v) => Type::<T>::Float(v.clone()),
             Type::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
             Type::Char(v) => Type::<T>::Char(v.clone()),
@@ -105,9 +105,9 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     // 类型边界
     Bound(TypeBound<T>),
     // 整数类型
-    Integer(Integer<T>),
+    Range(Range<T>),
     // 整数值类型
-    IntegerValue(IntegerValue<T>),
+    NatureNumber(NatureNumber<T>),
     // 浮点类型
     Float(Float<T>),
     // 浮点值类型
@@ -152,8 +152,8 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Bound(&'a TypeBound<T>),
-    Integer(&'a Integer<T>),
-    IntegerValue(&'a IntegerValue<T>),
+    Range(&'a Range<T>),
+    NatureNumber(&'a NatureNumber<T>),
     Float(&'a Float<T>),
     FloatValue(&'a FloatValue<T>),
     Char(&'a Character<T>),
@@ -208,8 +208,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         match self {
             TypeRef::Bound(v) => v.check(other, ctx),
-            TypeRef::Integer(v) => v.check(other, ctx),
-            TypeRef::IntegerValue(v) => v.check(other, ctx),
+            TypeRef::Range(v) => v.check(other, ctx),
+            TypeRef::NatureNumber(v) => v.check(other, ctx),
             TypeRef::Float(v) => v.check(other, ctx),
             TypeRef::FloatValue(v) => v.check(other, ctx),
             TypeRef::Char(v) => v.check(other, ctx),
@@ -236,8 +236,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self {
             TypeRef::Bound(v) => v.is_normal_form(),
-            TypeRef::Integer(v) => v.is_normal_form(),
-            TypeRef::IntegerValue(v) => v.is_normal_form(),
+            TypeRef::Range(v) => v.is_normal_form(),
+            TypeRef::NatureNumber(v) => v.is_normal_form(),
             TypeRef::Float(v) => v.is_normal_form(),
             TypeRef::FloatValue(v) => v.is_normal_form(),
             TypeRef::Char(v) => v.is_normal_form(),
@@ -264,8 +264,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
         match self {
             TypeRef::Bound(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Integer(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::IntegerValue(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::Range(v) => v.recalculate_normal_form(cycle_detector),
+            TypeRef::NatureNumber(v) => v.recalculate_normal_form(cycle_detector),
             TypeRef::Float(v) => v.recalculate_normal_form(cycle_detector),
             TypeRef::FloatValue(v) => v.recalculate_normal_form(cycle_detector),
             TypeRef::Char(v) => v.recalculate_normal_form(cycle_detector),
@@ -296,8 +296,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         match self {
             TypeRef::Bound(v) => v.subof(other, ctx),
-            TypeRef::Integer(v) => v.subof(other, ctx),
-            TypeRef::IntegerValue(v) => v.subof(other, ctx),
+            TypeRef::Range(v) => v.subof(other, ctx),
+            TypeRef::NatureNumber(v) => v.subof(other, ctx),
             TypeRef::Float(v) => v.subof(other, ctx),
             TypeRef::FloatValue(v) => v.subof(other, ctx),
             TypeRef::Char(v) => v.subof(other, ctx),
@@ -324,8 +324,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         match self {
             TypeRef::Bound(v) => v.tagged_ptr(),
-            TypeRef::Integer(v) => v.tagged_ptr(),
-            TypeRef::IntegerValue(v) => v.tagged_ptr(),
+            TypeRef::Range(v) => v.tagged_ptr(),
+            TypeRef::NatureNumber(v) => v.tagged_ptr(),
             TypeRef::Float(v) => v.tagged_ptr(),
             TypeRef::FloatValue(v) => v.tagged_ptr(),
             TypeRef::Char(v) => v.tagged_ptr(),
@@ -356,8 +356,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         match self {
             TypeRef::Bound(v) => v.source_info(),
-            TypeRef::Integer(v) => v.source_info(),
-            TypeRef::IntegerValue(v) => v.source_info(),
+            TypeRef::Range(v) => v.source_info(),
+            TypeRef::NatureNumber(v) => v.source_info(),
             TypeRef::Float(v) => v.source_info(),
             TypeRef::FloatValue(v) => v.source_info(),
             TypeRef::Char(v) => v.source_info(),
@@ -384,8 +384,8 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn report_source_info(&self) -> TypeReport {
         match self {
             TypeRef::Bound(v) => v.report_source_info(),
-            TypeRef::Integer(v) => v.report_source_info(),
-            TypeRef::IntegerValue(v) => v.report_source_info(),
+            TypeRef::Range(v) => v.report_source_info(),
+            TypeRef::NatureNumber(v) => v.report_source_info(),
             TypeRef::Float(v) => v.report_source_info(),
             TypeRef::FloatValue(v) => v.report_source_info(),
             TypeRef::Char(v) => v.report_source_info(),
@@ -414,8 +414,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
     pub fn clone_data(self) -> Type<T> {
         match self {
             TypeRef::Bound(v) => Type::<T>::Bound(v.clone()),
-            TypeRef::Integer(v) => Type::<T>::Integer(v.clone()),
-            TypeRef::IntegerValue(v) => Type::<T>::IntegerValue(v.clone()),
+            TypeRef::Range(v) => Type::<T>::Range(v.clone()),
+            TypeRef::NatureNumber(v) => Type::<T>::NatureNumber(v.clone()),
             TypeRef::Float(v) => Type::<T>::Float(v.clone()),
             TypeRef::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
             TypeRef::Char(v) => Type::<T>::Char(v.clone()),
@@ -949,8 +949,8 @@ macro_rules! type_dispatch {
     ($self:expr, $method:ident $(, $args:expr)*) => {
         match $self {
             Type::Bound(v) => v.$method($($args),*),
-            Type::Integer(v) => v.$method($($args),*),
-            Type::IntegerValue(v) => v.$method($($args),*),
+            Type::Range(v) => v.$method($($args),*),
+            Type::NatureNumber(v) => v.$method($($args),*),
             Type::Float(v) => v.$method($($args),*),
             Type::FloatValue(v) => v.$method($($args),*),
             Type::Tuple(v) => v.$method($($args),*),
@@ -1054,8 +1054,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
     fn is_normal_form(&self) -> ThreeValuedLogic {
         match self {
             Type::Bound(v) => v.is_normal_form(),
-            Type::Integer(v) => v.is_normal_form(),
-            Type::IntegerValue(v) => v.is_normal_form(),
+            Type::Range(v) => v.is_normal_form(),
+            Type::NatureNumber(v) => v.is_normal_form(),
             Type::Float(v) => v.is_normal_form(),
             Type::FloatValue(v) => v.is_normal_form(),
             Type::Char(v) => v.is_normal_form(),
@@ -1187,8 +1187,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
     fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
         match self {
             Type::Bound(v) => TypeRef::Bound(v),
-            Type::Integer(v) => TypeRef::Integer(v),
-            Type::IntegerValue(v) => TypeRef::IntegerValue(v),
+            Type::Range(v) => TypeRef::Range(v),
+            Type::NatureNumber(v) => TypeRef::NatureNumber(v),
             Type::Float(v) => TypeRef::Float(v),
             Type::FloatValue(v) => TypeRef::FloatValue(v),
             Type::Char(v) => TypeRef::Char(v),
@@ -1227,8 +1227,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
     fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
         match self {
             Type::Bound(v) => TypeRef::Bound(v),
-            Type::Integer(v) => TypeRef::Integer(v),
-            Type::IntegerValue(v) => TypeRef::IntegerValue(v),
+            Type::Range(v) => TypeRef::Range(v),
+            Type::NatureNumber(v) => TypeRef::NatureNumber(v),
             Type::Float(v) => TypeRef::Float(v),
             Type::FloatValue(v) => TypeRef::FloatValue(v),
             Type::Char(v) => TypeRef::Char(v),

@@ -4,7 +4,7 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        closure::{Closure, ClosureEnv}, fixpoint::FixPoint, float_value::FloatValue, integer_value::IntegerValue, invoke::Invoke, pattern::Pattern, tuple::Tuple, type_bound::TypeBound, variable::Variable, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
+        closure::{Closure, ClosureEnv}, fixpoint::FixPoint, float_value::FloatValue, nature_number::NatureNumber, invoke::Invoke, pattern::Pattern, tuple::Tuple, type_bound::TypeBound, variable::Variable, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -235,8 +235,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     ),
                 ))),
                 OpcodeKind::Neg => {
-                    if let Type::IntegerValue(n) = arg {
-                        Ok(IntegerValue::new(-n.value(), ctx.source_info.cloned()))
+                    if let Type::NatureNumber(n) = arg {
+                        Ok(NatureNumber::new(-n.value(), ctx.source_info.cloned()))
                     } else if let Type::FloatValue(n) = arg {
                         Ok(FloatValue::new(-n.value(), ctx.source_info.cloned()))
                     } else {
@@ -294,17 +294,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             left.take(&mut FastCycleDetector::new(), |_, left| {
                                 right.take(&mut FastCycleDetector::new(), |_, right| {
                                     match (left, right) {
-                            (Type::IntegerValue(l), Type::IntegerValue(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(IntegerValue::new(l.value() + r.value(), ctx.source_info.cloned())),
-                                OpcodeKind::Sub => Ok(IntegerValue::new(l.value() - r.value(), ctx.source_info.cloned())),
-                                OpcodeKind::Mul => Ok(IntegerValue::new(l.value() * r.value(), ctx.source_info.cloned())),
+                            (Type::NatureNumber(l), Type::NatureNumber(r)) => match &self.kind {
+                                OpcodeKind::Add => Ok(NatureNumber::new(l.value() + r.value(), ctx.source_info.cloned())),
+                                OpcodeKind::Sub => Ok(NatureNumber::new(l.value() - r.value(), ctx.source_info.cloned())),
+                                OpcodeKind::Mul => Ok(NatureNumber::new(l.value() * r.value(), ctx.source_info.cloned())),
                                 OpcodeKind::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
                                             (l.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
-                                        Ok(IntegerValue::new(l.value() / r.value(), ctx.source_info.cloned()))
+                                        Ok(NatureNumber::new(l.value() / r.value(), ctx.source_info.cloned()))
                                     }
                                 }
                                 OpcodeKind::Mod => {
@@ -313,7 +313,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                             (r.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
-                                        Ok(IntegerValue::new(l.value() % r.value(), ctx.source_info.cloned()))
+                                        Ok(NatureNumber::new(l.value() % r.value(), ctx.source_info.cloned()))
                                     }
                                 }
                                 _ => unreachable!(),
@@ -390,7 +390,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             left.take(&mut FastCycleDetector::new(), move |_, left| {
                                 right.take(&mut FastCycleDetector::new(), move |_, right| {
                                     match (left, right) {
-                                        (Type::IntegerValue(l), Type::IntegerValue(r)) => {
+                                        (Type::NatureNumber(l), Type::NatureNumber(r)) => {
                                             let condition = match &self.kind {
                                                 OpcodeKind::Less => l.value() < r.value(),
                                                 OpcodeKind::Greater => l.value() > r.value(),
