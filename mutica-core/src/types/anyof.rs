@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -25,8 +25,6 @@ use crate::types::CoinductiveTypeRef;
 pub struct AnyOf<T: GcAllocObject<T, Inner = Type<T>>> {
     types: Arc<[Type<T>]>,
     source_info: Option<Arc<SourceLocation>>,
-    is_nf: Arc<RwLock<ThreeValuedLogic>>, // 仅仅只是为了能可变的存储ThreeValuedLogic
-                                          // 也许存在更好的方法
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for AnyOf<T> {
@@ -34,7 +32,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for AnyOf<T> {
         Self {
             types: self.types.clone(),
             source_info: self.source_info.clone(),
-            is_nf: self.is_nf.clone(),
         }
     }
 }
@@ -143,24 +140,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
         Err(TypeError::NonApplicableType(self.dispatch().into()))
     }
 
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self.is_nf.read() {
-            Ok(v) => *v,
-            Err(_) => ThreeValuedLogic::False,
-        }
-    }
-
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        let mut new_nf = ThreeValuedLogic::True;
-        for sub in self.types.iter() {
-            sub.recalculate_normal_form(cycle_detector);
-            new_nf &= sub.is_normal_form();
-        }
-        if let Ok(mut nf_lock) = self.is_nf.write() {
-            *nf_lock = new_nf;
-        }
-    }
-
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
     }
@@ -260,7 +239,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
             _ => Self {
                 types: Arc::from(collected),
                 source_info,
-                is_nf: Arc::new(RwLock::new(ThreeValuedLogic::False)),
             }
             .dispatch(),
         }

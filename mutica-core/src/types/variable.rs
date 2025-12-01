@@ -155,12 +155,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        ThreeValuedLogic::False
-    }
-
-    fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
-
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
     }

@@ -1,7 +1,7 @@
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Id {
     index: usize,
-    generation: u32,
+    generation: usize,
 }
 
 impl Id {
@@ -11,11 +11,11 @@ impl Id {
     }
 
     /// 获取 ID 的代值
-    pub fn generation(&self) -> u32 {
+    pub fn generation(&self) -> usize {
         self.generation
     }
 
-    pub fn from_parts(index: usize, generation: u32) -> Self {
+    pub fn from_parts(index: usize, generation: usize) -> Self {
         Id { index, generation }
     }
 }
@@ -30,7 +30,7 @@ enum Entry<T> {
 /// 一个支持自动扩容的 O(1) ID 分配器
 pub struct IdAllocator<T> {
     entries: Vec<Entry<T>>,
-    generations: Vec<u32>,
+    generations: Vec<usize>,
     free_list_head: usize,
     /// 用于标记空闲链表的末尾
     sentinel: usize,

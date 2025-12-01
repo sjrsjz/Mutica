@@ -233,62 +233,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
         }
     }
 
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self {
-            TypeRef::Bound(v) => v.is_normal_form(),
-            TypeRef::Range(v) => v.is_normal_form(),
-            TypeRef::NatureNumber(v) => v.is_normal_form(),
-            TypeRef::Float(v) => v.is_normal_form(),
-            TypeRef::FloatValue(v) => v.is_normal_form(),
-            TypeRef::Char(v) => v.is_normal_form(),
-            TypeRef::CharValue(v) => v.is_normal_form(),
-            TypeRef::Tuple(v) => v.is_normal_form(),
-            TypeRef::Any(v) => v.is_normal_form(),
-            TypeRef::All(v) => v.is_normal_form(),
-            TypeRef::FixPoint(v) => v.is_normal_form(),
-            TypeRef::Invoke(v) => v.is_normal_form(),
-            TypeRef::Variable(v) => v.is_normal_form(),
-            TypeRef::Closure(v) => v.is_normal_form(),
-            TypeRef::Opcode(v) => v.is_normal_form(),
-            TypeRef::Namespace(v) => v.is_normal_form(),
-            TypeRef::Pattern(v) => v.is_normal_form(),
-            TypeRef::Lazy(v) => v.is_normal_form(),
-            TypeRef::Rot(v) => v.is_normal_form(),
-            TypeRef::Construct(v) => v.is_normal_form(),
-            TypeRef::OrderedType(v) => v.is_normal_form(),
-            TypeRef::EqOf(v) => v.is_normal_form(),
-            TypeRef::SubOf(v) => v.is_normal_form(),
-        }
-    }
-
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        match self {
-            TypeRef::Bound(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Range(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::NatureNumber(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Float(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::FloatValue(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Char(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::CharValue(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Tuple(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Any(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::All(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::FixPoint(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Invoke(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Variable(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Closure(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Opcode(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Namespace(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Pattern(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Lazy(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Rot(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::Construct(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::OrderedType(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::EqOf(v) => v.recalculate_normal_form(cycle_detector),
-            TypeRef::SubOf(v) => v.recalculate_normal_form(cycle_detector),
-        }
-    }
-
     fn subof(
         &self,
         other: Self,
@@ -1038,50 +982,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
         self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        // 如果已经是范式类型则直接返回
-        if self.is_normal_form() == ThreeValuedLogic::True {
-            return Ok(self);
-        }
         type_dispatch!(self, reduce, ctx)
     }
 
     #[stacksafe::stacksafe]
     fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         type_dispatch!(self, invoke, ctx)
-    }
-
-    #[stacksafe::stacksafe]
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self {
-            Type::Bound(v) => v.is_normal_form(),
-            Type::Range(v) => v.is_normal_form(),
-            Type::NatureNumber(v) => v.is_normal_form(),
-            Type::Float(v) => v.is_normal_form(),
-            Type::FloatValue(v) => v.is_normal_form(),
-            Type::Char(v) => v.is_normal_form(),
-            Type::CharValue(v) => v.is_normal_form(),
-            Type::Tuple(v) => v.is_normal_form(),
-            Type::Any(v) => v.is_normal_form(),
-            Type::All(v) => v.is_normal_form(),
-            Type::FixPoint(v) => v.is_normal_form(),
-            Type::Invoke(v) => v.is_normal_form(),
-            Type::Variable(v) => v.is_normal_form(),
-            Type::Closure(v) => v.is_normal_form(),
-            Type::Opcode(v) => v.is_normal_form(),
-            Type::Namespace(v) => v.is_normal_form(),
-            Type::Pattern(v) => v.is_normal_form(),
-            Type::Lazy(v) => v.is_normal_form(),
-            Type::Rot(v) => v.is_normal_form(),
-            Type::Construct(v) => v.is_normal_form(),
-            Type::OrderedType(v) => v.is_normal_form(),
-            Type::EqOf(v) => v.is_normal_form(),
-            Type::SubOf(v) => v.is_normal_form(),
-        }
-    }
-
-    #[stacksafe::stacksafe]
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        type_dispatch!(self, recalculate_normal_form, cycle_detector)
     }
 
     #[stacksafe::stacksafe]
@@ -1414,8 +1320,6 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         TaggedPtr::new_unique(self as *const _ as *const ())
     }
 
-    fn is_normal_form(&self) -> ThreeValuedLogic;
-
     fn dispatch(self) -> U {
         <Self as AsDispatcher<U, V>>::into_dispatcher(self)
     }
@@ -1427,7 +1331,6 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         <Self as AsDispatcher<U, V>>::as_ref_dispatcher(self)
     }
 
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>);
 }
 
 pub trait CoinductiveTypeRef<
@@ -1473,10 +1376,6 @@ pub trait CoinductiveTypeRef<
     fn report_source_info(&self) -> TypeReport;
 
     fn tagged_ptr(&self) -> TaggedPtr<()>;
-
-    fn is_normal_form(&self) -> ThreeValuedLogic;
-
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>);
 
     fn as_ref_dispatcher(&self) -> W;
 }

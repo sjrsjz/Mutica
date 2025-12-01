@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use arc_gc::traceable::GCTraceable;
 
@@ -16,23 +16,9 @@ use crate::{
 
 /// 区间类型，表示一组不同长度元组的Any
 pub enum Range<T: GcAllocObject<T, Inner = Type<T>>> {
-    Simple(
-        Arc<(
-            usize,
-            usize,
-            Type<T>,
-            Option<Arc<SourceLocation>>,
-            RwLock<ThreeValuedLogic>,
-        )>,
-    ), // [Min, Min + delta]
-    GreaterThan(
-        Arc<(
-            usize,
-            Type<T>,
-            Option<Arc<SourceLocation>>,
-            RwLock<ThreeValuedLogic>,
-        )>,
-    ), // [Min, inf)
+    #[allow(clippy::type_complexity)]
+    Simple(Arc<(usize, usize, Type<T>, Option<Arc<SourceLocation>>)>), // [Min, Min + delta]
+    GreaterThan(Arc<(usize, Type<T>, Option<Arc<SourceLocation>>)>), // [Min, inf)
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Range<T> {
@@ -186,47 +172,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
 
     fn reduce(
         self,
-        _ctx: &mut ReductionContext<Type<T>, T>,
+        ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(self.dispatch())
+        match self {
+            Self::Simple(v) => {
+                let new_ty = v.2.clone().reduce(ctx)?;
+                Ok(Self::Simple(Arc::new((v.0, v.1, new_ty, v.3.clone()))).dispatch())
+            }
+            Self::GreaterThan(v) => {
+                let new_ty = v.1.clone().reduce(ctx)?;
+                Ok(Self::GreaterThan(Arc::new((v.0, new_ty, v.2.clone()))).dispatch())
+            }
+        }
     }
 
     fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.into_dispatcher().into()))
-    }
-
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self {
-            Self::Simple(v) => match v.4.read() {
-                Ok(v) => *v,
-                Err(_) => ThreeValuedLogic::False,
-            },
-            Self::GreaterThan(v) => match v.3.read() {
-                Ok(v) => *v,
-                Err(_) => ThreeValuedLogic::False,
-            },
-        }
-    }
-
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        match self {
-            Self::Simple(v) => {
-                let (_, _, ty, _, is_nf) = v.as_ref();
-                ty.recalculate_normal_form(cycle_detector);
-                let new_nf = ty.is_normal_form();
-                if let Ok(mut nf_lock) = is_nf.write() {
-                    *nf_lock = new_nf;
-                }
-            }
-            Self::GreaterThan(v) => {
-                let (_, ty, _, is_nf) = v.as_ref();
-                ty.recalculate_normal_form(cycle_detector);
-                let new_nf = ty.is_normal_form();
-                if let Ok(mut nf_lock) = is_nf.write() {
-                    *nf_lock = new_nf;
-                }
-            }
-        }
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -290,11 +251,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Range<T> {
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let ty = ty.into_dispatcher();
-        let is_nf = RwLock::new(ty.is_normal_form());
         match delta {
-            Some(delta) if delta == 0usize => return NatureNumber::new(min, ty, source_info),
-            Some(delta) => Self::Simple(Arc::new((min, delta, ty, source_info, is_nf))),
-            None => Self::GreaterThan(Arc::new((min, ty, source_info, is_nf))),
+            Some(0usize) => return NatureNumber::new(min, ty, source_info),
+            Some(delta) => Self::Simple(Arc::new((min, delta, ty, source_info))),
+            None => Self::GreaterThan(Arc::new((min, ty, source_info))),
         }
         .into_dispatcher()
     }

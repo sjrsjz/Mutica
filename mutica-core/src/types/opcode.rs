@@ -235,13 +235,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     ),
                 ))),
                 OpcodeKind::Neg => {
-                    if let Type::NatureNumber(n) = arg {
-                        Ok(NatureNumber::new(-n.value(), ctx.source_info.cloned()))
-                    } else if let Type::FloatValue(n) = arg {
+                    if let Type::FloatValue(n) = arg {
                         Ok(FloatValue::new(-n.value(), ctx.source_info.cloned()))
                     } else {
                         Err(TypeError::TypeMismatch(
-                            (arg, "IntegerValue | FloatValue".into()).into(),
+                            (arg, "FloatValue".into()).into(),
                         ))
                     }
                 }
@@ -295,16 +293,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 right.take(&mut FastCycleDetector::new(), |_, right| {
                                     match (left, right) {
                             (Type::NatureNumber(l), Type::NatureNumber(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(NatureNumber::new(l.value() + r.value(), ctx.source_info.cloned())),
-                                OpcodeKind::Sub => Ok(NatureNumber::new(l.value() - r.value(), ctx.source_info.cloned())),
-                                OpcodeKind::Mul => Ok(NatureNumber::new(l.value() * r.value(), ctx.source_info.cloned())),
+                                OpcodeKind::Add => Ok(NatureNumber::new(l.value() + r.value(), Tuple::unit(), ctx.source_info.cloned())),
+                                OpcodeKind::Sub => Ok(NatureNumber::new(l.value() - r.value(), Tuple::unit(), ctx.source_info.cloned())),
+                                OpcodeKind::Mul => Ok(NatureNumber::new(l.value() * r.value(), Tuple::unit(), ctx.source_info.cloned())),
                                 OpcodeKind::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
                                             (l.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
-                                        Ok(NatureNumber::new(l.value() / r.value(), ctx.source_info.cloned()))
+                                        Ok(NatureNumber::new(l.value() / r.value(), Tuple::unit(), ctx.source_info.cloned()))
                                     }
                                 }
                                 OpcodeKind::Mod => {
@@ -313,7 +311,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                             (r.dispatch(), "Non-zero integer".into()).into(),
                                         ))
                                     } else {
-                                        Ok(NatureNumber::new(l.value() % r.value(), ctx.source_info.cloned()))
+                                        Ok(NatureNumber::new(l.value() % r.value(), Tuple::unit(), ctx.source_info.cloned()))
                                     }
                                 }
                                 _ => unreachable!(),
@@ -452,12 +450,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 }
             })?.unwrap_or(Err(TypeError::UnresolvableType("Could not resolve argument".into())))
     }
-
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        ThreeValuedLogic::True
-    }
-
-    fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()

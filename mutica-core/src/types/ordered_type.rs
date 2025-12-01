@@ -141,16 +141,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Order
         Err(TypeError::NonApplicableType(self.dispatch().into()))
     }
 
-    fn recalculate_normal_form(
-        &self,
-        _cycle_detector: &mut crate::util::cycle_detector::FastCycleDetector<super::TaggedPtr<()>>,
-    ) {
-    }
-
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        ThreeValuedLogic::True
-    }
-
     fn reduce(
         self,
         _ctx: &mut super::ReductionContext<Type<T>, T>,

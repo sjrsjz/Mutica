@@ -7,12 +7,12 @@ use arc_gc::gc::GC;
 use crate::{
     scheduler::stack::{Stack, StackView},
     types::{
-        AsDispatcher, CoinductiveType, GcAllocObject, InvokeContext, ReductionContext,
-        Representable, Type, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, GcAllocObject, InvokeContext, Representable, Type,
+        TypeError, TypeRef,
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
-        nature_number::NatureNumber,
         invoke::{Invoke, InvokeCountinuationStyle},
+        nature_number::NatureNumber,
         tuple::Tuple,
     },
     util::{
@@ -166,7 +166,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 "tuple_len" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                         TypeRef::Tuple(v) => Ok(Some(NatureNumber::new(
-                            v.len() as i64,
+                            v.len(),
+                            Tuple::unit(),
                             source_info.cloned(),
                         ))),
                         _ => Err(TypeError::TypeMismatch(
@@ -209,8 +210,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let id = self.allocated_types.alloc(arg.clone());
                     Ok(Some(Tuple::new(
                         vec![
-                            NatureNumber::new(id.index() as i64, source_info.cloned()),
-                            NatureNumber::new(id.generation() as i64, source_info.cloned()),
+                            NatureNumber::new(id.index(), Tuple::unit(), source_info.cloned()),
+                            NatureNumber::new(
+                                id.generation() as usize,
+                                Tuple::unit(),
+                                source_info.cloned(),
+                            ),
                         ],
                         source_info.cloned(),
                     )))
@@ -232,8 +237,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 index_ty.as_ref_dispatcher(),
                                 generation_ty.as_ref_dispatcher(),
                             ) {
-                                let index = index_iv.value() as usize;
-                                let generation = gen_iv.value() as u32;
+                                let index = index_iv.value();
+                                let generation = gen_iv.value();
                                 self.allocated_types
                                     .dealloc(Id::from_parts(index, generation));
                                 Ok(Some(Tuple::new(
@@ -267,8 +272,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             if let (Type::NatureNumber(index_iv), Type::NatureNumber(gen_iv)) =
                                 (index_ty, generation_ty)
                             {
-                                let index = index_iv.value() as usize;
-                                let generation = gen_iv.value() as u32;
+                                let index = index_iv.value();
+                                let generation = gen_iv.value();
                                 let id = Id::from_parts(index, generation);
                                 match self.allocated_types.get(id) {
                                     Some(v) => Ok(Some(v.clone())),
@@ -319,8 +324,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                             Type::NatureNumber(gen_iv),
                                         ) = (index_ty, generation_ty)
                                         {
-                                            let index = index_iv.value() as usize;
-                                            let generation = gen_iv.value() as u32;
+                                            let index = index_iv.value();
+                                            let generation = gen_iv.value();
                                             let id = Id::from_parts(index, generation);
                                             match self.allocated_types.get_mut(id) {
                                                 Some(v) => {
@@ -383,32 +388,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             .unwrap();
 
         // 在 await 之前完成所有需要 rec_assumptions 的工作
-        let reduced = {
-            let mut rec_assumptions = smallvec::SmallVec::new();
-            let mut reduction_ctx = ReductionContext::new(
-                &empty_v,
-                &empty_p,
-                &mut rec_assumptions,
-                gc,
-                &mut self.roots,
-            );
-            let current_type = self.current_type.take().ok_or_else(|| {
-                TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))
-            })?;
-            current_type.reduce(&mut reduction_ctx)?
-        };
+        let current_type = self.current_type.take().ok_or_else(|| {
+            TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))
+        })?;
 
         // 检查是否是 Invoke 类型
-        let is_invoke = matches!(reduced.as_ref_dispatcher(), TypeRef::Invoke(_));
+        let is_invoke = matches!(current_type.as_ref_dispatcher(), TypeRef::Invoke(_));
 
         let (next_type, updated) = if is_invoke {
             // 处理 Invoke 类型
-            let (func, arg, continuation_style, source_info) = if let Type::Invoke(invoke) = reduced
-            {
-                invoke.take()
-            } else {
-                unreachable!()
-            };
+            let (func, arg, continuation_style, source_info) =
+                if let Type::Invoke(invoke) = current_type {
+                    invoke.take()
+                } else {
+                    unreachable!()
+                };
 
             let io_result = self.io(&func, &arg, source_info.as_ref()).await;
 
@@ -579,11 +573,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 Some(cont) => {
                     let source_info = cont.source_info().cloned();
                     (
-                        Invoke::new(cont, reduced, None::<Type<T>>, None::<Type<T>>, source_info),
+                        Invoke::new(
+                            cont,
+                            current_type,
+                            None::<Type<T>>,
+                            None::<Type<T>>,
+                            source_info,
+                        ),
                         true,
                     )
                 }
-                None => (reduced, false),
+                None => (current_type, false),
             }
         };
 

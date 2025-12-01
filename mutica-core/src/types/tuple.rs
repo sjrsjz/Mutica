@@ -1,5 +1,5 @@
 use core::panic;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -19,7 +19,6 @@ use crate::{
 // 元组类型，但是其允许通过cons类型解构
 pub struct Tuple<T: GcAllocObject<T, Inner = Type<T>>> {
     elements: ArcOpt<Vec<Type<T>>>,
-    is_nf: ArcOpt<RwLock<ThreeValuedLogic>>,
     source_info: Option<Arc<SourceLocation>>,
     head: usize,
 }
@@ -28,7 +27,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Tuple<T> {
     fn clone(&self) -> Self {
         Self {
             elements: self.elements.clone(),
-            is_nf: self.is_nf.clone(),
             source_info: self.source_info.clone(),
             head: self.head,
         }
@@ -206,23 +204,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         match self.elements.modify(|mut elements| {
-            if !self.is_nf.is_unique() {
-                panic!(
-                    "CRITICAL: Tuple's self.is_nf lock is not unique when self.elements is unique"
-                );
-            }
-            let mut is_nf = ThreeValuedLogic::True;
             for element in elements.iter_mut().skip(self.head) {
                 // 手动提供一个占位符值，然后换出旧值
                 let owned_element = std::mem::replace(element, TypeBound::bottom(None));
                 let reduced = owned_element.reduce(ctx)?;
-                is_nf &= reduced.is_normal_form();
                 // 将计算结果写回
                 *element = reduced;
             }
-            if let Ok(mut nf_lock) = self.is_nf.as_ref().write() {
-                *nf_lock = is_nf;
-            };
             Ok(elements)
         })? {
             Some(()) => Ok(self.dispatch()),
@@ -244,7 +232,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         ctx.arg
             .take(&mut FastCycleDetector::new(), |_, arg| match arg {
                 Type::NatureNumber(iv) => {
-                    let index = iv.value() as usize;
+                    let index = iv.value();
                     match self.get(index) {
                         Some(t) => Ok(t.clone()),
                         None => Err(super::TypeError::TupleIndexOutOfBounds(
@@ -261,24 +249,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         TaggedPtr::new(self.elements.as_ref() as *const _ as *const (), self.head)
-    }
-
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self.is_nf.as_ref().read() {
-            Ok(v) => *v,
-            Err(_) => ThreeValuedLogic::False,
-        }
-    }
-
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        let mut new_nf = ThreeValuedLogic::True;
-        for element in self.iter() {
-            element.recalculate_normal_form(cycle_detector);
-            new_nf &= element.is_normal_form();
-        }
-        if let Ok(mut nf_lock) = self.is_nf.as_ref().write() {
-            *nf_lock = new_nf;
-        }
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -338,15 +308,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         X: AsDispatcher<Type<T>, T>,
     {
         let elements: Vec<Type<T>> = types.into_iter().map(|t| t.into_dispatcher()).collect();
-        let mut is_nf = ThreeValuedLogic::True;
-        for element in &elements {
-            is_nf &= element.is_normal_form();
-        }
         Self {
             elements: ArcOpt::new(elements),
             head: 0,
             source_info,
-            is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()
     }
@@ -355,20 +320,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         if start > self.len() {
             panic!("List view start index out of bounds");
         }
-        let is_nf = if self.is_normal_form() == ThreeValuedLogic::True {
-            ThreeValuedLogic::True // 删掉这个会导致大部分算法从O(1)变成O(n)，进而严重影响性能
-        } else {
-            let mut is_nf = ThreeValuedLogic::True;
-            for element in self.elements.as_ref().iter().skip(self.head + start) {
-                is_nf &= element.is_normal_form();
-            }
-            is_nf
-        };
         Self {
             elements: self.elements.clone(),
             head: self.head + start,
             source_info: self.source_info.clone(),
-            is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()
     }
@@ -385,14 +340,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
     }
 
     pub fn concat(self, other: Tuple<T>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        let is_nf = self.is_normal_form() & other.is_normal_form();
         let mut new_elements = self.take();
         new_elements.extend(other.take());
         Self {
             elements: ArcOpt::new(new_elements),
             head: 0,
             source_info,
-            is_nf: ArcOpt::new(RwLock::new(is_nf)),
         }
         .dispatch()
     }
@@ -409,5 +362,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
                 arc.as_ref()[self.head..].to_vec()
             }
         }
+    }
+
+    pub fn unit() -> Type<T> {
+        Self::new(std::iter::empty::<Type<T>>(), None)
     }
 }

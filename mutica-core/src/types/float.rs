@@ -127,12 +127,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
             )))
     }
 
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        ThreeValuedLogic::True
-    }
-
-    fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
-
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
     }

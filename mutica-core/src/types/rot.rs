@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
@@ -7,19 +7,12 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
         Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef,
     },
-    util::{
-        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
-        three_valued_logic::ThreeValuedLogic,
-    },
+    util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Rotate<T: GcAllocObject<T, Inner = Type<T>>> {
     #[allow(clippy::type_complexity)]
-    inner: ArcOpt<(
-        Type<T>,
-        Option<Arc<SourceLocation>>,
-        RwLock<ThreeValuedLogic>,
-    )>,
+    inner: ArcOpt<(Type<T>, Option<Arc<SourceLocation>>)>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Rotate<T> {
@@ -32,14 +25,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Rotate<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Rotate<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        let (value, _, _) = self.inner.as_ref();
+        let (value, _) = self.inner.as_ref();
         value.collect(queue);
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Rotate<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        let (value, _, _) = self.inner.as_ref();
+        let (value, _) = self.inner.as_ref();
         value.upgrade(collected);
     }
 }
@@ -54,7 +47,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Rotate<T> {
         if depth > max_depth {
             return "...".to_string();
         }
-        let (value, _, _) = self.inner.as_ref();
+        let (value, _) = self.inner.as_ref();
         format!("Rot<{}>", value.represent(path, depth + 1, max_depth))
     }
 }
@@ -105,8 +98,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
                         pattern_env,
                         !ctx.rhs,
                     );
-                    let (v_value, _, _) = v.inner.as_ref();
-                    let (self_value, _, _) = self.inner.as_ref();
+                    let (v_value, _) = v.inner.as_ref();
+                    let (self_value, _) = self.inner.as_ref();
                     v_value.check(self_value.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => Ok(ThreeValuedLogic::False),
@@ -135,8 +128,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
                     Ok(ThreeValuedLogic::True)
                 }
                 TypeRef::Rot(v) => {
-                    let (self_value, _, _) = self.inner.as_ref();
-                    let (v_value, _, _) = v.inner.as_ref();
+                    let (self_value, _) = self.inner.as_ref();
+                    let (v_value, _) = v.inner.as_ref();
                     self_value.subof(v_value.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 _ => Ok(ThreeValuedLogic::False),
@@ -148,17 +141,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
         mut self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        match self.inner.modify(|(value, source_info, is_nf)| {
+        match self.inner.modify(|(value, source_info)| {
             let new_value = value.reduce(ctx)?;
-            let new_is_nf = new_value.is_normal_form();
-            if let Ok(mut nf_lock) = is_nf.write() {
-                *nf_lock = new_is_nf;
-            }
-            Ok((new_value, source_info, is_nf))
+            Ok((new_value, source_info))
         })? {
             Some(()) => Ok(self.dispatch()),
             None => {
-                let (value, source_info, _) = self.inner.as_ref();
+                let (value, source_info) = self.inner.as_ref();
                 let new_value = value.clone().reduce(ctx)?;
                 Ok(Self::new(new_value, source_info.clone()))
             }
@@ -170,23 +159,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Rotat
         _ctx: super::InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         Err(super::TypeError::NonApplicableType(self.dispatch().into()))
-    }
-
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        let (_, _, is_nf) = self.inner.as_ref();
-        match is_nf.read() {
-            Ok(v) => *v,
-            Err(_) => ThreeValuedLogic::False,
-        }
-    }
-
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        let (value, _, is_nf) = self.inner.as_ref();
-        value.recalculate_normal_form(cycle_detector);
-        let new_nf = value.is_normal_form();
-        if let Ok(mut nf_lock) = is_nf.write() {
-            *nf_lock = new_nf;
-        }
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -221,10 +193,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rotate<T> {
         value: X,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
-        let value = value.into_dispatcher();
-        let is_nf = value.is_normal_form();
         Self {
-            inner: ArcOpt::new((value, source_info, RwLock::new(is_nf))),
+            inner: ArcOpt::new((value.into_dispatcher(), source_info)),
         }
         .dispatch()
     }

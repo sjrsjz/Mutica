@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, Weak};
 
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
@@ -41,7 +41,6 @@ use crate::types::CoinductiveTypeRef;
 /// 2. **后填充定义**：通过 `set` 方法设置具体的递归结构
 pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
     reference: GCArcWeak<T>,
-    is_nf: Arc<RwLock<ThreeValuedLogic>>,
     source_info: Option<Arc<SourceLocation>>,
 }
 
@@ -49,7 +48,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
     fn clone(&self) -> Self {
         Self {
             reference: self.reference.clone(),
-            is_nf: self.is_nf.clone(),
             source_info: self.source_info.clone(),
         }
     }
@@ -122,7 +120,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         let pointer = gc.create(T::new_placeholder());
         let fix_point = FixPoint {
             reference: pointer.as_weak(),
-            is_nf: Arc::new(RwLock::new(ThreeValuedLogic::Unknown)),
             source_info,
         };
         roots.push(pointer);
@@ -140,22 +137,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     pub fn set<V: AsDispatcher<Type<T>, T>>(&self, t: V) -> Result<(), TypeError<Type<T>, T>> {
         if let Some(inner) = self.reference.upgrade() {
             let t = t.into_dispatcher();
-            let is_nf = t.is_normal_form();
-            inner.as_ref().set_value(t)?;
-            // 先预设置归约状态
-            match self.is_nf.write() {
-                Ok(mut nf_lock) => {
-                    *nf_lock = is_nf;
-                }
-                Err(_) => {
-                    return Err(TypeError::UnresolvableType(
-                        "Failed to acquire write lock for is_nf".into(),
-                    ));
-                }
-            }
-            // 重新计算所有相关类型的归约状态
-            self.recalculate_normal_form(&mut FastCycleDetector::new());
-            Ok(())
+            inner.as_ref().set_value(t).map(|_| ())
         } else {
             Err(TypeError::UnresolvableType("Reference is dead".into()))
         }
@@ -332,51 +314,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         }
     }
 
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        match self.reference.upgrade() {
-            Some(_) => self.is_nf.read().map_or(ThreeValuedLogic::False, |v| *v),
-            None => ThreeValuedLogic::False, // reference is dead
-        }
-    }
-
-    fn recalculate_normal_form(&self, cycle_detector: &mut FastCycleDetector<TaggedPtr<()>>) {
-        let is_nf = match self.reference.upgrade() {
-            Some(inner) => {
-                match inner.as_ref().get_value() {
-                    Some(t) => {
-                        match cycle_detector.with_guard(t.tagged_ptr(), |cycle_detector| {
-                            if let Ok(mut nf_lock) = self.is_nf.write() {
-                                let is_nf: ThreeValuedLogic = *nf_lock;
-                                if let ThreeValuedLogic::Unknown = is_nf {
-                                    // 先假设为真，后续会迭代到收敛
-                                    *nf_lock = ThreeValuedLogic::True
-                                }
-                            }
-                            let mut prev_nf = self.is_normal_form();
-                            loop {
-                                t.recalculate_normal_form(cycle_detector); // 迭代
-                                let is_nf = self.is_normal_form();
-                                if is_nf == prev_nf {
-                                    // 如果收敛了就停止
-                                    break is_nf;
-                                }
-                                prev_nf = is_nf;
-                            }
-                        }) {
-                            Some(v) => v,
-                            None => self.is_normal_form(),
-                        }
-                    }
-                    None => ThreeValuedLogic::Unknown, // 未初始化
-                }
-            }
-            None => ThreeValuedLogic::False, // reference is dead
-        };
-        if let Ok(mut nf_lock) = self.is_nf.write() {
-            *nf_lock = is_nf;
-        }
-    }
-
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
     }
@@ -469,9 +406,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<T> {
         }
         match self.reference.upgrade() {
             Some(inner) => match inner.as_ref().get_value() {
-                Some(t) => match path.with_guard(t.tagged_ptr(), |path| {
-                    t.represent(path, depth, max_depth)
-                }) {
+                Some(t) => match path
+                    .with_guard(t.tagged_ptr(), |path| t.represent(path, depth, max_depth))
+                {
                     Some(s) => format!("μ.{:?} {}", t as *const _ as *const (), s),
                     None => format!("{:?}", t as *const _ as *const ()),
                 },

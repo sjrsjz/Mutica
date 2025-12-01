@@ -1922,6 +1922,7 @@ impl<'ast> LinearTypeAst<'ast> {
             ))),
             LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(NatureNumber::new(
                 *v,
+                Tuple::unit(),
                 loc.cloned().map(Arc::new),
             ))),
             LinearTypeAst::FloatLiteral(v) => Ok(BuildResult::simple(FloatValue::new(

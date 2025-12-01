@@ -120,10 +120,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
         })
     }
 
-    fn is_normal_form(&self) -> ThreeValuedLogic {
-        ThreeValuedLogic::True
-    }
-
     fn reduce(
         self,
         _ctx: &mut ReductionContext<Type<T>, T>,
@@ -134,8 +130,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for TypeB
     fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
-
-    fn recalculate_normal_form(&self, _: &mut FastCycleDetector<TaggedPtr<()>>) {}
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
