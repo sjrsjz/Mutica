@@ -3,10 +3,11 @@ use std::sync::Arc;
 use arc_gc::traceable::GCTraceable;
 
 use crate::{
+    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeRef, range::Range,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -87,7 +88,52 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                         Ok(ThreeValuedLogic::False)
                     }
                 }
-                TypeRef::Range(_) => Ok(ThreeValuedLogic::True),
+                TypeRef::Range(v) => match v {
+                    Range::Simple(range) => {
+                        let (min, delta, ty, _) = range.as_ref();
+                        if self.value < *min || self.value > (*min + *delta) {
+                            return Ok(ThreeValuedLogic::False);
+                        }
+                        let (self_ty, _) = self.ty.as_ref();
+                        self_ty.check(ty.as_ref_dispatcher(), &mut inner_ctx)
+                    }
+                    Range::GreaterThan(range) => {
+                        let (min, ty, _) = range.as_ref();
+                        if self.value < *min {
+                            return Ok(ThreeValuedLogic::False);
+                        }
+                        let (self_ty, _) = self.ty.as_ref();
+                        self_ty.check(ty.as_ref_dispatcher(), &mut inner_ctx)
+                    }
+                },
+                TypeRef::Tuple(v) => {
+                    let (self_ty, _) = self.ty.as_ref();
+                    if v.len() == self.value {
+                        let mut matched = ThreeValuedLogic::True;
+                        for sub in v.iter() {
+                            matched &=
+                                test_true!(self_ty.check(sub.as_ref_dispatcher(), &mut inner_ctx)?);
+                        }
+                        Ok(matched)
+                    } else {
+                        Ok(ThreeValuedLogic::False)
+                    }
+                }
+                TypeRef::Construct(v) => {
+                    let (self_ty, _) = self.ty.as_ref();
+                    if self.value == 0 {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let head = v.head();
+                    let tail = v.tail();
+                    let mut matched =
+                        test_true!(self_ty.check(head.as_ref_dispatcher(), &mut inner_ctx)?);
+                    let self_tail = self.pred().unwrap();
+                    matched &=
+                        test_true!(self_tail.check(tail.as_ref_dispatcher(), &mut inner_ctx)?);
+                    Ok(matched)
+                }
+
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -120,6 +166,51 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                     } else {
                         Ok(ThreeValuedLogic::False)
                     }
+                }
+                TypeRef::Range(v) => match v {
+                    Range::Simple(range) => {
+                        let (min, delta, ty, _) = range.as_ref();
+                        if self.value < *min || self.value > (*min + *delta) {
+                            return Ok(ThreeValuedLogic::False);
+                        }
+                        let (self_ty, _) = self.ty.as_ref();
+                        self_ty.subof(ty.as_ref_dispatcher(), &mut inner_ctx)
+                    }
+                    Range::GreaterThan(range) => {
+                        let (min, ty, _) = range.as_ref();
+                        if self.value < *min {
+                            return Ok(ThreeValuedLogic::False);
+                        }
+                        let (self_ty, _) = self.ty.as_ref();
+                        self_ty.subof(ty.as_ref_dispatcher(), &mut inner_ctx)
+                    }
+                },
+                TypeRef::Tuple(v) => {
+                    let (self_ty, _) = self.ty.as_ref();
+                    if v.len() == self.value {
+                        let mut matched = ThreeValuedLogic::True;
+                        for sub in v.iter() {
+                            matched &=
+                                test_true!(self_ty.subof(sub.as_ref_dispatcher(), &mut inner_ctx)?);
+                        }
+                        Ok(matched)
+                    } else {
+                        Ok(ThreeValuedLogic::False)
+                    }
+                }
+                TypeRef::Construct(v) => {
+                    let (self_ty, _) = self.ty.as_ref();
+                    if self.value == 0 {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let head = v.head();
+                    let tail = v.tail();
+                    let mut matched =
+                        test_true!(self_ty.subof(head.as_ref_dispatcher(), &mut inner_ctx)?);
+                    let self_tail = self.pred().unwrap();
+                    matched &=
+                        test_true!(self_tail.subof(tail.as_ref_dispatcher(), &mut inner_ctx)?);
+                    Ok(matched)
                 }
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -171,6 +262,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                 )
                 .finish()
         }
+    }
+
+    fn tagged_ptr(&self) -> TaggedPtr<()> {
+        TaggedPtr::new(self.ty() as *const _ as *const (), self.value)
     }
 }
 

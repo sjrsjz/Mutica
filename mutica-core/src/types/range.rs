@@ -15,36 +15,31 @@ use crate::{
 };
 
 /// 区间类型，表示一组不同长度元组的Any
-pub enum Range<T: GcAllocObject<T, Inner = Type<T>>> {
-    #[allow(clippy::type_complexity)]
-    Simple(Arc<(usize, usize, Type<T>, Option<Arc<SourceLocation>>)>), // [Min, Min + delta]
-    GreaterThan(Arc<(usize, Type<T>, Option<Arc<SourceLocation>>)>), // [Min, inf)
+pub struct Range<T: GcAllocObject<T, Inner = Type<T>>> {
+    ty: Arc<(Type<T>, Option<Arc<SourceLocation>>)>,
+    min: usize,
+    delta: Option<usize>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Range<T> {
     fn clone(&self) -> Self {
-        match self {
-            Self::Simple(v) => Self::Simple(v.clone()),
-            Self::GreaterThan(v) => Self::GreaterThan(v.clone()),
+        Self {
+            ty: self.ty.clone(),
+            min: self.min,
+            delta: self.delta,
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Range<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        match self {
-            Self::Simple(v) => v.2.collect(queue),
-            Self::GreaterThan(v) => v.1.collect(queue),
-        }
+        self.ty.0.collect(queue);
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Range<T> {
     fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<T>>) {
-        match self {
-            Self::Simple(v) => v.2.upgrade(collected),
-            Self::GreaterThan(v) => v.1.upgrade(collected),
-        }
+        self.ty.0.upgrade(collected);
     }
 }
 
@@ -87,14 +82,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
                 }
 
                 TypeRef::Range(v) => {
-                    let (min_s, max_s, ty_s) = match self {
-                        Self::Simple(r) => (r.0, Some(r.0 + r.1), &r.2),
-                        Self::GreaterThan(r) => (r.0, None, &r.1),
-                    };
-                    let (min_o, max_o, ty_o) = match v {
-                        Range::Simple(r) => (r.0, Some(r.0 + r.1), &r.2),
-                        Range::GreaterThan(r) => (r.0, None, &r.1),
-                    };
+                    let (min_s, max_s, ty_s) =
+                        (self.min, self.delta.map(|d| self.min + d), &self.ty.0);
+                    let (min_o, max_o, ty_o) = (v.min, v.delta.map(|d| v.min + d), &v.ty.0);
 
                     if min_s < min_o {
                         return Ok(ThreeValuedLogic::False);
@@ -139,14 +129,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
                 }
 
                 TypeRef::Range(v) => {
-                    let (min_s, max_s, ty_s) = match self {
-                        Self::Simple(r) => (r.0, Some(r.0 + r.1), &r.2),
-                        Self::GreaterThan(r) => (r.0, None, &r.1),
-                    };
-                    let (min_o, max_o, ty_o) = match v {
-                        Range::Simple(r) => (r.0, Some(r.0 + r.1), &r.2),
-                        Range::GreaterThan(r) => (r.0, None, &r.1),
-                    };
+                    let (min_s, max_s, ty_s) =
+                        (self.min, self.delta.map(|d| self.min + d), &self.ty.0);
+                    let (min_o, max_o, ty_o) = (v.min, v.delta.map(|d| v.min + d), &v.ty.0);
 
                     if min_s < min_o {
                         return Ok(ThreeValuedLogic::False);
@@ -174,16 +159,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
         self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self {
-            Self::Simple(v) => {
-                let new_ty = v.2.clone().reduce(ctx)?;
-                Ok(Self::Simple(Arc::new((v.0, v.1, new_ty, v.3.clone()))).dispatch())
-            }
-            Self::GreaterThan(v) => {
-                let new_ty = v.1.clone().reduce(ctx)?;
-                Ok(Self::GreaterThan(Arc::new((v.0, new_ty, v.2.clone()))).dispatch())
-            }
-        }
+        Ok(Self::new(
+            self.min,
+            self.delta,
+            self.ty.0.clone().reduce(ctx)?,
+            self.ty.1.clone(),
+        ))
     }
 
     fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
@@ -191,10 +172,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        match self {
-            Self::Simple(v) => v.3.as_ref(),
-            Self::GreaterThan(v) => v.2.as_ref(),
-        }
+        self.ty.1.as_ref()
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
@@ -226,18 +204,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Range<T> {
         depth: usize,
         max_depth: usize,
     ) -> String {
-        match self {
-            Self::Simple(v) => {
-                format!(
-                    "{}..={}<{}>",
-                    v.0,
-                    v.0 + v.1,
-                    v.2.represent(path, depth + 1, max_depth)
-                )
-            }
-            Self::GreaterThan(v) => {
-                format!("{}..<{}>", v.0, v.1.represent(path, depth + 1, max_depth))
-            }
+        match self.delta {
+            Some(delta) => format!(
+                "{}..={} <{}>",
+                self.min,
+                self.min + delta,
+                self.ty.0.represent(path, depth + 1, max_depth)
+            ),
+            None => format!(
+                "{}..<{}>",
+                self.min,
+                self.ty.0.represent(path, depth + 1, max_depth)
+            ),
         }
     }
 }
@@ -253,8 +231,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Range<T> {
         let ty = ty.into_dispatcher();
         match delta {
             Some(0usize) => return NatureNumber::new(min, ty, source_info),
-            Some(delta) => Self::Simple(Arc::new((min, delta, ty, source_info))),
-            None => Self::GreaterThan(Arc::new((min, ty, source_info))),
+            v => Self {
+                min,
+                delta: v,
+                ty: Arc::new((ty, source_info)),
+            },
         }
         .into_dispatcher()
     }

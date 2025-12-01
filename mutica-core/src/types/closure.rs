@@ -118,7 +118,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
         collector: &mut Collector<(usize, U)>,
         pattern_count: usize,
     ) -> Result<Option<Self>, TypeError<U, V>> {
-        if collector.is_empty() {
+        if collector.is_empty() && pattern_count == 0 {
             return Ok(Some(ParamEnv(Vec::new(), PhantomData)));
         }
         let mut vec = vec![smallvec::SmallVec::<[U; 8]>::new(); pattern_count];
