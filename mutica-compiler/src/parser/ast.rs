@@ -16,14 +16,14 @@ use mutica_core::types::eqof::EqOf;
 use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
-use mutica_core::types::range::Range;
-use mutica_core::types::nature_number::NatureNumber;
 use mutica_core::types::invoke::Invoke;
 use mutica_core::types::lazy::Lazy;
 use mutica_core::types::namespace::Namespace;
+use mutica_core::types::nature_number::NatureNumber;
 use mutica_core::types::opcode::{Opcode, OpcodeKind};
 use mutica_core::types::ordered_type::OrderedType;
 use mutica_core::types::pattern::Pattern;
+use mutica_core::types::range::Range;
 use mutica_core::types::rot::Rotate;
 use mutica_core::types::subof::SubOf;
 use mutica_core::types::tuple::Tuple;
@@ -63,7 +63,7 @@ pub enum TypeAst {
     Top,
     Bottom,
     DiscardPattern,
-    IntLiteral(i64),
+    IntLiteral(usize),
     OrderedType(usize),
     FloatLiteral(f64),
     CharLiteral(char),
@@ -145,7 +145,7 @@ pub enum BasicTypeAst {
     Char,
     Top,
     Bottom,
-    IntLiteral(i64),
+    IntLiteral(usize),
     FloatLiteral(f64),
     CharLiteral(char),
     OrderedType(usize),
@@ -607,7 +607,7 @@ pub enum LinearTypeAst<'ast> {
     Float,
     Top,
     Bottom,
-    IntLiteral(i64),
+    IntLiteral(usize),
     FloatLiteral(f64),
     CharLiteral(char),
     OrderedType(usize),
@@ -1904,6 +1904,9 @@ impl<'ast> LinearTypeAst<'ast> {
     ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError<'ast>>> {
         match self {
             LinearTypeAst::Int => Ok(BuildResult::simple(Range::new(
+                0,
+                None,
+                Tuple::unit(),
                 loc.cloned().map(Arc::new),
             ))),
             LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(loc.cloned().map(Arc::new)))),

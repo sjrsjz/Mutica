@@ -212,7 +212,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         vec![
                             NatureNumber::new(id.index(), Tuple::unit(), source_info.cloned()),
                             NatureNumber::new(
-                                id.generation() as usize,
+                                id.generation(),
                                 Tuple::unit(),
                                 source_info.cloned(),
                             ),

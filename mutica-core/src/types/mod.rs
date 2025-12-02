@@ -10,14 +10,14 @@ pub mod eqof;
 pub mod fixpoint;
 pub mod float;
 pub mod float_value;
-pub mod range;
-pub mod nature_number;
 pub mod invoke;
 pub mod lazy;
 pub mod namespace;
+pub mod nature_number;
 pub mod opcode;
 pub mod ordered_type;
 pub mod pattern;
+pub mod range;
 pub mod rot;
 pub mod subof;
 pub mod tuple;
@@ -46,14 +46,14 @@ use crate::{
         fixpoint::FixPoint,
         float::Float,
         float_value::FloatValue,
-        range::Range,
-        nature_number::NatureNumber,
         invoke::Invoke,
         lazy::Lazy,
         namespace::Namespace,
+        nature_number::NatureNumber,
         opcode::Opcode,
         ordered_type::OrderedType,
         pattern::Pattern,
+        range::Range,
         rot::Rotate,
         subof::SubOf,
         tuple::Tuple,
@@ -1169,15 +1169,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
 pub struct TaggedPtr<T> {
     ptr: *const T,
     tag: usize,
+    length: Option<usize>,
 }
 
 impl<T> TaggedPtr<T> {
     pub fn new(ptr: *const T, tag: usize) -> Self {
-        Self { ptr, tag }
+        Self {
+            ptr,
+            tag,
+            length: None,
+        }
     }
 
     pub fn new_unique(ptr: *const T) -> Self {
-        Self { ptr, tag: 0 }
+        Self {
+            ptr,
+            tag: 0,
+            length: None,
+        }
+    }
+
+    pub fn with_length(mut self, length: usize) -> Self {
+        self.length = Some(length);
+        self
     }
 
     pub fn ptr(&self) -> *const T {
@@ -1186,6 +1200,10 @@ impl<T> TaggedPtr<T> {
 
     pub fn tag(&self) -> usize {
         self.tag
+    }
+
+    pub fn length(&self) -> Option<usize> {
+        self.length
     }
 }
 
@@ -1330,7 +1348,6 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     {
         <Self as AsDispatcher<U, V>>::as_ref_dispatcher(self)
     }
-
 }
 
 pub trait CoinductiveTypeRef<

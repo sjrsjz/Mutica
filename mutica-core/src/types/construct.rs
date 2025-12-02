@@ -6,7 +6,7 @@ use crate::{
     test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef,
+        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef, tuple::Tuple,
     },
     util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
@@ -119,6 +119,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                                 self_tail.check(tail.as_ref_dispatcher(), &mut inner_ctx)?
                             ),
                     )
+                }
+                TypeRef::NatureNumber(v) => {
+                    match v.head() {
+                        Some(v_head) => {
+                            let (self_head, self_tail, _) = self.inner.as_ref();
+                            Ok(test_true!(
+                                self_head.check(v_head.as_ref_dispatcher(), &mut inner_ctx)?
+                            ) & test_true!(self_tail.check(
+                                v.tail().unwrap_or(Tuple::unit()).as_ref_dispatcher(),
+                                &mut inner_ctx
+                            )?))
+                        }
+                        None => Ok(ThreeValuedLogic::False),
+                    }
                 }
                 _ => Ok(ThreeValuedLogic::False),
             }

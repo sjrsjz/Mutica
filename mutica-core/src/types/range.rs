@@ -4,9 +4,10 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, nature_number::NatureNumber,
+        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, GcAllocObject,
+        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
+        TypeCheckContext, TypeError, TypeRef, construct::Construct, nature_number::NatureNumber,
+        tuple::Tuple,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -67,8 +68,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -102,8 +101,41 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
 
                     ty_s.subof(ty_o.as_ref_dispatcher(), &mut inner_ctx)
                 }
-
-                _ => Ok(ThreeValuedLogic::False),
+                _ => {
+                    // 按 cons 处理，对于min=0的无穷range,需要推入假设集
+                    // 即 T @ T @ T ... @ T 或者 T @ T @ T ... @ (rec tail: () | T @ tail)
+                    // 即 T @ tail
+                    if self.min == 0 && self.delta.is_none() {
+                        if inner_ctx
+                            .assumptions
+                            .contains(&(self.tagged_ptr(), other.tagged_ptr()))
+                        {
+                            return Ok(ThreeValuedLogic::True);
+                        }
+                        inner_ctx
+                            .assumptions
+                            .push((self.tagged_ptr(), other.tagged_ptr()))
+                    }
+                    let result = match self.tail() {
+                        Some(tail_type) => {
+                            let cons =
+                                Construct::new(self.head(), tail_type, self.source_info().cloned());
+                            cons.check(other, &mut inner_ctx)
+                        }
+                        None => {
+                            let cons = Construct::new(
+                                self.head(),
+                                Tuple::unit(),
+                                self.source_info().cloned(),
+                            );
+                            cons.check(other, &mut inner_ctx)
+                        }
+                    };
+                    if self.min == 0 && self.delta.is_none() {
+                        inner_ctx.assumptions.pop();
+                    }
+                    result
+                }
             }
         })
     }
@@ -117,8 +149,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
             let mut inner_ctx =
                 TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
             match other {
-                TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -150,7 +180,41 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
                     ty_s.subof(ty_o.as_ref_dispatcher(), &mut inner_ctx)
                 }
 
-                _ => Ok(ThreeValuedLogic::False),
+                _ => {
+                    // 按 cons 处理，对于min=0的无穷range,需要推入假设集
+                    // 即 T @ T @ T ... @ T 或者 T @ T @ T ... @ (rec tail: () | T @ tail)
+                    // 即 T @ tail
+                    if self.min == 0 && self.delta.is_none() {
+                        if inner_ctx
+                            .assumptions
+                            .contains(&(self.tagged_ptr(), other.tagged_ptr()))
+                        {
+                            return Ok(ThreeValuedLogic::True);
+                        }
+                        inner_ctx
+                            .assumptions
+                            .push((self.tagged_ptr(), other.tagged_ptr()))
+                    }
+                    let result = match self.tail() {
+                        Some(tail_type) => {
+                            let cons =
+                                Construct::new(self.head(), tail_type, self.source_info().cloned());
+                            cons.subof(other, &mut inner_ctx)
+                        }
+                        None => {
+                            let cons = Construct::new(
+                                self.head(),
+                                Tuple::unit(),
+                                self.source_info().cloned(),
+                            );
+                            cons.subof(other, &mut inner_ctx)
+                        }
+                    };
+                    if self.min == 0 && self.delta.is_none() {
+                        inner_ctx.assumptions.pop();
+                    }
+                    result
+                }
             }
         })
     }
@@ -193,6 +257,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
                         .with_message("Location unknown"),
                 )
                 .finish()
+        }
+    }
+
+    fn tagged_ptr(&self) -> TaggedPtr<()> {
+        match self.delta {
+            Some(delta) => {
+                TaggedPtr::new(self.ty() as *const _ as *const (), self.min).with_length(delta)
+            }
+            None => TaggedPtr::new(self.ty() as *const _ as *const (), self.min),
         }
     }
 }
@@ -238,5 +311,64 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Range<T> {
             },
         }
         .into_dispatcher()
+    }
+
+    pub fn contains(&self, v: usize) -> bool {
+        match self.delta {
+            Some(delta) => v >= self.min && v <= self.min + delta,
+            None => v >= self.min,
+        }
+    }
+
+    pub fn min(&self) -> usize {
+        self.min
+    }
+
+    pub fn delta(&self) -> Option<usize> {
+        self.delta
+    }
+
+    pub fn ty(&self) -> &Type<T> {
+        &self.ty.0
+    }
+
+    pub fn head(&self) -> &Type<T> {
+        self.ty()
+    }
+
+    pub fn tail(&self) -> Option<Type<T>> {
+        match self.delta {
+            Some(delta) => {
+                if self.min > 0 {
+                    Some(
+                        Self {
+                            ty: self.ty.clone(),
+                            min: self.min - 1,
+                            delta: Some(delta),
+                        }
+                        .dispatch(),
+                    )
+                } else if delta > 1 {
+                    Some(
+                        Self {
+                            ty: self.ty.clone(),
+                            min: 0,
+                            delta: Some(delta - 1),
+                        }
+                        .dispatch(),
+                    )
+                } else {
+                    None
+                }
+            }
+            None => Some(
+                Self {
+                    ty: self.ty.clone(),
+                    min: if self.min > 0 { self.min - 1 } else { self.min },
+                    delta: None,
+                }
+                .dispatch(),
+            ),
+        }
     }
 }
