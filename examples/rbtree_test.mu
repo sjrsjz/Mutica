@@ -11,13 +11,17 @@ let {
     println::(println: any) &
     print::(print: any)
 } = string_pkg;
+let {
+    Positive::(Positive: any) &
+    Negative::(Negative: any)
+} = import "lib/int.mu";
 
 // 整数比较函数
 let int_cmp: any = (a: nat, b: nat) => {
     if a < b
-        then -1
+        then Negative 1
         else if a > b
-            then 1
+            then Positive 1
             else 0
 };
 
