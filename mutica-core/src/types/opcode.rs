@@ -293,25 +293,60 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 right.take(&mut FastCycleDetector::new(), |_, right| {
                                     match (left, right) {
                             (Type::NatureNumber(l), Type::NatureNumber(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(NatureNumber::new(l.value() + r.value(), Tuple::unit(), ctx.source_info.cloned())),
-                                OpcodeKind::Sub => Ok(NatureNumber::new(l.value() - r.value(), Tuple::unit(), ctx.source_info.cloned())),
-                                OpcodeKind::Mul => Ok(NatureNumber::new(l.value() * r.value(), Tuple::unit(), ctx.source_info.cloned())),
+                                OpcodeKind::Add => {
+                                    let mut assumptions = smallvec::SmallVec::new();
+                                    let mut pattern_env = Collector::new_disabled();
+                                    let closure_env = (&ClosureEnv::new(Vec::<Type<T>>::new()), &ClosureEnv::new(Vec::<Type<T>>::new()));
+                                    if l.ty().equals(r.ty().as_ref_dispatcher(), &mut TypeCheckContext::new(
+                                        &mut assumptions,
+                                        closure_env,
+                                        &mut pattern_env,
+                                        false,
+                                    ))? != ThreeValuedLogic::True {
+                                        return Err(TypeError::TypeMismatch(
+                                            (Tuple::new(vec![l.dispatch(), r.dispatch()], self.source_info.clone()), "Same NatureNumber type".into()).into(),
+                                        ));
+                                    }
+                                    Ok(NatureNumber::new(l.value() + r.value(), l.ty(), ctx.source_info.cloned()))
+                                },
+                                OpcodeKind::Sub =>{
+                                    let mut assumptions = smallvec::SmallVec::new();
+                                    let mut pattern_env = Collector::new_disabled();
+                                    let closure_env = (&ClosureEnv::new(Vec::<Type<T>>::new()), &ClosureEnv::new(Vec::<Type<T>>::new()));
+                                    if l.ty().equals(r.ty().as_ref_dispatcher(), &mut TypeCheckContext::new(
+                                        &mut assumptions,
+                                        closure_env,
+                                        &mut pattern_env,
+                                        false,
+                                    ))? != ThreeValuedLogic::True {
+                                        return Err(TypeError::TypeMismatch(
+                                            (Tuple::new(vec![l.dispatch(), r.dispatch()], self.source_info.clone()), "Same NatureNumber type".into()).into(),
+                                        ));
+                                    }
+                                    if l.value() < r.value() {
+                                        return Err(TypeError::TypeMismatch(
+                                            (Tuple::new(vec![l.dispatch(), r.dispatch()], self.source_info.clone()), "Left NatureNumber must be greater than or equal to right NatureNumber".into()).into(),
+                                        ));
+                                    }
+                                    Ok(NatureNumber::new(l.value() - r.value(), l.ty(), ctx.source_info.cloned()))
+                                },
+                                OpcodeKind::Mul => Ok(NatureNumber::new(l.value() * r.value(), l.ty(), ctx.source_info.cloned())),
                                 OpcodeKind::Div => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            (l.dispatch(), "Non-zero integer".into()).into(),
+                                            (l.dispatch(), "Non-zero nature number".into()).into(),
                                         ))
                                     } else {
-                                        Ok(NatureNumber::new(l.value() / r.value(), Tuple::unit(), ctx.source_info.cloned()))
+                                        Ok(NatureNumber::new(l.value() / r.value(), l.ty(), ctx.source_info.cloned()))
                                     }
                                 }
                                 OpcodeKind::Mod => {
                                     if r.value() == 0 {
                                         Err(TypeError::TypeMismatch(
-                                            (r.dispatch(), "Non-zero integer".into()).into(),
+                                            (r.dispatch(), "Non-zero nature number".into()).into(),
                                         ))
                                     } else {
-                                        Ok(NatureNumber::new(l.value() % r.value(), Tuple::unit(), ctx.source_info.cloned()))
+                                        Ok(NatureNumber::new(l.value() % r.value(), l.ty(), ctx.source_info.cloned()))
                                     }
                                 }
                                 _ => unreachable!(),
@@ -359,7 +394,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             (l, r) => Err(TypeError::TypeMismatch(
                                 (
                                     Tuple::new(vec![l, r], self.source_info.clone()),
-                                    "(IntegerValue, IntegerValue) | (FloatValue, FloatValue) | (Closure, Closure) | (Tuple, Tuple)".into()
+                                    "(NatureNumber, NatureNumber) | (FloatValue, FloatValue) | (Closure, Closure) | (Tuple, Tuple)".into()
                                 )
                                     .into(),
                             )),
@@ -417,7 +452,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                         (l, r) => Err(TypeError::TypeMismatch(
                                             (
                                                 Tuple::new(vec![l, r], self.source_info.clone()),
-                                                "(IntegerValue, IntegerValue, Any, Any) | (FloatValue, FloatValue, Any, Any)".into()
+                                                "(NatureNumber, NatureNumber, Any, Any) | (FloatValue, FloatValue, Any, Any)".into()
                                             )
                                                 .into(),
                                         )),

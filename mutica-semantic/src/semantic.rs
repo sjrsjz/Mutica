@@ -40,12 +40,16 @@ impl<'ast> SourceMapping<'ast> {
         }
         // 递归处理子节点
         match node.value() {
-            LinearTypeAst::Int => (),
+            LinearTypeAst::Range { ty, .. } => {
+                Self::build_mapping(ty, mapping, source_file);
+            }
             LinearTypeAst::Float => (),
             LinearTypeAst::Char => (),
             LinearTypeAst::Top => (),
             LinearTypeAst::Bottom => (),
-            LinearTypeAst::IntLiteral(_) => (),
+            LinearTypeAst::NatureNumber(_, ty) => {
+                Self::build_mapping(ty, mapping, source_file);
+            }
             LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
             LinearTypeAst::OrderedType(_) => (),

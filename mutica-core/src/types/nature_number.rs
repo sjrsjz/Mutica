@@ -7,7 +7,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeRef, tuple::Tuple,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -201,8 +201,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
         ))
     }
 
-    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.dispatch().into()))
+    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Ok(Self::new(self.value, ctx.arg, self.ty.1.clone()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -249,6 +249,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for NatureNumber<T> {
         depth: usize,
         max_depth: usize,
     ) -> String {
+        if let Type::Tuple(Tuple::Unit { .. }) = &self.ty.0 {
+            return format!("{}", self.value);
+        }
         format!(
             "{}<{}>",
             self.value,

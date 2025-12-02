@@ -146,10 +146,10 @@ fn parse_string_literal(lex: &mut Lexer<LexerToken>) -> Result<String, LexicalEr
 #[logos(skip r"/\*([^*]|\*[^/])*\*/")]
 #[logos(error = LexicalError)]
 pub enum LexerToken {
-    #[regex(
-        r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+",
-        parse_float
-    )]
+    // 浮点数：小数点后必须有至少一个数字，避免与 Range (..) 冲突
+    // 匹配: 1.5, 1.5e10, 1e10
+    // 不匹配: 1., .5 (这些会与 Range 冲突)
+    #[regex(r"[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+", parse_float)]
     FloatNum(f64),
     // 支持十进制、十六进制(0x)、八进制(0o)、二进制(0b)
     #[regex("0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+", parse_integer)]
@@ -183,8 +183,8 @@ pub enum LexerToken {
     Panic,
     #[token("discard")]
     Discard,
-    #[token("int")]
-    Int,
+    #[token("nat")]
+    Nat,
     #[token("float")]
     Float,
     #[token("char")]
@@ -296,7 +296,7 @@ pub enum LexerToken {
     RBrace,
     #[token("|>")]
     PipeGreaterThan,
-    #[token("..")]
+    #[token("..", priority = 3)]
     Range,
     #[token("$")]
     Dollar,

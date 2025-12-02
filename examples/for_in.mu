@@ -15,10 +15,10 @@ let iter: any = lst: List(any) => f: any => {
 
 // We can rewrite `f(v)(pattern => expr)` to `for pattern = f(v) in expr`
 
-// iter(1, 2, 3)(x: int => {
-//     discard print!(x);
+// iter(1, 2, 3)(x: nat => {
+//     discard prnat!(x);
 // })
 
-for x: int = iter(1, 2, 3) in {
-    discard print!(x);
+for x: nat = iter(1, 2, 3) in {
+    discard prnat!(x);
 }

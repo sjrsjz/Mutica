@@ -31,7 +31,7 @@ extern {
         "Loop"          => LexerToken::Loop,
         "Panic"         => LexerToken::Panic,
         "Discard"       => LexerToken::Discard,
-        "Int"           => LexerToken::Int,
+        "Nat"           => LexerToken::Nat,
         "Char"          => LexerToken::Char,
         "Float"         => LexerToken::Float,
         "True"          => LexerToken::True,
@@ -130,7 +130,7 @@ CharLiteral: char = {
 
 // --- Token nonterminals: centralize coloring logic ---
 
-IntTok: () = <l:@L> "Int" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
+NatTok: () = <l:@L> "Nat" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
 FloatTok: () = <l:@L> "Float" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
 CharTok: () = <l:@L> "Char" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
 TrueTok: () = <l:@L> "True" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
@@ -208,7 +208,25 @@ SemicolonTok: () = <l:@L> "Semicolon" <r:@R> => { TokenColor::fill_colors(colors
 
 
 AtomType: WithLocation<TypeAst> = {
-    <l:@L> IntTok <r:@R> => WithLocation::new(TypeAst::Int, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <min: Num> RangeTok <delta: Num> <r:@R> => {
+        WithLocation::new(TypeAst::Range {
+            ty: Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            min: min as usize,
+            delta: Some(delta as usize),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <min: Num> RangeTok BangTok <r:@R> => {
+        WithLocation::new(TypeAst::Range {
+            ty: Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            min: min as usize,
+            delta: None,
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> NatTok <r:@R> => WithLocation::new(TypeAst::Range {
+        ty: Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        min: 0,
+        delta: None,
+    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> FloatTok <r:@R> => WithLocation::new(TypeAst::Float, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> CharTok <r:@R> => WithLocation::new(TypeAst::Char, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> TrueTok <r:@R> => WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -217,7 +235,7 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> WildcardTok <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> NoneTok <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <f: Float> <r:@R> => WithLocation::new(TypeAst::FloatLiteral(f), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::IntLiteral(n as usize), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::NatureNumber(n as usize, Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()))), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(id), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <s: StringLiteral> <r:@R> => {

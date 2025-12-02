@@ -5,15 +5,15 @@ let factorial: any =
     rec fact: match
         | eq 0 => 1
         | eq 1 => 1
-        | n: int => n * fact(n - 1)
+        | n: nat => n * fact(n - 1)
         | panic;
 
 // 尾递归阶乘
-let factorial_tail: any = n: int => [
-        let helper: any = rec h: acc: int => match 
+let factorial_tail: any = n: nat => [
+        let helper: any = rec h: acc: nat => match 
             | eq 0 => acc
             | eq 1 => acc
-            | n: int => h(acc * n)(n - 1)
+            | n: nat => h(acc * n)(n - 1)
             | panic;
         helper(1)(n)
     ];
@@ -23,14 +23,14 @@ let fibonacci: any =
     rec fib: match 
         | eq 0 => 0
         | eq 1 => 1
-        | n: int => fib(n - 1) + fib(n - 2)
+        | n: nat => fib(n - 1) + fib(n - 2)
         | panic;
 
 // 尾递归斐波那契
-let fibonacci_tail: any = n: int => [
-    let helper: any = rec helper: a: int => b: int => match
+let fibonacci_tail: any = n: nat => [
+    let helper: any = rec helper: a: nat => b: nat => match
             | eq 0 => a
-            | n: int => helper(b)(a + b)(n - 1)
+            | n: nat => helper(b)(a + b)(n - 1)
             | panic;
         helper(0)(1)(n)
     ];

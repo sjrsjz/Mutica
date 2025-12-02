@@ -20,7 +20,7 @@ let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) => {
 // 将列表分为两半
 let split: any = lst: List(any) => {
     let len: any = len lst;
-    let mid: int = len / 2;
+    let mid: nat = len / 2;
     let first_half: any = take lst mid;
     let second_half: any = drop lst mid;
     (first_half, second_half)

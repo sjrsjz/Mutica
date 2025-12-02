@@ -13,7 +13,7 @@ let {
 } = string_pkg;
 
 // 整数比较函数
-let int_cmp: any = (a: int, b: int) => {
+let int_cmp: any = (a: nat, b: nat) => {
     if a < b
         then -1
         else if a > b
@@ -65,7 +65,7 @@ let main: any = () => {
     
     // 中序遍历 (应该按升序输出)
     discard println("中序遍历:");
-    discard inorder(tree7)((k: int, v: any) => {
+    discard inorder(tree7)((k: nat, v: any) => {
         discard print("  键: ");
         discard print!(k);
         discard print(", 值: ");

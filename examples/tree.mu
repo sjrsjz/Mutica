@@ -19,8 +19,8 @@ let tree_height: any =
         | Empty => 0
         | Leaf(any) => 1
         | Node::(left: any, right: any, any) => {
-            let lh: int = height(left);
-            let rh: int = height(right);
+            let lh: nat = height(left);
+            let rh: nat = height(right);
             1 + (if lh > rh then lh else rh)
         }
         | panic;
@@ -29,8 +29,8 @@ let tree_height: any =
 let tree_sum: any = 
     rec ts: match
         | Empty => 0
-        | Leaf::(val: int) => val
-        | Node::(left: any, right: any, val: int) => 
+        | Leaf::(val: nat) => val
+        | Node::(left: any, right: any, val: nat) => 
             val + ts(left) + ts(right)
         | panic;
 
@@ -42,4 +42,4 @@ let mytree: any =
         1
     );
 
-tree_size mytree, tree_height mytree, tree_sum mytree, mytree is Tree(int), Tree(int) is Tree(any)
+tree_size mytree, tree_height mytree, tree_sum mytree, mytree is Tree(nat), Tree(nat) is Tree(any)

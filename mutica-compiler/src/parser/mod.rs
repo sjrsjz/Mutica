@@ -992,12 +992,19 @@ pub fn inject_std_library(
             std_ast.map(|std_ast| match std_ast {
                 BasicTypeAst::Variable(name) if name == "<placeholder>" => ast.clone(),
                 BasicTypeAst::Variable(_) => std_ast,
-                BasicTypeAst::Int => std_ast,
+                BasicTypeAst::Range { ty, min, delta } => BasicTypeAst::Range {
+                    ty: replace_placeholder(*ty, ast).into(),
+                    min,
+                    delta,
+                },
                 BasicTypeAst::Float => std_ast,
                 BasicTypeAst::Char => std_ast,
                 BasicTypeAst::Top => std_ast,
                 BasicTypeAst::Bottom => std_ast,
-                BasicTypeAst::IntLiteral(_) => std_ast,
+                BasicTypeAst::NatureNumber(v, ty) => BasicTypeAst::NatureNumber(
+                    v,
+                    replace_placeholder(*ty, ast).into(),
+                ),
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
                 BasicTypeAst::OrderedType(_) => std_ast,

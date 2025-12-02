@@ -1,1 +1,1 @@
-let x: int = y + 1;
+let x: nat = y + 1;

@@ -1,1 +1,1 @@
-let (x: int | y: int, (z: int, x: int)) = (1, (2, 3));
+let (x: nat | y: nat, (z: nat, x: nat)) = (1, (2, 3));

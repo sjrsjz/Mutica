@@ -30,6 +30,6 @@ let p2: any = Pair("Hello")("World");
 fst(p1),
 snd(p1),
 swap(p1),
-map_both(Pair(3)(4))(x: int => x * x),
+map_both(Pair(3)(4))(x: nat => x * x),
 fst(p2),
 snd(p2)

@@ -231,8 +231,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Range
         ))
     }
 
-    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.into_dispatcher().into()))
+    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Ok(Self::new(self.min, self.delta, ctx.arg, self.ty.1.clone()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -277,6 +277,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Range<T> {
         depth: usize,
         max_depth: usize,
     ) -> String {
+        if let Type::Tuple(Tuple::Unit { .. }) = &self.ty.0 {
+            return match self.delta {
+                Some(delta) => format!("{}..={}", self.min, self.min + delta,),
+                None => format!("{}..!", self.min,),
+            }
+        }
         match self.delta {
             Some(delta) => format!(
                 "{}..={} <{}>",
@@ -285,7 +291,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Range<T> {
                 self.ty.0.represent(path, depth + 1, max_depth)
             ),
             None => format!(
-                "{}..<{}>",
+                "{}..!<{}>",
                 self.min,
                 self.ty.0.represent(path, depth + 1, max_depth)
             ),

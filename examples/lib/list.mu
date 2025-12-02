@@ -2,10 +2,10 @@ let maybe_pkg: any = import "maybe.mu";
 
 let List: any = T: any => rec list: (() | T @ list);
 
-let Greater: any = (T: any, n: int) => {
+let Greater: any = (T: any, n: nat) => {
     let go: any = rec go: match
         | eq 0 => List(T)
-        | m: int => {
+        | m: nat => {
             if m > 0
                 then T @ go(m - 1)
                 else {
@@ -16,17 +16,17 @@ let Greater: any = (T: any, n: int) => {
     go(n)
 };
 
-let Range: any = (T: any, min: int, max: int) => {
+let Range: any = (T: any, min: nat, max: nat) => {
     let go: any = rec go: match
         | (eq 0, eq 0) => ()
-        | (eq 0, m: int) => {
+        | (eq 0, m: nat) => {
             if m > 0
                 then (() | T @ go(0, m - 1))
                 else {
                     let none = "Invalid range: max must be >= 0"; // panic
                 }
         }
-        | (n: int, m: int) => {
+        | (n: nat, m: nat) => {
             if n > 0 then {
                 if m >= n
                     then T @ go(n - 1, m - 1)
@@ -42,10 +42,10 @@ let Range: any = (T: any, min: int, max: int) => {
     go(min, max)
 };
 
-let Exact: any = (T: any, n: int) => {
+let Exact: any = (T: any, n: nat) => {
     let go: any = rec go: match
         | eq 0 => ()
-        | m: int => {
+        | m: nat => {
             if m > 0
                 then (T,) + go(m - 1)
                 else {
@@ -56,11 +56,11 @@ let Exact: any = (T: any, n: int) => {
     go(n)
 };
 
-let Modular: any = (T: any, a: int, b: int) => {
+let Modular: any = (T: any, a: nat, b: nat) => {
     let cycle: any = dyn_rec cycle: {
-        let add_a: any = rec add_a: (count: int, tail_type: any) => match count
+        let add_a: any = rec add_a: (count: nat, tail_type: any) => match count
             | eq 0 => tail_type
-            | c: int => {
+            | c: nat => {
                 if c > 0 
                     then T @ add_a((c - 1, tail_type))
                     else {
@@ -71,9 +71,9 @@ let Modular: any = (T: any, a: int, b: int) => {
         (() | add_a((a, cycle)))
     };
     
-    let add_b: any = rec add_b: (count: int, tail_type: any) => match count
+    let add_b: any = rec add_b: (count: nat, tail_type: any) => match count
         | eq 0 => tail_type
-        | c: int => {
+        | c: nat => {
             if c >= 0 
                 then T @ add_b((c - 1, tail_type))
                 else {
@@ -153,27 +153,27 @@ let reverse: any = lst: List(any) => {
         | ((h: any) @ (t: any), acc: any) => go(t, cons(h, acc))
         | panic
 };
-let nth: any = lst: List(any) => n: int => {
-    loop go: (t: any, i: int) = (lst, n);
+let nth: any = lst: List(any) => n: nat => {
+    loop go: (t: any, i: nat) = (lst, n);
     match (t, i)
         | ((h: any) @ _, eq 0) => h
-        | (_ @ (t: any), i: int) => go(t, i - 1)
+        | (_ @ (t: any), i: nat) => go(t, i - 1)
         | panic
 };
-let take: any = lst: List(any) => n: int => {
-    loop go: (t: any, i: int) = (lst, n);
+let take: any = lst: List(any) => n: nat => {
+    loop go: (t: any, i: nat) = (lst, n);
     match (t, i)
         | ((), _) => ()
         | (_, eq 0) => ()
-        | ((h: any) @ (t: any), i: int) => cons(h, go(t, i - 1))
+        | ((h: any) @ (t: any), i: nat) => cons(h, go(t, i - 1))
         | panic
 };
-let drop: any = lst: List(any) => n: int => {
-    loop go: (t: any, i: int) = (lst, n);
+let drop: any = lst: List(any) => n: nat => {
+    loop go: (t: any, i: nat) = (lst, n);
     match (t, i)
         | ((), _) => ()
         | (l: any, eq 0) => l
-        | (_ @ (t: any), i: int) => go(t, i - 1)
+        | (_ @ (t: any), i: nat) => go(t, i - 1)
         | panic
 };
 let find: any = lst: List(any) => pred: any => {

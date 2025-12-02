@@ -42,7 +42,7 @@ let insert_helper: any = cmp: any => tree: any => key: any => value: any => {
     match t
         | Empty::() => Node::(Red, key, value, Empty::(), Empty::())
         | Node::(color: any, k: any, v: any, left: any, right: any) => {
-            let cmp_result: int = cmp(key, k);
+            let cmp_result: nat = cmp(key, k);
             if cmp_result < 0
                 then balance(Node::(color, k, v, go(left), right))
                 else if cmp_result > 0
@@ -67,7 +67,7 @@ let lookup: any = cmp: any => tree: any => key: any => {
     match t
         | Empty::() => Nothing
         | Node::(_, k: any, v: any, left: any, right: any) => {
-            let cmp_result: int = cmp(key, k);
+            let cmp_result: nat = cmp(key, k);
             if cmp_result < 0
                 then go(left)
                 else if cmp_result > 0

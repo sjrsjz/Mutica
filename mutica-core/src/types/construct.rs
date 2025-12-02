@@ -134,6 +134,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                         None => Ok(ThreeValuedLogic::False),
                     }
                 }
+                TypeRef::Range(v) => {
+                    let (self_head, self_tail, _) = self.inner.as_ref();
+                    let other_head = v.head();
+                    let other_tail = match v.tail() {
+                        Some(tail) => tail,
+                        None => v.ty().clone(),
+                    };
+                    Ok(
+                        test_true!(
+                            self_head.check(other_head.as_ref_dispatcher(), &mut inner_ctx)?
+                        ) & test_true!(
+                            self_tail.check(other_tail.as_ref_dispatcher(), &mut inner_ctx)?
+                        ),
+                    )
+                }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -180,6 +195,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                             & test_true!(
                                 self_tail.subof(tail.as_ref_dispatcher(), &mut inner_ctx)?
                             ),
+                    )
+                }
+                TypeRef::Range(v) => {
+                    let (self_head, self_tail, _) = self.inner.as_ref();
+                    let other_head = v.head();
+                    let other_tail = match v.tail() {
+                        Some(tail) => tail,
+                        None => v.ty().clone(),
+                    };
+                    Ok(
+                        test_true!(
+                            self_head.subof(other_head.as_ref_dispatcher(), &mut inner_ctx)?
+                        ) & test_true!(
+                            self_tail.subof(other_tail.as_ref_dispatcher(), &mut inner_ctx)?
+                        ),
                     )
                 }
                 _ => Ok(ThreeValuedLogic::False),

@@ -57,13 +57,17 @@ pub enum AtomicOpcode {
 pub enum TypeAst {
     ParseError(ErrorRecovery<usize, LexerToken, LexicalError>),
     Import(String),
-    Int,
+    Range {
+        ty: Box<WithLocation<TypeAst>>,
+        min: usize,
+        delta: Option<usize>,
+    },
     Float,
     Char,
     Top,
     Bottom,
     DiscardPattern,
-    IntLiteral(usize),
+    NatureNumber(usize, Box<WithLocation<TypeAst>>), // value, type
     OrderedType(usize),
     FloatLiteral(f64),
     CharLiteral(char),
@@ -140,12 +144,16 @@ pub enum TypeAst {
 
 #[derive(Debug, Clone)]
 pub enum BasicTypeAst {
-    Int,
+    Range {
+        ty: Box<WithLocation<BasicTypeAst>>,
+        min: usize,
+        delta: Option<usize>,
+    },
     Float,
     Char,
     Top,
     Bottom,
-    IntLiteral(usize),
+    NatureNumber(usize, Box<WithLocation<BasicTypeAst>>), // value, type
     FloatLiteral(f64),
     CharLiteral(char),
     OrderedType(usize),
@@ -352,8 +360,20 @@ impl BasicTypeAst {
         loc: Option<&SourceLocation>,
     ) -> LinearizeResult<'a> {
         match self {
-            BasicTypeAst::Int => {
-                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Int, loc))
+            BasicTypeAst::Range { ty, min, delta } => {
+                let ty_result = ty.linearize(ctx, ty.location());
+                let tail_ty = ty_result.tail_type().clone();
+                LinearizeResult::new_with_binding(
+                    ty_result.bindings,
+                    WithLocation::new(
+                        LinearTypeAst::Range {
+                            ty: Box::new(tail_ty),
+                            min: *min,
+                            delta: *delta,
+                        },
+                        loc,
+                    ),
+                )
             }
             BasicTypeAst::Float => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Float, loc))
@@ -367,8 +387,13 @@ impl BasicTypeAst {
             BasicTypeAst::Bottom => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Bottom, loc))
             }
-            BasicTypeAst::IntLiteral(v) => {
-                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::IntLiteral(*v), loc))
+            BasicTypeAst::NatureNumber(v, ty) => {
+                let ty_result = ty.linearize(ctx, ty.location());
+                let tail_ty = ty_result.tail_type().clone();
+                LinearizeResult::new_with_binding(
+                    ty_result.bindings,
+                    WithLocation::new(LinearTypeAst::NatureNumber(*v, Box::new(tail_ty)), loc),
+                )
             }
             BasicTypeAst::FloatLiteral(v) => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::FloatLiteral(*v), loc))
@@ -602,12 +627,19 @@ impl<'ast> FlowedMetaData<'ast> {
 
 #[derive(Debug, Clone)]
 pub enum LinearTypeAst<'ast> {
-    Int,
+    Range {
+        ty: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        min: usize,
+        delta: Option<usize>,
+    },
     Char,
     Float,
     Top,
     Bottom,
-    IntLiteral(usize),
+    NatureNumber(
+        usize,
+        Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+    ), // value, type
     FloatLiteral(f64),
     CharLiteral(char),
     OrderedType(usize),
@@ -672,14 +704,27 @@ impl TypeAst {
                     span
                 )
             }
-            TypeAst::Int => WithLocation::new(BasicTypeAst::Int, loc),
+            TypeAst::Range { ty, min, delta } => WithLocation::new(
+                BasicTypeAst::Range {
+                    ty: Box::new(ty.into_basic(multifile_builder, ty.location())),
+                    min: *min,
+                    delta: *delta,
+                },
+                loc,
+            ),
             TypeAst::Float => WithLocation::new(BasicTypeAst::Float, loc),
             TypeAst::Char => WithLocation::new(BasicTypeAst::Char, loc),
             TypeAst::OrderedType(v) => WithLocation::new(BasicTypeAst::OrderedType(*v), loc),
             TypeAst::Top => WithLocation::new(BasicTypeAst::Top, loc),
             TypeAst::Bottom => WithLocation::new(BasicTypeAst::Bottom, loc),
             TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // discard 只允许丢弃unit
-            TypeAst::IntLiteral(v) => WithLocation::new(BasicTypeAst::IntLiteral(*v), loc),
+            TypeAst::NatureNumber(v, ty) => WithLocation::new(
+                BasicTypeAst::NatureNumber(
+                    *v,
+                    Box::new(ty.into_basic(multifile_builder, ty.location())),
+                ),
+                loc,
+            ),
             TypeAst::FloatLiteral(v) => WithLocation::new(BasicTypeAst::FloatLiteral(*v), loc),
             TypeAst::CharLiteral(v) => WithLocation::new(BasicTypeAst::CharLiteral(*v), loc),
             TypeAst::Variable(name) => WithLocation::new(BasicTypeAst::Variable(name.clone()), loc),
@@ -1030,18 +1075,22 @@ impl TypeAst {
             TypeAst::ParseError(span) => {
                 errors.push(span.clone());
             }
-            TypeAst::Int
-            | TypeAst::Float
+            TypeAst::Float
             | TypeAst::Char
             | TypeAst::Top
             | TypeAst::Bottom
             | TypeAst::DiscardPattern
-            | TypeAst::IntLiteral(_)
             | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
             | TypeAst::OrderedType(_)
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => {}
+            TypeAst::Range { ty, .. } => {
+                ty.collect_errors(errors);
+            }
+            TypeAst::NatureNumber(_, ty) => {
+                ty.collect_errors(errors);
+            }
             TypeAst::Tuple(elements)
             | TypeAst::Generalize(elements)
             | TypeAst::Specialize(elements) => {
@@ -1138,18 +1187,22 @@ impl TypeAst {
     pub fn sanitize(ast: WithLocation<Self>) -> WithLocation<Self> {
         ast.map(|ast| match ast {
             TypeAst::ParseError(_) => TypeAst::Bottom,
-            TypeAst::Int
-            | TypeAst::Float
+            TypeAst::Float
             | TypeAst::Char
             | TypeAst::Top
             | TypeAst::Bottom
             | TypeAst::DiscardPattern
-            | TypeAst::IntLiteral(_)
             | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
             | TypeAst::OrderedType(_)
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => ast,
+            TypeAst::Range { ty, min, delta } => TypeAst::Range {
+                ty: Box::new(Self::sanitize(*ty)),
+                min,
+                delta,
+            },
+            TypeAst::NatureNumber(v, ty) => TypeAst::NatureNumber(v, Box::new(Self::sanitize(*ty))),
             TypeAst::Tuple(elements) => {
                 TypeAst::Tuple(elements.into_iter().map(Self::sanitize).collect())
             }
@@ -1347,10 +1400,22 @@ impl<'ast> LinearTypeAst<'ast> {
         errors: &mut Vec<WithLocation<ParseError<'ast>>>,
     ) -> FlowResult<'ast> {
         match self {
-            LinearTypeAst::Int => FlowResult::simple(
-                WithLocation::new(LinearTypeAst::Int, loc)
-                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            ),
+            LinearTypeAst::Range { ty, min, delta } => {
+                let ty_res = ty.flow(ctx, pattern_mode, ty.location(), errors);
+                FlowResult::complex(
+                    WithLocation::new(
+                        LinearTypeAst::Range {
+                            ty: Box::new(ty_res.ty),
+                            min: *min,
+                            delta: *delta,
+                        },
+                        loc,
+                    ),
+                    ty_res.captures,
+                    ty_res.patterns,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
             LinearTypeAst::Float => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Float, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
@@ -1371,10 +1436,15 @@ impl<'ast> LinearTypeAst<'ast> {
                 WithLocation::new(LinearTypeAst::Bottom, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
-            LinearTypeAst::IntLiteral(v) => FlowResult::simple(
-                WithLocation::new(LinearTypeAst::IntLiteral(*v), loc)
-                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            ),
+            LinearTypeAst::NatureNumber(v, ty) => {
+                let ty_res = ty.flow(ctx, pattern_mode, ty.location(), errors);
+                FlowResult::complex(
+                    WithLocation::new(LinearTypeAst::NatureNumber(*v, Box::new(ty_res.ty)), loc),
+                    ty_res.captures,
+                    ty_res.patterns,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
             LinearTypeAst::FloatLiteral(v) => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::FloatLiteral(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
@@ -1903,12 +1973,14 @@ impl<'ast> LinearTypeAst<'ast> {
         loc: Option<&SourceLocation>,
     ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError<'ast>>> {
         match self {
-            LinearTypeAst::Int => Ok(BuildResult::simple(Range::new(
-                0,
-                None,
-                Tuple::unit(),
-                loc.cloned().map(Arc::new),
-            ))),
+            LinearTypeAst::Range { ty, min, delta } => {
+                let ty_result =
+                    ty.to_type(ctx, pattern_counter, pattern_mode, gc, roots, ty.location())?;
+                Ok(BuildResult::complex(
+                    Range::new(*min, *delta, ty_result.ty, loc.cloned().map(Arc::new)),
+                    ty_result.patterns,
+                ))
+            }
             LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(loc.cloned().map(Arc::new)))),
             LinearTypeAst::Char => Ok(BuildResult::simple(Character::new(
                 loc.cloned().map(Arc::new),
@@ -1923,11 +1995,14 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Bottom => Ok(BuildResult::simple(TypeBound::bottom(
                 loc.cloned().map(Arc::new),
             ))),
-            LinearTypeAst::IntLiteral(v) => Ok(BuildResult::simple(NatureNumber::new(
-                *v,
-                Tuple::unit(),
-                loc.cloned().map(Arc::new),
-            ))),
+            LinearTypeAst::NatureNumber(v, ty) => {
+                let ty_result =
+                    ty.to_type(ctx, pattern_counter, pattern_mode, gc, roots, ty.location())?;
+                Ok(BuildResult::complex(
+                    NatureNumber::new(*v, ty_result.ty, loc.cloned().map(Arc::new)),
+                    ty_result.patterns,
+                ))
+            }
             LinearTypeAst::FloatLiteral(v) => Ok(BuildResult::simple(FloatValue::new(
                 *v,
                 loc.cloned().map(Arc::new),

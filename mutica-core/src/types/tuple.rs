@@ -17,18 +17,35 @@ use crate::{
 };
 
 // 元组类型，但是其允许通过cons类型解构
-pub struct Tuple<T: GcAllocObject<T, Inner = Type<T>>> {
-    elements: ArcOpt<Vec<Type<T>>>,
-    source_info: Option<Arc<SourceLocation>>,
-    head: usize,
+// 使用枚举来优化空元组的情况，避免不必要的内存分配
+pub enum Tuple<T: GcAllocObject<T, Inner = Type<T>>> {
+    /// 空元组 ()，不需要分配任何内存
+    Unit {
+        source_info: Option<Arc<SourceLocation>>,
+    },
+    /// 非空元组，包含至少一个元素
+    NonEmpty {
+        elements: ArcOpt<Vec<Type<T>>>,
+        source_info: Option<Arc<SourceLocation>>,
+        head: usize,
+    },
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Tuple<T> {
     fn clone(&self) -> Self {
-        Self {
-            elements: self.elements.clone(),
-            source_info: self.source_info.clone(),
-            head: self.head,
+        match self {
+            Self::Unit { source_info } => Self::Unit {
+                source_info: source_info.clone(),
+            },
+            Self::NonEmpty {
+                elements,
+                source_info,
+                head,
+            } => Self::NonEmpty {
+                elements: elements.clone(),
+                source_info: source_info.clone(),
+                head: *head,
+            },
         }
     }
 }
@@ -60,18 +77,32 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Tuple<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Tuple<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        for element in self.iter() {
-            // 我们不关心 head 之前的元素，他们对于本类型是不可达的
-            element.collect(queue);
+        match self {
+            Self::Unit { .. } => {
+                // 空元组没有元素需要收集
+            }
+            Self::NonEmpty { elements, head, .. } => {
+                for element in elements.as_ref().iter().skip(*head) {
+                    // 我们不关心 head 之前的元素，他们对于本类型是不可达的
+                    element.collect(queue);
+                }
+            }
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Tuple<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        for element in self.iter() {
-            // 我们不关心 head 之前的元素，他们对于本类型是不可达的
-            element.upgrade(collected);
+        match self {
+            Self::Unit { .. } => {
+                // 空元组没有元素需要升级
+            }
+            Self::NonEmpty { elements, head, .. } => {
+                for element in elements.as_ref().iter().skip(*head) {
+                    // 我们不关心 head 之前的元素，他们对于本类型是不可达的
+                    element.upgrade(collected);
+                }
+            }
         }
     }
 }
@@ -142,6 +173,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                             .check(tail.as_ref_dispatcher(), &mut inner_ctx)?
                     ))
                 }
+                TypeRef::NatureNumber(v) => {
+                    if v.value() != self.len() {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let mut all = ThreeValuedLogic::True;
+                    for e in self.iter() {
+                        all &= test_true!(e.check(v.ty().as_ref_dispatcher(), &mut inner_ctx)?);
+                    }
+                    Ok(all)
+                }
+                TypeRef::Range(v) => {
+                    if !v.contains(self.len()) {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let mut all = ThreeValuedLogic::True;
+                    for e in self.iter() {
+                        all &= test_true!(e.check(v.ty().as_ref_dispatcher(), &mut inner_ctx)?);
+                    }
+                    Ok(all)
+                }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -194,6 +245,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                             .subof(tail.as_ref_dispatcher(), &mut inner_ctx)?
                     ))
                 }
+                TypeRef::NatureNumber(v) => {
+                    if v.value() != self.len() {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let mut all = ThreeValuedLogic::True;
+                    for e in self.iter() {
+                        all &= test_true!(e.subof(v.ty().as_ref_dispatcher(), &mut inner_ctx)?);
+                    }
+                    Ok(all)
+                }
+                TypeRef::Range(v) => {
+                    if !v.contains(self.len()) {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let mut all = ThreeValuedLogic::True;
+                    for e in self.iter() {
+                        all &= test_true!(e.subof(v.ty().as_ref_dispatcher(), &mut inner_ctx)?);
+                    }
+                    Ok(all)
+                }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -203,24 +274,35 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         mut self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        match self.elements.modify(|mut elements| {
-            for element in elements.iter_mut().skip(self.head) {
-                // 手动提供一个占位符值，然后换出旧值
-                let owned_element = std::mem::replace(element, TypeBound::bottom(None));
-                let reduced = owned_element.reduce(ctx)?;
-                // 将计算结果写回
-                *element = reduced;
-            }
-            Ok(elements)
-        })? {
-            Some(()) => Ok(self.dispatch()),
-            None => {
-                let new_elements = self
-                    .types()
-                    .iter()
-                    .map(|t| t.clone().reduce(ctx))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Self::new(new_elements, self.source_info.clone()))
+        match &mut self {
+            Self::Unit { .. } => Ok(self.dispatch()),
+            Self::NonEmpty {
+                elements,
+                head,
+                source_info,
+            } => {
+                let head_val = *head;
+                let source_info_clone = source_info.clone();
+                match elements.modify(|mut elems| {
+                    for element in elems.iter_mut().skip(head_val) {
+                        // 手动提供一个占位符值，然后换出旧值
+                        let owned_element = std::mem::replace(element, TypeBound::bottom(None));
+                        let reduced = owned_element.reduce(ctx)?;
+                        // 将计算结果写回
+                        *element = reduced;
+                    }
+                    Ok(elems)
+                })? {
+                    Some(()) => Ok(self.dispatch()),
+                    None => {
+                        let new_elements = self
+                            .types()
+                            .iter()
+                            .map(|t| t.clone().reduce(ctx))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(Self::new(new_elements, source_info_clone))
+                    }
+                }
             }
         }
     }
@@ -248,15 +330,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
-        TaggedPtr::new(self.elements.as_ref() as *const _ as *const (), self.head)
+        match self {
+            Self::Unit { .. } => TaggedPtr::new(std::ptr::null(), 0),
+            Self::NonEmpty { elements, head, .. } => {
+                TaggedPtr::new(elements.as_ref() as *const _ as *const (), *head)
+            }
+        }
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        self.source_info.as_ref()
+        match self {
+            Self::Unit { source_info } => source_info.as_ref(),
+            Self::NonEmpty { source_info, .. } => source_info.as_ref(),
+        }
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
-        if let Some(loc) = &self.source_info {
+        if let Some(loc) = self.source_info() {
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
@@ -279,26 +369,44 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
     pub fn len(&self) -> usize {
-        self.elements.as_ref().len() - self.head
+        match self {
+            Self::Unit { .. } => 0,
+            Self::NonEmpty { elements, head, .. } => elements.as_ref().len() - head,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        matches!(self, Self::Unit { .. })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Type<T>> {
-        self.elements.as_ref().iter().skip(self.head)
+        match self {
+            Self::Unit { .. } => [].iter(),
+            Self::NonEmpty { elements, head, .. } => {
+                // 使用切片的 iter 来避免生命周期问题
+                let slice = &elements.as_ref()[*head..];
+                slice.iter()
+            }
+        }
     }
 
     pub fn types(&self) -> &[Type<T>] {
-        self.elements.as_ref()[self.head..].as_ref()
+        match self {
+            Self::Unit { .. } => &[],
+            Self::NonEmpty { elements, head, .. } => &elements.as_ref()[*head..],
+        }
     }
 
     pub fn get(&self, index: usize) -> Option<&Type<T>> {
-        if index >= self.len() {
-            return None;
+        match self {
+            Self::Unit { .. } => None,
+            Self::NonEmpty { elements, head, .. } => {
+                if index >= self.len() {
+                    return None;
+                }
+                elements.as_ref().get(*head + index)
+            }
         }
-        self.elements.as_ref().get(self.head + index)
     }
 
     #[allow(clippy::new_ret_no_self)]
@@ -308,28 +416,55 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         X: AsDispatcher<Type<T>, T>,
     {
         let elements: Vec<Type<T>> = types.into_iter().map(|t| t.into_dispatcher()).collect();
-        Self {
-            elements: ArcOpt::new(elements),
-            head: 0,
-            source_info,
+        if elements.is_empty() {
+            Self::Unit { source_info }.dispatch()
+        } else {
+            Self::NonEmpty {
+                elements: ArcOpt::new(elements),
+                head: 0,
+                source_info,
+            }
+            .dispatch()
         }
-        .dispatch()
     }
 
     pub fn view(&self, start: usize) -> Type<T> {
         if start > self.len() {
             panic!("List view start index out of bounds");
         }
-        Self {
-            elements: self.elements.clone(),
-            head: self.head + start,
-            source_info: self.source_info.clone(),
+        match self {
+            Self::Unit { source_info } => Self::Unit {
+                source_info: source_info.clone(),
+            }
+            .dispatch(),
+            Self::NonEmpty {
+                elements,
+                head,
+                source_info,
+            } => {
+                let new_head = head + start;
+                if new_head >= elements.as_ref().len() {
+                    Self::Unit {
+                        source_info: source_info.clone(),
+                    }
+                    .dispatch()
+                } else {
+                    Self::NonEmpty {
+                        elements: elements.clone(),
+                        head: new_head,
+                        source_info: source_info.clone(),
+                    }
+                    .dispatch()
+                }
+            }
         }
-        .dispatch()
     }
 
     pub fn head(&self) -> Option<&Type<T>> {
-        self.iter().next()
+        match self {
+            Self::Unit { .. } => None,
+            Self::NonEmpty { elements, head, .. } => elements.as_ref().get(*head),
+        }
     }
 
     pub fn tail(&self) -> Option<Type<T>> {
@@ -342,29 +477,36 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
     pub fn concat(self, other: Tuple<T>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         let mut new_elements = self.take();
         new_elements.extend(other.take());
-        Self {
-            elements: ArcOpt::new(new_elements),
-            head: 0,
-            source_info,
+        if new_elements.is_empty() {
+            Self::Unit { source_info }.dispatch()
+        } else {
+            Self::NonEmpty {
+                elements: ArcOpt::new(new_elements),
+                head: 0,
+                source_info,
+            }
+            .dispatch()
         }
-        .dispatch()
     }
 
     pub fn take(self) -> Vec<Type<T>> {
-        match self.elements.take() {
-            Ok(mut vec) => {
-                // 拥有唯一所有权,直接 drain 前面的元素
-                vec.drain(..self.head);
-                vec
-            }
-            Err(arc) => {
-                // 共享引用,只克隆需要的部分
-                arc.as_ref()[self.head..].to_vec()
-            }
+        match self {
+            Self::Unit { .. } => Vec::new(),
+            Self::NonEmpty { elements, head, .. } => match elements.take() {
+                Ok(mut vec) => {
+                    // 拥有唯一所有权,直接 drain 前面的元素
+                    vec.drain(..head);
+                    vec
+                }
+                Err(arc) => {
+                    // 共享引用,只克隆需要的部分
+                    arc.as_ref()[head..].to_vec()
+                }
+            },
         }
     }
 
     pub fn unit() -> Type<T> {
-        Self::new(std::iter::empty::<Type<T>>(), None)
+        Self::Unit { source_info: None }.dispatch()
     }
 }

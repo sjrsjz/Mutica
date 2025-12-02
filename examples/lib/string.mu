@@ -10,32 +10,32 @@ let Nothing::(Nothing: any) = maybe_pkg;
 
 let String: any = List(char);
 
-let println: any = s: String => {
+let prnatln: any = s: String => {
     discard iter(s)(c: char => {
-        discard print!(c);
+        discard prnat!(c);
     });
-    discard print!('\n');
+    discard prnat!('\n');
 };
 
-let print: any = s: String => {
+let prnat: any = s: String => {
     discard iter(s)(c: char => {
-        discard print!(c);
+        discard prnat!(c);
     });
 };
 
-let slice: any = (s: String, start: int, end: int) => {
-    let len: int = len(s);
+let slice: any = (s: String, start: nat, end: nat) => {
+    let len: nat = len(s);
     if (start >= 0 && start <= len && end >= start && end <= len)
         then Just(take(drop(s)(start))(end - start))
         else Nothing
 };
 
-let int_to_string: any = rec f: n: int => {
+let nat_to_string: any = rec f: n: nat => {
     if n < 0 then "-" + f(-n)
     else match n
         | eq 0 => "0"
         | _ => {
-            loop go: (acc: String, n: int) = ((), n);
+            loop go: (acc: String, n: nat) = ((), n);
                 if n == 0 then acc
                 else {
                     let digit: (char,) = match n % 10
@@ -57,7 +57,7 @@ let int_to_string: any = rec f: n: int => {
 };
 
 String::String &
-println::println &
-print::print &
+prnatln::prnatln &
+prnat::prnat &
 slice::slice &
-int_to_string::int_to_string
+nat_to_string::nat_to_string
