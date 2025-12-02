@@ -10,16 +10,16 @@ let Nothing::(Nothing: any) = maybe_pkg;
 
 let String: any = List(char);
 
-let prnatln: any = s: String => {
+let println: any = s: String => {
     discard iter(s)(c: char => {
-        discard prnat!(c);
+        discard print!(c);
     });
-    discard prnat!('\n');
+    discard print!('\n');
 };
 
-let prnat: any = s: String => {
+let print: any = s: String => {
     discard iter(s)(c: char => {
-        discard prnat!(c);
+        discard print!(c);
     });
 };
 
@@ -57,7 +57,7 @@ let nat_to_string: any = rec f: n: nat => {
 };
 
 String::String &
-prnatln::prnatln &
-prnat::prnat &
+println::println &
+print::print &
 slice::slice &
 nat_to_string::nat_to_string
