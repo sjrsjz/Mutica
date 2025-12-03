@@ -237,8 +237,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 index_ty.as_ref_dispatcher(),
                                 generation_ty.as_ref_dispatcher(),
                             ) {
-                                let index = index_iv.value();
-                                let generation = gen_iv.value();
+                                let index = index_iv.len();
+                                let generation = gen_iv.len();
                                 self.allocated_types
                                     .dealloc(Id::from_parts(index, generation));
                                 Ok(Some(Tuple::new(
@@ -272,8 +272,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             if let (Type::NatureNumber(index_iv), Type::NatureNumber(gen_iv)) =
                                 (index_ty, generation_ty)
                             {
-                                let index = index_iv.value();
-                                let generation = gen_iv.value();
+                                let index = index_iv.len();
+                                let generation = gen_iv.len();
                                 let id = Id::from_parts(index, generation);
                                 match self.allocated_types.get(id) {
                                     Some(v) => Ok(Some(v.clone())),
@@ -324,8 +324,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                             Type::NatureNumber(gen_iv),
                                         ) = (index_ty, generation_ty)
                                         {
-                                            let index = index_iv.value();
-                                            let generation = gen_iv.value();
+                                            let index = index_iv.len();
+                                            let generation = gen_iv.len();
                                             let id = Id::from_parts(index, generation);
                                             match self.allocated_types.get_mut(id) {
                                                 Some(v) => {

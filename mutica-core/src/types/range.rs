@@ -370,11 +370,49 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Range<T> {
             None => Some(
                 Self {
                     ty: self.ty.clone(),
-                    min: if self.min > 0 { self.min - 1 } else { self.min },
+                    min: if self.min > 0 { self.min - 1 } else { 0 },
                     delta: None,
                 }
                 .dispatch(),
             ),
         }
     }
+
+    pub fn view(&self, start: usize) -> Option<Type<T>> {
+        match self.delta {
+            Some(delta) => {
+                if self.min >= start {
+                    Some(
+                        Self {
+                            ty: self.ty.clone(),
+                            min: self.min - start,
+                            delta: Some(delta),
+                        }
+                        .dispatch(),
+                    )
+                } else if self.min + delta >= start {
+                    Some(
+                        Self {
+                            ty: self.ty.clone(),
+                            min: 0,
+                            delta: Some(self.min + delta - start),
+                        }
+                        .dispatch(),
+                    )
+                } else {
+                    None
+                }
+            }
+            None => Some(
+                Self {
+                    ty: self.ty.clone(),
+                    min: if self.min >= start { self.min - start } else { 0 },
+                    delta: None,
+                }
+                .dispatch(),
+            ),
+        }
+    }
+
+
 }

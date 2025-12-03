@@ -19,13 +19,13 @@ use crate::{
 /// u64 表示自然数的值，对应为定长元组/列表
 pub struct NatureNumber<T: GcAllocObject<T, Inner = Type<T>>> {
     ty: Arc<(Type<T>, Option<Arc<SourceLocation>>)>,
-    value: usize,
+    len: usize,
 }
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for NatureNumber<T> {
     fn clone(&self) -> Self {
         Self {
             ty: self.ty.clone(),
-            value: self.value,
+            len: self.len,
         }
     }
 }
@@ -82,21 +82,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                 TypeRef::NatureNumber(v) => {
                     let (self_ty, _) = self.ty.as_ref();
                     let (other_ty, _) = v.ty.as_ref();
-                    if self.value == v.value {
+                    if self.len == v.len {
                         self_ty.check(other_ty.as_ref_dispatcher(), &mut inner_ctx)
                     } else {
                         Ok(ThreeValuedLogic::False)
                     }
                 }
                 TypeRef::Range(v) => {
-                    if !v.contains(self.value) {
+                    if !v.contains(self.len) {
                         return Ok(ThreeValuedLogic::False);
                     }
                     self.ty().check(v.ty().as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Tuple(v) => {
                     let (self_ty, _) = self.ty.as_ref();
-                    if v.len() == self.value {
+                    if v.len() == self.len {
                         let mut matched = ThreeValuedLogic::True;
                         for sub in v.iter() {
                             matched &=
@@ -110,7 +110,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                 TypeRef::Construct(v) => match self.tail() {
                     Some(self_tail) => {
                         let (self_ty, _) = self.ty.as_ref();
-                        let head = v.head();
+                        let head = v.prefix();
                         let tail = v.tail();
                         let mut matched =
                             test_true!(self_ty.check(head.as_ref_dispatcher(), &mut inner_ctx)?);
@@ -147,21 +147,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                 TypeRef::NatureNumber(v) => {
                     let (self_ty, _) = self.ty.as_ref();
                     let (v_ty, _) = v.ty.as_ref();
-                    if self.value == v.value {
+                    if self.len == v.len {
                         self_ty.subof(v_ty.as_ref_dispatcher(), &mut inner_ctx)
                     } else {
                         Ok(ThreeValuedLogic::False)
                     }
                 }
                 TypeRef::Range(v) => {
-                    if !v.contains(self.value) {
+                    if !v.contains(self.len) {
                         return Ok(ThreeValuedLogic::False);
                     }
                     self.ty().subof(v.ty().as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Tuple(v) => {
                     let (self_ty, _) = self.ty.as_ref();
-                    if v.len() == self.value {
+                    if v.len() == self.len {
                         let mut matched = ThreeValuedLogic::True;
                         for sub in v.iter() {
                             matched &=
@@ -175,7 +175,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                 TypeRef::Construct(v) => match self.tail() {
                     Some(self_tail) => {
                         let (self_ty, _) = self.ty.as_ref();
-                        let head = v.head();
+                        let head = v.prefix();
                         let tail = v.tail();
                         let mut matched =
                             test_true!(self_ty.subof(head.as_ref_dispatcher(), &mut inner_ctx)?);
@@ -195,14 +195,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Ok(Self::new(
-            self.value,
+            self.len,
             self.ty.0.clone().reduce(ctx)?,
             self.ty.1.clone(),
         ))
     }
 
     fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(Self::new(self.value, ctx.arg, self.ty.1.clone()))
+        Ok(Self::new(self.len, ctx.arg, self.ty.1.clone()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -216,18 +216,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
                 .with_message(format!(
                     "Nature number value {} at {}",
-                    self.value, filepath
+                    self.len, filepath
                 ))
                 .with_label(
                     ariadne::Label::new((filepath, span))
-                        .with_message(format!("Nature number value {} defined here", self.value)),
+                        .with_message(format!("Nature number value {} defined here", self.len)),
                 )
                 .finish()
         } else {
             ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
                 .with_message(format!(
                     "Nature number value {} has no source location",
-                    self.value
+                    self.len
                 ))
                 .with_label(
                     ariadne::Label::new(("<unknown>".to_string(), 0..0))
@@ -238,7 +238,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
-        TaggedPtr::new(self.ty() as *const _ as *const (), self.value)
+        TaggedPtr::new(self.ty() as *const _ as *const (), self.len)
     }
 }
 
@@ -250,11 +250,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for NatureNumber<T> {
         max_depth: usize,
     ) -> String {
         if let Type::Tuple(Tuple::Unit { .. }) = &self.ty.0 {
-            return format!("{}", self.value);
+            return format!("{}", self.len);
         }
         format!(
             "{}<{}>",
-            self.value,
+            self.len,
             self.ty.0.represent(path, depth + 1, max_depth)
         )
     }
@@ -269,13 +269,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> NatureNumber<T> {
     ) -> Type<T> {
         NatureNumber {
             ty: Arc::new((ty.into_dispatcher(), source_info)),
-            value,
+            len: value,
         }
         .dispatch()
     }
 
-    pub fn value(&self) -> usize {
-        self.value
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     pub fn ty(&self) -> &Type<T> {
@@ -283,7 +287,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> NatureNumber<T> {
     }
 
     pub fn head(&self) -> Option<&Type<T>> {
-        match self.value {
+        match self.len {
             0 => None,
             _ => Some(&self.ty.0),
         }
@@ -296,19 +300,32 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> NatureNumber<T> {
     pub fn succ(&self) -> Type<T> {
         Self {
             ty: self.ty.clone(),
-            value: self.value + 1,
+            len: self.len + 1,
         }
         .dispatch()
     }
 
     pub fn pred(&self) -> Option<Type<T>> {
-        if self.value == 0 {
+        if self.len == 0 {
             return None;
         }
         Some(
             Self {
                 ty: self.ty.clone(),
-                value: self.value - 1,
+                len: self.len - 1,
+            }
+            .dispatch(),
+        )
+    }
+
+    pub fn view(&self, start: usize) -> Option<Type<T>> {
+        if self.len < start {
+            return None
+        }
+        Some(
+            Self {
+                ty: self.ty.clone(),
+                len: self.len - start,
             }
             .dispatch(),
         )

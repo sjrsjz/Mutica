@@ -160,7 +160,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                         // 空元组无法匹配任何构造
                         return Ok(ThreeValuedLogic::False);
                     }
-                    let head = cons.head();
+                    let head = cons.prefix();
                     let tail = cons.tail();
                     // 多元素元组匹配构造
                     Ok(test_true!(
@@ -174,7 +174,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     ))
                 }
                 TypeRef::NatureNumber(v) => {
-                    if v.value() != self.len() {
+                    if v.len() != self.len() {
                         return Ok(ThreeValuedLogic::False);
                     }
                     let mut all = ThreeValuedLogic::True;
@@ -232,7 +232,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                         // 空元组无法匹配任何构造
                         return Ok(ThreeValuedLogic::False);
                     }
-                    let head = cons.head();
+                    let head = cons.prefix();
                     let tail = cons.tail();
                     // 多元素元组匹配构造
                     Ok(test_true!(
@@ -246,7 +246,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     ))
                 }
                 TypeRef::NatureNumber(v) => {
-                    if v.value() != self.len() {
+                    if v.len() != self.len() {
                         return Ok(ThreeValuedLogic::False);
                     }
                     let mut all = ThreeValuedLogic::True;
@@ -314,7 +314,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
         ctx.arg
             .take(&mut FastCycleDetector::new(), |_, arg| match arg {
                 Type::NatureNumber(iv) => {
-                    let index = iv.value();
+                    let index = iv.len();
                     match self.get(index) {
                         Some(t) => Ok(t.clone()),
                         None => Err(super::TypeError::TupleIndexOutOfBounds(

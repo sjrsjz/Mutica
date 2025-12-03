@@ -115,7 +115,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 Type::FloatValue(_) => Ok(arg),
                 Type::NatureNumber(v) => {
                     let float_value =
-                        FloatValue::<T>::new(v.value() as f64, ctx.source_info.cloned());
+                        FloatValue::<T>::new(v.len() as f64, ctx.source_info.cloned());
                     Ok(float_value)
                 }
                 _ => Err(super::TypeError::TypeMismatch(

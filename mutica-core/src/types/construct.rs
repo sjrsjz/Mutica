@@ -6,37 +6,40 @@ use crate::{
     test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef, tuple::Tuple,
+        Rootable, TaggedPtr, Type, TypeCheckContext, TypeRef,
     },
     util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Construct<T: GcAllocObject<T, Inner = Type<T>>> {
-    #[allow(clippy::type_complexity)]
-    inner: ArcOpt<(Type<T>, Type<T>, Option<Arc<SourceLocation>>)>,
+    inner: ArcOpt<(Vec<Type<T>>, Type<T>)>,
+    source_info: Option<Arc<SourceLocation>>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Construct<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            source_info: self.source_info.clone(),
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Construct<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        let (head, tail, _) = self.inner.as_ref();
-        head.collect(queue);
-        tail.collect(queue);
+        for v in self.prefix() {
+            v.collect(queue);
+        }
+        self.tail().collect(queue);
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Construct<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        let (head, tail, _) = self.inner.as_ref();
-        head.upgrade(collected);
-        tail.upgrade(collected);
+        for v in self.prefix() {
+            v.upgrade(collected);
+        }
+        self.tail().upgrade(collected);
     }
 }
 
@@ -50,12 +53,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Construct<T> {
         if depth > max_depth {
             return "...".to_string();
         }
-        let (head, tail, _) = self.inner.as_ref();
-        format!(
-            "Cons<{}, {}>",
-            head.represent(path, depth + 1, max_depth),
-            tail.represent(path, depth + 1, max_depth)
-        )
+        let mut repr = "Cons<(".to_string();
+        for (i, v) in self.prefix().iter().enumerate() {
+            repr.push_str(&v.represent(path, depth + 1, max_depth));
+            if self.prefix().len() != 1 && i != self.prefix().len() - 1 {
+                repr.push_str(", ");
+            }
+        }
+        repr.push_str("), ");
+        repr.push_str(&self.tail().represent(path, depth + 1, max_depth));
+        repr.push_str(">");
+        repr
     }
 }
 
@@ -98,57 +106,60 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                     Ok(ThreeValuedLogic::True)
                 }
                 TypeRef::Construct(v) => {
-                    let (head, tail, _) = self.inner.as_ref();
-                    let (v_head, v_tail, _) = v.inner.as_ref();
-                    Ok(
-                        test_true!(head.check(v_head.as_ref_dispatcher(), &mut inner_ctx)?)
-                            & test_true!(tail.check(v_tail.as_ref_dispatcher(), &mut inner_ctx)?),
-                    )
-                }
-                TypeRef::Tuple(v) => {
-                    if v.is_empty() {
-                        // 空元组无法匹配任何构造
+                    if self.prefix().len() != v.prefix().len() {
                         return Ok(ThreeValuedLogic::False);
                     }
-                    let head = v.get(0).unwrap();
-                    let tail = v.tail().unwrap();
-                    let (self_head, self_tail, _) = self.inner.as_ref();
-                    Ok(
-                        test_true!(self_head.check(head.as_ref_dispatcher(), &mut inner_ctx)?)
-                            & test_true!(
-                                self_tail.check(tail.as_ref_dispatcher(), &mut inner_ctx)?
-                            ),
-                    )
-                }
-                TypeRef::NatureNumber(v) => {
-                    match v.head() {
-                        Some(v_head) => {
-                            let (self_head, self_tail, _) = self.inner.as_ref();
-                            Ok(test_true!(
-                                self_head.check(v_head.as_ref_dispatcher(), &mut inner_ctx)?
-                            ) & test_true!(self_tail.check(
-                                v.tail().unwrap_or(Tuple::unit()).as_ref_dispatcher(),
-                                &mut inner_ctx
-                            )?))
-                        }
-                        None => Ok(ThreeValuedLogic::False),
+                    let mut all = ThreeValuedLogic::True;
+                    for (a, b) in self.prefix().iter().zip(v.prefix().iter()) {
+                        all &= test_true!(a.check(b.as_ref_dispatcher(), &mut inner_ctx)?)
                     }
+                    Ok(all
+                        & self
+                            .tail()
+                            .check(v.tail().as_ref_dispatcher(), &mut inner_ctx)?)
                 }
-                TypeRef::Range(v) => {
-                    let (self_head, self_tail, _) = self.inner.as_ref();
-                    let other_head = v.head();
-                    let other_tail = match v.tail() {
-                        Some(tail) => tail,
-                        None => v.ty().clone(),
-                    };
-                    Ok(
-                        test_true!(
-                            self_head.check(other_head.as_ref_dispatcher(), &mut inner_ctx)?
-                        ) & test_true!(
-                            self_tail.check(other_tail.as_ref_dispatcher(), &mut inner_ctx)?
-                        ),
-                    )
+                TypeRef::Tuple(v) => {
+                    if v.len() < self.prefix().len() {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let mut all = ThreeValuedLogic::True;
+                    for (i, x) in self.prefix().iter().enumerate() {
+                        all &= test_true!(
+                            x.check(v.get(i).unwrap().as_ref_dispatcher(), &mut inner_ctx)?
+                        )
+                    }
+                    let tail = v.view(self.prefix().len());
+                    Ok(all
+                        & self
+                            .tail()
+                            .check(tail.as_ref_dispatcher(), &mut inner_ctx)?)
                 }
+                TypeRef::NatureNumber(v) => match v.view(self.prefix().len()) {
+                    Some(tail) => {
+                        let mut all = ThreeValuedLogic::True;
+                        for x in self.prefix() {
+                            all &= test_true!(x.check(v.ty().as_ref_dispatcher(), &mut inner_ctx)?)
+                        }
+                        Ok(all
+                            & self
+                                .tail()
+                                .check(tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    }
+                    None => Ok(ThreeValuedLogic::False),
+                },
+                TypeRef::Range(v) => match v.view(self.prefix().len()) {
+                    Some(tail) => {
+                        let mut all = ThreeValuedLogic::True;
+                        for x in self.prefix() {
+                            all &= test_true!(x.check(v.ty().as_ref_dispatcher(), &mut inner_ctx)?)
+                        }
+                        Ok(all
+                            & self
+                                .tail()
+                                .check(tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    }
+                    None => Ok(ThreeValuedLogic::False),
+                },
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -175,43 +186,60 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                     Ok(ThreeValuedLogic::True)
                 }
                 TypeRef::Construct(v) => {
-                    let (head, tail, _) = self.inner.as_ref();
-                    let (v_head, v_tail, _) = v.inner.as_ref();
-                    Ok(
-                        test_true!(head.subof(v_head.as_ref_dispatcher(), &mut inner_ctx)?)
-                            & test_true!(tail.subof(v_tail.as_ref_dispatcher(), &mut inner_ctx)?),
-                    )
-                }
-                TypeRef::Tuple(v) => {
-                    if v.is_empty() {
-                        // 空元组无法匹配任何构造
+                    if self.prefix().len() != v.prefix().len() {
                         return Ok(ThreeValuedLogic::False);
                     }
-                    let head = v.get(0).unwrap();
-                    let tail = v.tail().unwrap();
-                    let (self_head, self_tail, _) = self.inner.as_ref();
-                    Ok(
-                        test_true!(self_head.subof(head.as_ref_dispatcher(), &mut inner_ctx)?)
-                            & test_true!(
-                                self_tail.subof(tail.as_ref_dispatcher(), &mut inner_ctx)?
-                            ),
-                    )
+                    let mut all = ThreeValuedLogic::True;
+                    for (a, b) in self.prefix().iter().zip(v.prefix().iter()) {
+                        all &= test_true!(a.subof(b.as_ref_dispatcher(), &mut inner_ctx)?)
+                    }
+                    Ok(all
+                        & self
+                            .tail()
+                            .subof(v.tail().as_ref_dispatcher(), &mut inner_ctx)?)
                 }
-                TypeRef::Range(v) => {
-                    let (self_head, self_tail, _) = self.inner.as_ref();
-                    let other_head = v.head();
-                    let other_tail = match v.tail() {
-                        Some(tail) => tail,
-                        None => v.ty().clone(),
-                    };
-                    Ok(
-                        test_true!(
-                            self_head.subof(other_head.as_ref_dispatcher(), &mut inner_ctx)?
-                        ) & test_true!(
-                            self_tail.subof(other_tail.as_ref_dispatcher(), &mut inner_ctx)?
-                        ),
-                    )
+                TypeRef::Tuple(v) => {
+                    if v.len() < self.prefix().len() {
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let mut all = ThreeValuedLogic::True;
+                    for (i, x) in self.prefix().iter().enumerate() {
+                        all &= test_true!(
+                            x.subof(v.get(i).unwrap().as_ref_dispatcher(), &mut inner_ctx)?
+                        )
+                    }
+                    let tail = v.view(self.prefix().len());
+                    Ok(all
+                        & self
+                            .tail()
+                            .subof(tail.as_ref_dispatcher(), &mut inner_ctx)?)
                 }
+                TypeRef::NatureNumber(v) => match v.view(self.prefix().len()) {
+                    Some(tail) => {
+                        let mut all = ThreeValuedLogic::True;
+                        for x in self.prefix() {
+                            all &= test_true!(x.subof(v.ty().as_ref_dispatcher(), &mut inner_ctx)?)
+                        }
+                        Ok(all
+                            & self
+                                .tail()
+                                .subof(tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    }
+                    None => Ok(ThreeValuedLogic::False),
+                },
+                TypeRef::Range(v) => match v.view(self.prefix().len()) {
+                    Some(tail) => {
+                        let mut all = ThreeValuedLogic::True;
+                        for x in self.prefix() {
+                            all &= test_true!(x.subof(v.ty().as_ref_dispatcher(), &mut inner_ctx)?)
+                        }
+                        Ok(all
+                            & self
+                                .tail()
+                                .subof(tail.as_ref_dispatcher(), &mut inner_ctx)?)
+                    }
+                    None => Ok(ThreeValuedLogic::False),
+                },
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -221,17 +249,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
         mut self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        match self.inner.modify(|(head, tail, source_info)| {
-            let new_head = head.reduce(ctx)?;
+        match self.inner.modify(|(prefix, tail)| {
+            let new_prefix = prefix
+                .into_iter()
+                .map(|v| v.reduce(ctx))
+                .collect::<Result<Vec<_>, _>>()?;
             let new_tail = tail.reduce(ctx)?;
-            Ok((new_head, new_tail, source_info))
+            Ok((new_prefix, new_tail))
         })? {
             Some(()) => Ok(self.dispatch()),
             None => {
-                let (head, tail, source_info) = self.inner.as_ref();
-                let new_head = head.clone().reduce(ctx)?;
+                let (prefix, tail) = self.inner.as_ref();
+                let new_prefix = prefix
+                    .iter()
+                    .map(|v| v.clone().reduce(ctx))
+                    .collect::<Result<Vec<_>, _>>()?;
                 let new_tail = tail.clone().reduce(ctx)?;
-                Ok(Self::new(new_head, new_tail, source_info.clone()))
+                Ok(Self::new(new_prefix, new_tail, self.source_info.clone()))
             }
         }
     }
@@ -244,11 +278,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        self.inner.as_ref().2.as_ref()
+        self.source_info.as_ref()
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
-        if let Some(loc) = self.inner.as_ref().2.as_ref() {
+        if let Some(loc) = self.source_info() {
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
@@ -271,18 +305,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Construct<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<U: AsDispatcher<Type<T>, T>, V: AsDispatcher<Type<T>, T>>(
+    pub fn new<
+        U: IntoIterator<Item = W>,
+        V: AsDispatcher<Type<T>, T>,
+        W: AsDispatcher<Type<T>, T>,
+    >(
         head: U,
         tail: V,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         Self {
-            inner: ArcOpt::new((head.into_dispatcher(), tail.into_dispatcher(), source_info)),
+            inner: ArcOpt::new((
+                head.into_iter().map(|v| v.into_dispatcher()).collect(),
+                tail.into_dispatcher(),
+            )),
+            source_info,
         }
         .dispatch()
     }
 
-    pub fn head(&self) -> &Type<T> {
+    pub fn prefix(&self) -> &[Type<T>] {
         &self.inner.as_ref().0
     }
 

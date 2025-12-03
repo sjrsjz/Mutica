@@ -307,7 +307,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                             (Tuple::new(vec![l.dispatch(), r.dispatch()], self.source_info.clone()), "Same NatureNumber type".into()).into(),
                                         ));
                                     }
-                                    Ok(NatureNumber::new(l.value() + r.value(), l.ty(), ctx.source_info.cloned()))
+                                    Ok(NatureNumber::new(l.len() + r.len(), l.ty(), ctx.source_info.cloned()))
                                 },
                                 OpcodeKind::Sub =>{
                                     let mut assumptions = smallvec::SmallVec::new();
@@ -323,30 +323,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                             (Tuple::new(vec![l.dispatch(), r.dispatch()], self.source_info.clone()), "Same NatureNumber type".into()).into(),
                                         ));
                                     }
-                                    if l.value() < r.value() {
+                                    if l.len() < r.len() {
                                         return Err(TypeError::TypeMismatch(
                                             (Tuple::new(vec![l.dispatch(), r.dispatch()], self.source_info.clone()), "Left NatureNumber must be greater than or equal to right NatureNumber".into()).into(),
                                         ));
                                     }
-                                    Ok(NatureNumber::new(l.value() - r.value(), l.ty(), ctx.source_info.cloned()))
+                                    Ok(NatureNumber::new(l.len() - r.len(), l.ty(), ctx.source_info.cloned()))
                                 },
-                                OpcodeKind::Mul => Ok(NatureNumber::new(l.value() * r.value(), l.ty(), ctx.source_info.cloned())),
+                                OpcodeKind::Mul => Ok(NatureNumber::new(l.len() * r.len(), l.ty(), ctx.source_info.cloned())),
                                 OpcodeKind::Div => {
-                                    if r.value() == 0 {
+                                    if r.is_empty() {
                                         Err(TypeError::TypeMismatch(
                                             (l.dispatch(), "Non-zero nature number".into()).into(),
                                         ))
                                     } else {
-                                        Ok(NatureNumber::new(l.value() / r.value(), l.ty(), ctx.source_info.cloned()))
+                                        Ok(NatureNumber::new(l.len() / r.len(), l.ty(), ctx.source_info.cloned()))
                                     }
                                 }
                                 OpcodeKind::Mod => {
-                                    if r.value() == 0 {
+                                    if r.is_empty() {
                                         Err(TypeError::TypeMismatch(
                                             (r.dispatch(), "Non-zero nature number".into()).into(),
                                         ))
                                     } else {
-                                        Ok(NatureNumber::new(l.value() % r.value(), l.ty(), ctx.source_info.cloned()))
+                                        Ok(NatureNumber::new(l.len() % r.len(), l.ty(), ctx.source_info.cloned()))
                                     }
                                 }
                                 _ => unreachable!(),
@@ -425,8 +425,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     match (left, right) {
                                         (Type::NatureNumber(l), Type::NatureNumber(r)) => {
                                             let condition = match &self.kind {
-                                                OpcodeKind::Less => l.value() < r.value(),
-                                                OpcodeKind::Greater => l.value() > r.value(),
+                                                OpcodeKind::Less => l.len() < r.len(),
+                                                OpcodeKind::Greater => l.len() > r.len(),
+                                                _ => unreachable!(),
+                                            };
+                                            let result = if condition {
+                                                true_branch
+                                            } else {
+                                                false_branch
+                                            };
+                                            Ok(result)
+                                        }
+                                        (Type::NatureNumber(l), Type::Tuple(r)) => {
+                                            let condition = match &self.kind {
+                                                OpcodeKind::Less => l.len() < r.len(),
+                                                OpcodeKind::Greater => l.len() > r.len(),
+                                                _ => unreachable!(),
+                                            };
+                                            let result = if condition {
+                                                true_branch
+                                            } else {
+                                                false_branch
+                                            };
+                                            Ok(result)
+                                        }
+                                        (Type::Tuple(l), Type::NatureNumber(r)) => {
+                                            let condition = match &self.kind {
+                                                OpcodeKind::Less => l.len() < r.len(),
+                                                OpcodeKind::Greater => l.len() > r.len(),
+                                                _ => unreachable!(),
+                                            };
+                                            let result = if condition {
+                                                true_branch
+                                            } else {
+                                                false_branch
+                                            };
+                                            Ok(result)
+                                        }
+                                        (Type::Tuple(l), Type::Tuple(r)) => {
+                                            let condition = match &self.kind {
+                                                OpcodeKind::Less => l.len() < r.len(),
+                                                OpcodeKind::Greater => l.len() > r.len(),
                                                 _ => unreachable!(),
                                             };
                                             let result = if condition {
