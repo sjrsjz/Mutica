@@ -1,4 +1,3 @@
-use core::panic;
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
@@ -155,24 +154,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     }
                     Ok(all)
                 }
-                TypeRef::Construct(cons) => {
-                    if self.is_empty() {
-                        // 空元组无法匹配任何构造
-                        return Ok(ThreeValuedLogic::False);
+                TypeRef::Construct(v) => match self.view(v.prefix().len()) {
+                    Some(tail) => {
+                        let prefix = v.prefix();
+                        let mut all = ThreeValuedLogic::True;
+                        for (i, x) in prefix.iter().enumerate() {
+                            all &= test_true!(
+                                self.get(i)
+                                    .unwrap()
+                                    .check(x.as_ref_dispatcher(), &mut inner_ctx)?
+                            );
+                        }
+                        all &=
+                            test_true!(tail.check(v.tail().as_ref_dispatcher(), &mut inner_ctx)?);
+                        Ok(all)
                     }
-                    let head = cons.prefix();
-                    let tail = cons.tail();
-                    // 多元素元组匹配构造
-                    Ok(test_true!(
-                        self.head()
-                            .unwrap()
-                            .check(head.as_ref_dispatcher(), &mut inner_ctx)?
-                    ) & test_true!(
-                        self.tail()
-                            .unwrap()
-                            .check(tail.as_ref_dispatcher(), &mut inner_ctx)?
-                    ))
-                }
+                    None => Ok(ThreeValuedLogic::False),
+                },
                 TypeRef::NatureNumber(v) => {
                     if v.len() != self.len() {
                         return Ok(ThreeValuedLogic::False);
@@ -227,24 +225,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     }
                     Ok(all)
                 }
-                TypeRef::Construct(cons) => {
-                    if self.is_empty() {
-                        // 空元组无法匹配任何构造
-                        return Ok(ThreeValuedLogic::False);
+                TypeRef::Construct(v) => match self.view(v.prefix().len()) {
+                    Some(tail) => {
+                        let prefix = v.prefix();
+                        let mut all = ThreeValuedLogic::True;
+                        for (i, x) in prefix.iter().enumerate() {
+                            all &= test_true!(
+                                self.get(i)
+                                    .unwrap()
+                                    .subof(x.as_ref_dispatcher(), &mut inner_ctx)?
+                            );
+                        }
+                        all &=
+                            test_true!(tail.subof(v.tail().as_ref_dispatcher(), &mut inner_ctx)?);
+                        Ok(all)
                     }
-                    let head = cons.prefix();
-                    let tail = cons.tail();
-                    // 多元素元组匹配构造
-                    Ok(test_true!(
-                        self.head()
-                            .unwrap()
-                            .subof(head.as_ref_dispatcher(), &mut inner_ctx)?
-                    ) & test_true!(
-                        self.tail()
-                            .unwrap()
-                            .subof(tail.as_ref_dispatcher(), &mut inner_ctx)?
-                    ))
-                }
+                    None => Ok(ThreeValuedLogic::False),
+                },
                 TypeRef::NatureNumber(v) => {
                     if v.len() != self.len() {
                         return Ok(ThreeValuedLogic::False);
@@ -428,11 +425,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
         }
     }
 
-    pub fn view(&self, start: usize) -> Type<T> {
+    pub fn view(&self, start: usize) -> Option<Type<T>> {
         if start > self.len() {
-            panic!("List view start index out of bounds");
+            return None;
         }
-        match self {
+        Some(match self {
             Self::Unit { source_info } => Self::Unit {
                 source_info: source_info.clone(),
             }
@@ -457,7 +454,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
                     .dispatch()
                 }
             }
-        }
+        })
     }
 
     pub fn head(&self) -> Option<&Type<T>> {
@@ -468,10 +465,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Tuple<T> {
     }
 
     pub fn tail(&self) -> Option<Type<T>> {
-        if self.is_empty() {
-            return None;
-        }
-        Some(self.view(1))
+        self.view(1)
     }
 
     pub fn concat(self, other: Tuple<T>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {

@@ -107,16 +107,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                         Ok(ThreeValuedLogic::False)
                     }
                 }
-                TypeRef::Construct(v) => match self.tail() {
-                    Some(self_tail) => {
-                        let (self_ty, _) = self.ty.as_ref();
-                        let head = v.prefix();
-                        let tail = v.tail();
-                        let mut matched =
-                            test_true!(self_ty.check(head.as_ref_dispatcher(), &mut inner_ctx)?);
-                        matched &=
-                            test_true!(self_tail.check(tail.as_ref_dispatcher(), &mut inner_ctx)?);
-                        Ok(matched)
+                TypeRef::Construct(v) => match self.view(v.prefix().len()) {
+                    Some(tail) => {
+                        let prefix = v.prefix();
+                        let mut all = ThreeValuedLogic::True;
+                        for x in prefix {
+                            all &=
+                                test_true!(self.ty().check(x.as_ref_dispatcher(), &mut inner_ctx)?);
+                        }
+                        all &=
+                            test_true!(tail.check(v.tail().as_ref_dispatcher(), &mut inner_ctx)?);
+                        Ok(all)
                     }
                     None => Ok(ThreeValuedLogic::False),
                 },
@@ -172,16 +173,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                         Ok(ThreeValuedLogic::False)
                     }
                 }
-                TypeRef::Construct(v) => match self.tail() {
-                    Some(self_tail) => {
-                        let (self_ty, _) = self.ty.as_ref();
-                        let head = v.prefix();
-                        let tail = v.tail();
-                        let mut matched =
-                            test_true!(self_ty.subof(head.as_ref_dispatcher(), &mut inner_ctx)?);
-                        matched &=
-                            test_true!(self_tail.subof(tail.as_ref_dispatcher(), &mut inner_ctx)?);
-                        Ok(matched)
+                TypeRef::Construct(v) => match self.view(v.prefix().len()) {
+                    Some(tail) => {
+                        let prefix = v.prefix();
+                        let mut all = ThreeValuedLogic::True;
+                        for x in prefix {
+                            all &=
+                                test_true!(self.ty().subof(x.as_ref_dispatcher(), &mut inner_ctx)?);
+                        }
+                        all &=
+                            test_true!(tail.subof(v.tail().as_ref_dispatcher(), &mut inner_ctx)?);
+                        Ok(all)
                     }
                     None => Ok(ThreeValuedLogic::False),
                 },
@@ -214,10 +216,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                .with_message(format!(
-                    "Nature number value {} at {}",
-                    self.len, filepath
-                ))
+                .with_message(format!("Nature number value {} at {}", self.len, filepath))
                 .with_label(
                     ariadne::Label::new((filepath, span))
                         .with_message(format!("Nature number value {} defined here", self.len)),
@@ -320,7 +319,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> NatureNumber<T> {
 
     pub fn view(&self, start: usize) -> Option<Type<T>> {
         if self.len < start {
-            return None
+            return None;
         }
         Some(
             Self {

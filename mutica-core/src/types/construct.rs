@@ -128,7 +128,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                             x.check(v.get(i).unwrap().as_ref_dispatcher(), &mut inner_ctx)?
                         )
                     }
-                    let tail = v.view(self.prefix().len());
+                    let tail = v.view(self.prefix().len()).unwrap();
                     Ok(all
                         & self
                             .tail()
@@ -208,7 +208,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                             x.subof(v.get(i).unwrap().as_ref_dispatcher(), &mut inner_ctx)?
                         )
                     }
-                    let tail = v.view(self.prefix().len());
+                    let tail = v.view(self.prefix().len()).unwrap();
                     Ok(all
                         & self
                             .tail()
