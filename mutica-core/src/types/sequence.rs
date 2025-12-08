@@ -36,6 +36,7 @@ pub struct Sequence<T: GcAllocObject<T, Inner = Type<T>>> {
     prefix: Arc<Vec<(Type<T>, NonZero<usize>)>>,
     tail: SequenceTail<T>,
     source_info: Option<Arc<SourceLocation>>,
+    offset: usize,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Sequence<T> {
@@ -44,6 +45,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Sequence<T> {
             prefix: self.prefix.clone(),
             tail: self.tail.clone(),
             source_info: self.source_info.clone(),
+            offset: self.offset,
         }
     }
 }
@@ -112,48 +114,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                     Ok(ThreeValuedLogic::True)
                 }
                 TypeRef::Sequence(v) => {
-                    let mut cursor_self = 0;
-                    let mut cursor_other = 0;
-                    let mut acc_len_self = 0;
-                    let mut acc_len_other = 0;
-                    let len_self = self.prefix_len();
-                    let len_other = v.prefix_len();
+                    let mut self_seek = self.seek_prefix();
+                    let mut other_seek = v.seek_prefix();
                     let mut all = ThreeValuedLogic::True;
-                    loop {
-                        if cursor_self < self.prefix.len() && cursor_other < v.prefix.len() {
-                            let (ty_self, count_self) = &self.prefix[cursor_self];
-                            let (ty_other, count_other) = &v.prefix[cursor_other];
+                    while let (Some((cursor_self, self_rem)), Some((cursor_other, other_rem))) =
+                        (self_seek, other_seek)
+                    {
+                        let ty_self = &self.prefix[cursor_self].0;
+                        let ty_other = &v.prefix[cursor_other].0;
+                        all &= test_true!(
+                            ty_self.check(ty_other.as_ref_dispatcher(), &mut inner_ctx)?
+                        );
 
-                            all &= test_true!(
-                                ty_self.check(ty_other.as_ref_dispatcher(), &mut inner_ctx)?
-                            );
-
-                            if count_self == count_other {
-                                cursor_self += 1;
-                                cursor_other += 1;
-                                acc_len_self += count_self.get();
-                                acc_len_other += count_other.get();
-                            } else if count_self.get() < count_other.get() {
-                                cursor_self += 1;
-                                acc_len_self += count_self.get();
-                                let remaining = count_other.get() - count_self.get();
-                                v.prefix[cursor_other].1 = NonZero::new(remaining).unwrap();
-                            } else {
-                                cursor_other += 1;
-                                acc_len_other += count_other.get();
-                                let remaining = count_self.get() - count_other.get();
-                                self.prefix[cursor_self].1 = NonZero::new(remaining).unwrap();
-                            }
+                        if self_rem == other_rem {
+                            self_seek = self.next_block(cursor_self);
+                            other_seek = v.next_block(cursor_other);
+                        } else if self_rem < other_rem {
+                            // self块用完，other块未用完
+                            other_seek = Some((cursor_other, other_rem - self_rem));
+                            self_seek = self.next_block(cursor_self);
                         } else {
-                            break;
+                            // other块用完，self块未用完
+                            self_seek = Some((cursor_self, self_rem - other_rem));
+                            other_seek = v.next_block(cursor_other);
                         }
                     }
 
-                    match (
-                        self.prefix.len() == cursor_self,
-                        v.prefix.len() == cursor_other,
-                    ) {
-                        (true, true) => match (&self.tail, &v.tail) {
+                    match (self_seek, other_seek) {
+                        (None, None) => match (&self.tail, &v.tail) {
                             (SequenceTail::Nothing, SequenceTail::Nothing) => Ok(all),
                             (SequenceTail::Repeat(ty_self), SequenceTail::Repeat(ty_other))
                             | (SequenceTail::Cons(ty_self), SequenceTail::Cons(ty_other)) => {
@@ -164,30 +152,111 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             }
                             _ => Ok(ThreeValuedLogic::False),
                         },
-                        (true, false) => match &v.tail {
-                            SequenceTail::Repeat(ty_other) => {
-                                for i in cursor_other..v.prefix.len() {
-                                    let (ty_other, count_other) = &v.prefix[i];
-                                    for _ in 0..count_other.get() {
+                        (Some(seek), None) => {
+                            match &v.tail {
+                                SequenceTail::Nothing => Ok(ThreeValuedLogic::False),
+                                SequenceTail::Repeat(ty_other) => {
+                                    let mut cursor = Some(seek);
+                                    while let Some((cursor_self, _)) = cursor {
+                                        let ty_self = &self.prefix[cursor_self].0;
                                         all &=
-                                            test_true!(self.tail.as_ref().check(
+                                            test_true!(ty_self.check(
                                                 ty_other.as_ref_dispatcher(),
                                                 &mut inner_ctx
                                             )?);
+
+                                        cursor = self.next_block(cursor_self);
                                     }
+
+                                    Ok(match &self.tail {
+                                        SequenceTail::Nothing => all,
+                                        SequenceTail::Repeat(ty_self) => {
+                                            all & test_true!(ty_self.check(
+                                                ty_other.as_ref_dispatcher(),
+                                                &mut inner_ctx
+                                            )?)
+                                        }
+                                        SequenceTail::Cons(ty_self) => {
+                                            let viewed = Self {
+                                                prefix: v.prefix.clone(),
+                                                tail: v.tail.clone(),
+                                                source_info: v.source_info.clone(),
+                                                offset: v.prefix_len(),
+                                            };
+                                            all & test_true!(ty_self.check(
+                                                viewed.as_ref_dispatcher(),
+                                                &mut inner_ctx
+                                            )?)
+                                        }
+                                    })
                                 }
-                                all &= match &self.tail {
-                                    SequenceTail::Repeat(ty_self) => test_true!(
+                                SequenceTail::Cons(cons) => {
+                                    let offset = self.block_to_index(seek.0, seek.1);
+                                    let viewed = Self {
+                                        prefix: self.prefix.clone(),
+                                        tail: self.tail.clone(),
+                                        source_info: self.source_info.clone(),
+                                        offset,
+                                    };
+                                    all &= test_true!(
+                                        viewed.check(cons.as_ref_dispatcher(), &mut inner_ctx)?
+                                    );
+                                    return Ok(all);
+                                }
+                            }
+                        }
+
+                        (None, Some(seek)) => match &self.tail {
+                            SequenceTail::Nothing => Ok(ThreeValuedLogic::False),
+                            SequenceTail::Repeat(ty_self) => {
+                                let mut cursor = Some(seek);
+                                while let Some((cursor_other, _)) = cursor {
+                                    let ty_other = &v.prefix[cursor_other].0;
+                                    all &= test_true!(
                                         ty_self
                                             .check(ty_other.as_ref_dispatcher(), &mut inner_ctx)?
-                                    ),
-                                    _ => ThreeValuedLogic::False,
-                                };
-                                Ok(all)
+                                    );
+                                    cursor = v.next_block(cursor_other);
+                                }
+                                Ok(match &v.tail {
+                                    SequenceTail::Nothing => all,
+                                    SequenceTail::Repeat(ty_other) => {
+                                        all & test_true!(
+                                            ty_self.check(
+                                                ty_other.as_ref_dispatcher(),
+                                                &mut inner_ctx
+                                            )?
+                                        )
+                                    }
+                                    SequenceTail::Cons(cons) => {
+                                        let viewed = Self {
+                                            prefix: self.prefix.clone(),
+                                            tail: self.tail.clone(),
+                                            source_info: self.source_info.clone(),
+                                            offset: self.prefix_len(),
+                                        };
+                                        all & test_true!(
+                                            viewed
+                                                .check(cons.as_ref_dispatcher(), &mut inner_ctx)?
+                                        )
+                                    }
+                                })
                             }
-                            _ => Ok(ThreeValuedLogic::False),
+                            SequenceTail::Cons(cons) => {
+                                let offset = v.block_to_index(seek.0, seek.1);
+                                let viewed = Self {
+                                    prefix: v.prefix.clone(),
+                                    tail: v.tail.clone(),
+                                    source_info: v.source_info.clone(),
+                                    offset,
+                                };
+                                all &= test_true!(
+                                    cons.check(viewed.as_ref_dispatcher(), &mut inner_ctx)?
+                                );
+                                return Ok(all);
+                            }
                         },
-                        _ => Ok(ThreeValuedLogic::False),
+                        _ => unreachable!(),
                     }
                 }
                 _ => Ok(ThreeValuedLogic::False),
@@ -257,6 +326,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
         self.source_info.as_ref()
     }
 
+    fn tagged_ptr(&self) -> TaggedPtr<()> {
+        // 使用offset作为tag
+        // 由于使用prefix而没考虑tail部分，我们实际上假设了view操作不会改变结构本身，即不会因为tail部分的不同导致类型身份变化
+        TaggedPtr::new(self.prefix() as *const _ as *const (), self.offset)
+    }
+
     fn report_source_info(&self) -> crate::types::TypeReport {
         if let Some(loc) = self.source_info() {
             let span = loc.span().clone();
@@ -304,6 +379,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
             prefix: Arc::new(prefix_vec),
             tail: SequenceTail::Repeat(Arc::new(tail.into_dispatcher())),
             source_info,
+            offset: 0,
         }
         .dispatch()
     }
@@ -321,6 +397,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
             prefix: Arc::new(prefix_vec),
             tail: SequenceTail::Cons(Arc::new(tail.into_dispatcher())),
             source_info,
+            offset: 0,
         }
         .dispatch()
     }
@@ -337,6 +414,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
             prefix: Arc::new(prefix_vec),
             tail: SequenceTail::Nothing,
             source_info,
+            offset: 0,
         }
         .dispatch()
     }
@@ -347,6 +425,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         for (_, count) in self.prefix.iter() {
             total += count.get();
         }
+        total -= self.offset;
         match &self.tail {
             SequenceTail::Repeat(_) | SequenceTail::Cons(_) => Err(total),
             SequenceTail::Nothing => Ok(total),
@@ -358,11 +437,46 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         for (_, count) in self.prefix.iter() {
             total += count.get();
         }
-        total
+        total - self.offset
+    }
+
+    // 返回 (block_index, remaining_count_in_this_block)
+    // 如果 offset 超出了 prefix，返回 None
+    fn seek_prefix(&self) -> Option<(usize, usize)> {
+        let mut pending_offset = self.offset;
+
+        for (i, (_, count)) in self.prefix.iter().enumerate() {
+            let cnt = count.get();
+            if pending_offset < cnt {
+                // 找到了起点：在第 i 个块，还剩 cnt - pending_offset 个元素
+                return Some((i, cnt - pending_offset));
+            }
+            pending_offset -= cnt;
+        }
+
+        // Offset 超出了 Prefix，说明当前处于 Tail 区域
+        None
+    }
+
+    fn next_block(&self, current_idx: usize) -> Option<(usize, usize)> {
+        let next_idx = current_idx + 1;
+        if next_idx < self.prefix.len() {
+            Some((next_idx, self.prefix[next_idx].1.get()))
+        } else {
+            None
+        }
+    }
+
+    fn block_to_index(&self, block: usize, offset_in_block: usize) -> usize {
+        let mut index = 0;
+        for i in 0..block {
+            index += self.prefix[i].1.get();
+        }
+        index + (self.prefix[block].1.get() - offset_in_block)
     }
 
     pub fn get(&self, index: usize) -> Option<&Type<T>> {
-        let mut idx = index;
+        let mut idx = index + self.offset;
         for (ty, count) in self.prefix.iter() {
             let cnt = count.get();
             if idx < cnt {
@@ -399,9 +513,59 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
                     prefix: Arc::new(new_prefix),
                     tail: other.tail.clone(),
                     source_info: self.source_info.clone(),
+                    offset: self.offset,
                 })
             }
             _ => None,
+        }
+    }
+
+    pub fn view(&self, offset: usize) -> Option<Sequence<T>> {
+        match &self.tail {
+            SequenceTail::Nothing => {
+                let prefix_len = self.prefix_len();
+                if offset > prefix_len {
+                    None
+                } else {
+                    Some(Self {
+                        prefix: self.prefix.clone(),
+                        tail: SequenceTail::Nothing,
+                        source_info: self.source_info.clone(),
+                        offset: self.offset + offset,
+                    })
+                }
+            }
+            SequenceTail::Repeat(tail) => {
+                let prefix_len = self.prefix_len();
+                if offset <= prefix_len {
+                    Some(Self {
+                        prefix: self.prefix.clone(),
+                        tail: SequenceTail::Repeat(tail.clone()),
+                        source_info: self.source_info.clone(),
+                        offset: self.offset + offset,
+                    })
+                } else {
+                    Some(Self {
+                        prefix: self.prefix.clone(),
+                        tail: SequenceTail::Repeat(tail.clone()),
+                        source_info: self.source_info.clone(),
+                        offset: self.offset + prefix_len, // 直接跳到tail部分
+                    })
+                }
+            }
+            SequenceTail::Cons(tail) => {
+                let prefix_len = self.prefix_len();
+                if offset <= prefix_len {
+                    Some(Self {
+                        prefix: self.prefix.clone(),
+                        tail: SequenceTail::Cons(tail.clone()),
+                        source_info: self.source_info.clone(),
+                        offset: self.offset + offset,
+                    })
+                } else {
+                    None // 无法确定长度，无法view到tail部分
+                }
+            }
         }
     }
 }
