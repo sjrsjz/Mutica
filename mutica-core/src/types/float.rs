@@ -6,7 +6,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, float_value::FloatValue,
+        TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -113,11 +113,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
         ctx.arg
             .take(&mut FastCycleDetector::new(), |_, arg| match arg {
                 Type::FloatValue(_) => Ok(arg),
-                Type::NatureNumber(v) => {
-                    let float_value =
-                        FloatValue::<T>::new(v.len() as f64, ctx.source_info.cloned());
-                    Ok(float_value)
-                }
                 _ => Err(super::TypeError::TypeMismatch(
                     (arg, "FloatValue or IntegerValue".into()).into(),
                 )),

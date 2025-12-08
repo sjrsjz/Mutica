@@ -154,34 +154,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     }
                     Ok(all)
                 }
-                TypeRef::Construct(v) => match self.view(v.prefix().len()) {
-                    Some(tail) => {
-                        let prefix = v.prefix();
-                        let mut all = ThreeValuedLogic::True;
-                        for (i, x) in prefix.iter().enumerate() {
-                            all &= test_true!(
-                                self.get(i)
-                                    .unwrap()
-                                    .check(x.as_ref_dispatcher(), &mut inner_ctx)?
-                            );
-                        }
-                        all &=
-                            test_true!(tail.check(v.tail().as_ref_dispatcher(), &mut inner_ctx)?);
-                        Ok(all)
-                    }
-                    None => Ok(ThreeValuedLogic::False),
-                },
-                TypeRef::NatureNumber(v) => {
-                    if v.len() != self.len() {
-                        return Ok(ThreeValuedLogic::False);
-                    }
-                    let mut all = ThreeValuedLogic::True;
-                    for e in self.iter() {
-                        all &= test_true!(e.check(v.ty().as_ref_dispatcher(), &mut inner_ctx)?);
-                    }
-                    Ok(all)
-                }
-                TypeRef::Range(v) => {
+
+                TypeRef::Sequence(v) => {
                     if !v.contains(self.len()) {
                         return Ok(ThreeValuedLogic::False);
                     }
@@ -225,34 +199,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                     }
                     Ok(all)
                 }
-                TypeRef::Construct(v) => match self.view(v.prefix().len()) {
-                    Some(tail) => {
-                        let prefix = v.prefix();
-                        let mut all = ThreeValuedLogic::True;
-                        for (i, x) in prefix.iter().enumerate() {
-                            all &= test_true!(
-                                self.get(i)
-                                    .unwrap()
-                                    .subof(x.as_ref_dispatcher(), &mut inner_ctx)?
-                            );
-                        }
-                        all &=
-                            test_true!(tail.subof(v.tail().as_ref_dispatcher(), &mut inner_ctx)?);
-                        Ok(all)
-                    }
-                    None => Ok(ThreeValuedLogic::False),
-                },
-                TypeRef::NatureNumber(v) => {
-                    if v.len() != self.len() {
-                        return Ok(ThreeValuedLogic::False);
-                    }
-                    let mut all = ThreeValuedLogic::True;
-                    for e in self.iter() {
-                        all &= test_true!(e.subof(v.ty().as_ref_dispatcher(), &mut inner_ctx)?);
-                    }
-                    Ok(all)
-                }
-                TypeRef::Range(v) => {
+
+                TypeRef::Sequence(v) => {
                     if !v.contains(self.len()) {
                         return Ok(ThreeValuedLogic::False);
                     }

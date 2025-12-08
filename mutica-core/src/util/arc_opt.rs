@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 pub struct ArcOpt<T> {
     value: Arc<Option<T>>,
@@ -15,6 +15,14 @@ impl<T> Clone for ArcOpt<T> {
 impl<T> AsRef<T> for ArcOpt<T> {
     fn as_ref(&self) -> &T {
         self.value.as_ref().as_ref().expect("ArcOpt contains None")
+    }
+}
+
+impl<T> Deref for ArcOpt<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
     }
 }
 

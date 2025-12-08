@@ -5,7 +5,6 @@ pub mod anyof;
 pub mod character;
 pub mod character_value;
 pub mod closure;
-pub mod construct;
 pub mod eqof;
 pub mod fixpoint;
 pub mod float;
@@ -13,12 +12,11 @@ pub mod float_value;
 pub mod invoke;
 pub mod lazy;
 pub mod namespace;
-pub mod nature_number;
 pub mod opcode;
 pub mod ordered_type;
 pub mod pattern;
-pub mod range;
 pub mod rot;
+pub mod sequence;
 pub mod subof;
 pub mod tuple;
 pub mod type_bound;
@@ -41,7 +39,6 @@ use crate::{
         character::Character,
         character_value::CharacterValue,
         closure::{Closure, ClosureEnv, ParamEnv},
-        construct::Construct,
         eqof::EqOf,
         fixpoint::FixPoint,
         float::Float,
@@ -49,12 +46,11 @@ use crate::{
         invoke::Invoke,
         lazy::Lazy,
         namespace::Namespace,
-        nature_number::NatureNumber,
         opcode::Opcode,
         ordered_type::OrderedType,
         pattern::Pattern,
-        range::Range,
         rot::Rotate,
+        sequence::Sequence,
         subof::SubOf,
         tuple::Tuple,
         type_bound::TypeBound,
@@ -75,8 +71,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
     fn clone(&self) -> Self {
         match self {
             Type::Bound(v) => Type::<T>::Bound(v.clone()),
-            Type::Range(v) => Type::<T>::Range(v.clone()),
-            Type::NatureNumber(v) => Type::<T>::NatureNumber(v.clone()),
+            Type::Sequence(v) => Type::<T>::Sequence(v.clone()),
             Type::Float(v) => Type::<T>::Float(v.clone()),
             Type::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
             Type::Char(v) => Type::<T>::Char(v.clone()),
@@ -93,7 +88,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Pattern(v) => Type::<T>::Pattern(v.clone()),
             Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
             Type::Rot(v) => Type::<T>::Rot(v.clone()),
-            Type::Construct(v) => Type::<T>::Construct(v.clone()),
             Type::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
             Type::EqOf(v) => Type::<T>::EqOf(v.clone()),
             Type::SubOf(v) => Type::<T>::SubOf(v.clone()),
@@ -105,9 +99,7 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     // 类型边界
     Bound(TypeBound<T>),
     // 整数类型
-    Range(Range<T>),
-    // 整数值类型
-    NatureNumber(NatureNumber<T>),
+    Sequence(Sequence<T>),
     // 浮点类型
     Float(Float<T>),
     // 浮点值类型
@@ -140,8 +132,6 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Lazy(Lazy<T>),
     // Rot变换
     Rot(Rotate<T>),
-    // Construct类型
-    Construct(Construct<T>),
     // 高阶类型
     OrderedType(OrderedType<T>),
     // 单例等价类型
@@ -152,8 +142,7 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Bound(&'a TypeBound<T>),
-    Range(&'a Range<T>),
-    NatureNumber(&'a NatureNumber<T>),
+    Sequence(&'a Sequence<T>),
     Float(&'a Float<T>),
     FloatValue(&'a FloatValue<T>),
     Char(&'a Character<T>),
@@ -170,7 +159,6 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Pattern(&'a Pattern<T>),
     Lazy(&'a Lazy<T>),
     Rot(&'a Rotate<T>),
-    Construct(&'a Construct<T>),
     OrderedType(&'a OrderedType<T>),
     EqOf(&'a EqOf<T>),
     SubOf(&'a SubOf<T>),
@@ -208,8 +196,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         match self {
             TypeRef::Bound(v) => v.check(other, ctx),
-            TypeRef::Range(v) => v.check(other, ctx),
-            TypeRef::NatureNumber(v) => v.check(other, ctx),
+            TypeRef::Sequence(v) => v.check(other, ctx),
             TypeRef::Float(v) => v.check(other, ctx),
             TypeRef::FloatValue(v) => v.check(other, ctx),
             TypeRef::Char(v) => v.check(other, ctx),
@@ -226,7 +213,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Pattern(v) => v.check(other, ctx),
             TypeRef::Lazy(v) => v.check(other, ctx),
             TypeRef::Rot(v) => v.check(other, ctx),
-            TypeRef::Construct(v) => v.check(other, ctx),
             TypeRef::OrderedType(v) => v.check(other, ctx),
             TypeRef::EqOf(v) => v.check(other, ctx),
             TypeRef::SubOf(v) => v.check(other, ctx),
@@ -240,8 +226,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         match self {
             TypeRef::Bound(v) => v.subof(other, ctx),
-            TypeRef::Range(v) => v.subof(other, ctx),
-            TypeRef::NatureNumber(v) => v.subof(other, ctx),
+            TypeRef::Sequence(v) => v.subof(other, ctx),
             TypeRef::Float(v) => v.subof(other, ctx),
             TypeRef::FloatValue(v) => v.subof(other, ctx),
             TypeRef::Char(v) => v.subof(other, ctx),
@@ -258,7 +243,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Pattern(v) => v.subof(other, ctx),
             TypeRef::Lazy(v) => v.subof(other, ctx),
             TypeRef::Rot(v) => v.subof(other, ctx),
-            TypeRef::Construct(v) => v.subof(other, ctx),
             TypeRef::OrderedType(v) => v.subof(other, ctx),
             TypeRef::EqOf(v) => v.subof(other, ctx),
             TypeRef::SubOf(v) => v.subof(other, ctx),
@@ -268,8 +252,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         match self {
             TypeRef::Bound(v) => v.tagged_ptr(),
-            TypeRef::Range(v) => v.tagged_ptr(),
-            TypeRef::NatureNumber(v) => v.tagged_ptr(),
+            TypeRef::Sequence(v) => v.tagged_ptr(),
             TypeRef::Float(v) => v.tagged_ptr(),
             TypeRef::FloatValue(v) => v.tagged_ptr(),
             TypeRef::Char(v) => v.tagged_ptr(),
@@ -286,7 +269,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Pattern(v) => v.tagged_ptr(),
             TypeRef::Lazy(v) => v.tagged_ptr(),
             TypeRef::Rot(v) => v.tagged_ptr(),
-            TypeRef::Construct(v) => v.tagged_ptr(),
             TypeRef::OrderedType(v) => v.tagged_ptr(),
             TypeRef::EqOf(v) => v.tagged_ptr(),
             TypeRef::SubOf(v) => v.tagged_ptr(),
@@ -300,8 +282,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         match self {
             TypeRef::Bound(v) => v.source_info(),
-            TypeRef::Range(v) => v.source_info(),
-            TypeRef::NatureNumber(v) => v.source_info(),
+            TypeRef::Sequence(v) => v.source_info(),
             TypeRef::Float(v) => v.source_info(),
             TypeRef::FloatValue(v) => v.source_info(),
             TypeRef::Char(v) => v.source_info(),
@@ -318,7 +299,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Pattern(v) => v.source_info(),
             TypeRef::Lazy(v) => v.source_info(),
             TypeRef::Rot(v) => v.source_info(),
-            TypeRef::Construct(v) => v.source_info(),
             TypeRef::OrderedType(v) => v.source_info(),
             TypeRef::EqOf(v) => v.source_info(),
             TypeRef::SubOf(v) => v.source_info(),
@@ -328,8 +308,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     fn report_source_info(&self) -> TypeReport {
         match self {
             TypeRef::Bound(v) => v.report_source_info(),
-            TypeRef::Range(v) => v.report_source_info(),
-            TypeRef::NatureNumber(v) => v.report_source_info(),
+            TypeRef::Sequence(v) => v.report_source_info(),
             TypeRef::Float(v) => v.report_source_info(),
             TypeRef::FloatValue(v) => v.report_source_info(),
             TypeRef::Char(v) => v.report_source_info(),
@@ -346,7 +325,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Pattern(v) => v.report_source_info(),
             TypeRef::Lazy(v) => v.report_source_info(),
             TypeRef::Rot(v) => v.report_source_info(),
-            TypeRef::Construct(v) => v.report_source_info(),
             TypeRef::OrderedType(v) => v.report_source_info(),
             TypeRef::EqOf(v) => v.report_source_info(),
             TypeRef::SubOf(v) => v.report_source_info(),
@@ -358,8 +336,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
     pub fn clone_data(self) -> Type<T> {
         match self {
             TypeRef::Bound(v) => Type::<T>::Bound(v.clone()),
-            TypeRef::Range(v) => Type::<T>::Range(v.clone()),
-            TypeRef::NatureNumber(v) => Type::<T>::NatureNumber(v.clone()),
+            TypeRef::Sequence(v) => Type::<T>::Sequence(v.clone()),
             TypeRef::Float(v) => Type::<T>::Float(v.clone()),
             TypeRef::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
             TypeRef::Char(v) => Type::<T>::Char(v.clone()),
@@ -376,7 +353,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Pattern(v) => Type::<T>::Pattern(v.clone()),
             TypeRef::Lazy(v) => Type::<T>::Lazy(v.clone()),
             TypeRef::Rot(v) => Type::<T>::Rot(v.clone()),
-            TypeRef::Construct(v) => Type::<T>::Construct(v.clone()),
             TypeRef::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
             TypeRef::EqOf(v) => Type::<T>::EqOf(v.clone()),
             TypeRef::SubOf(v) => Type::<T>::SubOf(v.clone()),
@@ -893,8 +869,7 @@ macro_rules! type_dispatch {
     ($self:expr, $method:ident $(, $args:expr)*) => {
         match $self {
             Type::Bound(v) => v.$method($($args),*),
-            Type::Range(v) => v.$method($($args),*),
-            Type::NatureNumber(v) => v.$method($($args),*),
+            Type::Sequence(v) => v.$method($($args),*),
             Type::Float(v) => v.$method($($args),*),
             Type::FloatValue(v) => v.$method($($args),*),
             Type::Tuple(v) => v.$method($($args),*),
@@ -911,7 +886,6 @@ macro_rules! type_dispatch {
             Type::Pattern(v) => v.$method($($args),*),
             Type::Lazy(v) => v.$method($($args),*),
             Type::Rot(v) => v.$method($($args),*),
-            Type::Construct(v) => v.$method($($args),*),
             Type::OrderedType(v) => v.$method($($args),*),
             Type::EqOf(v) => v.$method($($args),*),
             Type::SubOf(v) => v.$method($($args),*),
@@ -1093,8 +1067,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
     fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
         match self {
             Type::Bound(v) => TypeRef::Bound(v),
-            Type::Range(v) => TypeRef::Range(v),
-            Type::NatureNumber(v) => TypeRef::NatureNumber(v),
+            Type::Sequence(v) => TypeRef::Sequence(v),
             Type::Float(v) => TypeRef::Float(v),
             Type::FloatValue(v) => TypeRef::FloatValue(v),
             Type::Char(v) => TypeRef::Char(v),
@@ -1111,7 +1084,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::Rot(v) => TypeRef::Rot(v),
-            Type::Construct(v) => TypeRef::Construct(v),
             Type::OrderedType(v) => TypeRef::OrderedType(v),
             Type::EqOf(v) => TypeRef::EqOf(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
@@ -1133,8 +1105,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
     fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
         match self {
             Type::Bound(v) => TypeRef::Bound(v),
-            Type::Range(v) => TypeRef::Range(v),
-            Type::NatureNumber(v) => TypeRef::NatureNumber(v),
+            Type::Sequence(v) => TypeRef::Sequence(v),
             Type::Float(v) => TypeRef::Float(v),
             Type::FloatValue(v) => TypeRef::FloatValue(v),
             Type::Char(v) => TypeRef::Char(v),
@@ -1151,7 +1122,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::Rot(v) => TypeRef::Rot(v),
-            Type::Construct(v) => TypeRef::Construct(v),
             Type::OrderedType(v) => TypeRef::OrderedType(v),
             Type::EqOf(v) => TypeRef::EqOf(v),
             Type::SubOf(v) => TypeRef::SubOf(v),

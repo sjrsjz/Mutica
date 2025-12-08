@@ -23,7 +23,7 @@ use mutica_core::types::nature_number::NatureNumber;
 use mutica_core::types::opcode::{Opcode, OpcodeKind};
 use mutica_core::types::ordered_type::OrderedType;
 use mutica_core::types::pattern::Pattern;
-use mutica_core::types::range::Range;
+use mutica_core::types::sequence::Sequence;
 use mutica_core::types::rot::Rotate;
 use mutica_core::types::subof::SubOf;
 use mutica_core::types::tuple::Tuple;
@@ -1977,7 +1977,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 let ty_result =
                     ty.to_type(ctx, pattern_counter, pattern_mode, gc, roots, ty.location())?;
                 Ok(BuildResult::complex(
-                    Range::new(*min, *delta, ty_result.ty, loc.cloned().map(Arc::new)),
+                    Sequence::new(*min, *delta, ty_result.ty, loc.cloned().map(Arc::new)),
                     ty_result.patterns,
                 ))
             }

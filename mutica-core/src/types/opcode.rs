@@ -4,7 +4,7 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        closure::{Closure, ClosureEnv}, fixpoint::FixPoint, float_value::FloatValue, nature_number::NatureNumber, invoke::Invoke, pattern::Pattern, tuple::Tuple, type_bound::TypeBound, variable::Variable, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
+        closure::{Closure, ClosureEnv}, fixpoint::FixPoint, float_value::FloatValue, invoke::Invoke, pattern::Pattern, tuple::Tuple, type_bound::TypeBound, variable::Variable, AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector, source_info::SourceLocation,
