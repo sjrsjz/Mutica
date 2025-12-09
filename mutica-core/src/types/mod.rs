@@ -1294,6 +1294,22 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         Ok(sub_ab & sub_ba)
     }
 
+    fn pure_equals<'a>(&'a self, other: Self::RefDispatcher<'a>) -> bool {
+        let closure_env = ClosureEnv::new(Vec::<U>::new());
+        match self.equals(
+            other,
+            &mut TypeCheckContext {
+                assumptions: &mut SmallVec::new(),
+                closure_env: (&closure_env, &closure_env),
+                pattern_env: &mut Collector::new(),
+                rhs: false,
+            },
+        ) {
+            Ok(result) => result == ThreeValuedLogic::True,
+            Err(_) => false,
+        }
+    }
+
     // 归约变换
     fn reduce(self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
 

@@ -177,7 +177,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                             for _ in 0..suffix_len {
                                 let elem = &self.iter().nth(cursor).unwrap();
                                 all &=
-                                    test_true!(elem.check(ty.as_ref_dispatcher(), &mut inner_ctx)?);
+                                    test_true!(elem.check(ty.0.as_ref_dispatcher(), &mut inner_ctx)?);
                                 cursor += 1;
                             }
                             Ok(all)
@@ -252,7 +252,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                             for _ in 0..suffix_len {
                                 let elem = &self.iter().nth(cursor).unwrap();
                                 all &=
-                                    test_true!(elem.subof(ty.as_ref_dispatcher(), &mut inner_ctx)?);
+                                    test_true!(elem.subof(ty.0.as_ref_dispatcher(), &mut inner_ctx)?);
                                 cursor += 1;
                             }
                             Ok(all)
