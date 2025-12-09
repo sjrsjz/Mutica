@@ -133,10 +133,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
                 .finish()
         } else {
             ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                .with_message(format!(
-                    "Character value {:?} has no source location",
-                    self.value
-                ))
+                .with_message(format!("Character value {:?} has no source location", self.value))
                 .with_label(
                     ariadne::Label::new(("<unknown>".to_string(), 0..0))
                         .with_message("Location unknown"),
@@ -169,12 +166,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for CharacterValue<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> CharacterValue<T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(value: char, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        CharacterValue {
-            value,
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
-        .dispatch()
+        CharacterValue { value, source_info, _phantom: std::marker::PhantomData }.dispatch()
     }
 
     pub fn value(&self) -> char {

@@ -36,22 +36,14 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> RootStack<U, V> {
 
     /// 将一个类型连接到当前根栈
     pub fn attach(&mut self, ty: &U) {
-        ty.upgrade(if self.flag {
-            &mut self.roots_b
-        } else {
-            &mut self.roots_a
-        });
+        ty.upgrade(if self.flag { &mut self.roots_b } else { &mut self.roots_a });
     }
 
     /// 切换当前根栈并清理
     /// 将当前根栈清空，并重新收集
     pub fn sweep(&mut self) {
         // 1. 获取非活跃堆栈作为目标
-        let target_stack = if self.flag {
-            &mut self.roots_a
-        } else {
-            &mut self.roots_b
-        };
+        let target_stack = if self.flag { &mut self.roots_a } else { &mut self.roots_b };
         target_stack.clear();
         self.flag = !self.flag;
     }

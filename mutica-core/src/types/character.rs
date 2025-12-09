@@ -21,10 +21,7 @@ pub struct Character<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Character<T> {
     fn clone(&self) -> Self {
-        Self {
-            source_info: self.source_info.clone(),
-            _phantom: std::marker::PhantomData,
-        }
+        Self { source_info: self.source_info.clone(), _phantom: std::marker::PhantomData }
     }
 }
 
@@ -154,10 +151,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Character<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Character<T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Character {
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
-        .dispatch()
+        Character { source_info, _phantom: std::marker::PhantomData }.dispatch()
     }
 }

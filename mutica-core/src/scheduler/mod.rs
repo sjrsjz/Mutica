@@ -97,32 +97,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             if !matches!(f, TypeRef::Opcode(_)) {
                 return Ok(None);
             }
-            let TypeRef::Opcode(op) = f else {
-                unreachable!()
-            };
+            let TypeRef::Opcode(op) = f else { unreachable!() };
             if !matches!(&op.kind, crate::types::opcode::OpcodeKind::IO(_)) {
                 return Ok(None);
             }
-            let crate::types::opcode::OpcodeKind::IO(io_name) = &op.kind else {
-                unreachable!()
-            };
+            let crate::types::opcode::OpcodeKind::IO(io_name) = &op.kind else { unreachable!() };
             match io_name.as_ref().as_str() {
                 // 基本IO操作
                 "print" => {
                     let str = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
                     print!("{}", str);
-                    Ok(Some(Tuple::new(
-                        Vec::<Type<T>>::new(),
-                        source_info.cloned(),
-                    )))
+                    Ok(Some(Tuple::new(Vec::<Type<T>>::new(), source_info.cloned())))
                 }
                 "println" => {
                     let str = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
                     println!("{}", str);
-                    Ok(Some(Tuple::new(
-                        Vec::<Type<T>>::new(),
-                        source_info.cloned(),
-                    )))
+                    Ok(Some(Tuple::new(Vec::<Type<T>>::new(), source_info.cloned())))
                 }
                 "input" => {
                     let mut input = String::new();
@@ -136,10 +126,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 "flush" => {
                     use std::io;
                     io::stdout().flush().unwrap();
-                    Ok(Some(Tuple::new(
-                        Vec::<Type<T>>::new(),
-                        source_info.cloned(),
-                    )))
+                    Ok(Some(Tuple::new(Vec::<Type<T>>::new(), source_info.cloned())))
                 }
                 // 类型表示相关
                 "repr" => {
@@ -195,10 +182,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             Ok(Some(Tuple::new(elements, source_info.cloned())))
                         }
                         _ => Err(TypeError::TypeMismatch(
-                            (
-                                arg.clone_data(),
-                                "Tuple | List | Generalize | Specialize".into(),
-                            )
+                            (arg.clone_data(), "Tuple | List | Generalize | Specialize".into())
                                 .into(),
                         )),
                     })?
@@ -211,11 +195,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     Ok(Some(Tuple::new(
                         vec![
                             NatureNumber::new(id.index(), Tuple::unit(), source_info.cloned()),
-                            NatureNumber::new(
-                                id.generation(),
-                                Tuple::unit(),
-                                source_info.cloned(),
-                            ),
+                            NatureNumber::new(id.generation(), Tuple::unit(), source_info.cloned()),
                         ],
                         source_info.cloned(),
                     )))
@@ -233,27 +213,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             if let (
                                 TypeRef::NatureNumber(index_iv),
                                 TypeRef::NatureNumber(gen_iv),
-                            ) = (
-                                index_ty.as_ref_dispatcher(),
-                                generation_ty.as_ref_dispatcher(),
-                            ) {
+                            ) = (index_ty.as_ref_dispatcher(), generation_ty.as_ref_dispatcher())
+                            {
                                 let index = index_iv.len();
                                 let generation = gen_iv.len();
-                                self.allocated_types
-                                    .dealloc(Id::from_parts(index, generation));
-                                Ok(Some(Tuple::new(
-                                    Vec::<Type<T>>::new(),
-                                    source_info.cloned(),
-                                )))
+                                self.allocated_types.dealloc(Id::from_parts(index, generation));
+                                Ok(Some(Tuple::new(Vec::<Type<T>>::new(), source_info.cloned())))
                             } else {
                                 Err(TypeError::TypeMismatch(
                                     (arg.clone_data(), "Tuple of two IntegerValues".into()).into(),
                                 ))
                             }
                         } else {
-                            Err(TypeError::TypeMismatch(
-                                (arg.clone_data(), "Tuple".into()).into(),
-                            ))
+                            Err(TypeError::TypeMismatch((arg.clone_data(), "Tuple".into()).into()))
                         }
                     })?
                     .unwrap_or(Err(TypeError::UnresolvableType(
@@ -290,9 +262,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 ))
                             }
                         } else {
-                            Err(TypeError::TypeMismatch(
-                                (arg.clone_data(), "Tuple".into()).into(),
-                            ))
+                            Err(TypeError::TypeMismatch((arg.clone_data(), "Tuple".into()).into()))
                         }
                     })?
                     .unwrap_or(Err(TypeError::UnresolvableType(
@@ -364,9 +334,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                     "Could not resolve id in set argument".into(),
                                 )))
                         } else {
-                            Err(TypeError::TypeMismatch(
-                                (arg.clone_data(), "Tuple".into()).into(),
-                            ))
+                            Err(TypeError::TypeMismatch((arg.clone_data(), "Tuple".into()).into()))
                         }
                     })?
                     .unwrap_or(Err(TypeError::UnresolvableType(
@@ -376,16 +344,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 _ => Ok(None),
             }
         })?
-        .unwrap_or(Err(TypeError::UnresolvableType(
-            "Could not resolve set argument".into(),
-        )))
+        .unwrap_or(Err(TypeError::UnresolvableType("Could not resolve set argument".into())))
     }
 
     pub async fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
         let empty_v = ClosureEnv::new(Vec::<Type<T>>::new());
-        let empty_p = ParamEnv::from_collector(&mut Collector::new(), 0)
-            .unwrap()
-            .unwrap();
+        let empty_p = ParamEnv::from_collector(&mut Collector::new(), 0).unwrap().unwrap();
 
         // 在 await 之前完成所有需要 rec_assumptions 的工作
         let current_type = self.current_type.take().ok_or_else(|| {
@@ -429,13 +393,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             self.cont_stack.push(ContinuationOrHandler::Continuation(v))
                         }
                         InvokeCountinuationStyle::WithPerformHandler(v) => {
-                            self.cont_stack
-                                .push(ContinuationOrHandler::PerformHandler(v));
+                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(v));
                         }
                         InvokeCountinuationStyle::WithBoth(a, b) => {
                             self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                            self.cont_stack
-                                .push(ContinuationOrHandler::PerformHandler(b));
+                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(b));
                         }
                     }
                     self.cont_stack.fork(index); // 踢掉perform handler及其上面的frame
@@ -456,7 +418,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     // 然后找到最近的Continuation
                     let continuation = loop {
                         match self.cont_stack.pop_and_auto_defork() {
-                            Some(ContinuationOrHandler::Continuation(v)) => break Some(v),
+                            Some(ContinuationOrHandler::Continuation(v)) => {
+                                break Some(v);
+                            }
                             Some(ContinuationOrHandler::PerformHandler(_)) => continue,
                             None => break None,
                         }
@@ -467,13 +431,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             self.cont_stack.push(ContinuationOrHandler::Continuation(v))
                         }
                         InvokeCountinuationStyle::WithPerformHandler(v) => {
-                            self.cont_stack
-                                .push(ContinuationOrHandler::PerformHandler(v));
+                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(v));
                         }
                         InvokeCountinuationStyle::WithBoth(a, b) => {
                             self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                            self.cont_stack
-                                .push(ContinuationOrHandler::PerformHandler(b));
+                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(b));
                         }
                     }
                     let break_invoke = match continuation {
@@ -496,13 +458,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             self.cont_stack.push(ContinuationOrHandler::Continuation(v))
                         }
                         InvokeCountinuationStyle::WithPerformHandler(v) => {
-                            self.cont_stack
-                                .push(ContinuationOrHandler::PerformHandler(v));
+                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(v));
                         }
                         InvokeCountinuationStyle::WithBoth(a, b) => {
                             self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                            self.cont_stack
-                                .push(ContinuationOrHandler::PerformHandler(b));
+                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(b));
                         }
                     }
                     let view = match self.cont_stack.skip_frames(1) {
@@ -549,13 +509,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     self.cont_stack.push(ContinuationOrHandler::Continuation(v))
                 }
                 InvokeCountinuationStyle::WithPerformHandler(v) => {
-                    self.cont_stack
-                        .push(ContinuationOrHandler::PerformHandler(v));
+                    self.cont_stack.push(ContinuationOrHandler::PerformHandler(v));
                 }
                 InvokeCountinuationStyle::WithBoth(a, b) => {
                     self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                    self.cont_stack
-                        .push(ContinuationOrHandler::PerformHandler(b));
+                    self.cont_stack.push(ContinuationOrHandler::PerformHandler(b));
                 }
             };
             (invoke_result, true)

@@ -12,9 +12,7 @@ impl<T> Default for Collector<T> {
 
 impl<T> Collector<T> {
     pub fn new() -> Self {
-        Self {
-            items: Some(smallvec::SmallVec::new()),
-        }
+        Self { items: Some(smallvec::SmallVec::new()) }
     }
 
     /// 声明一个禁用的 Collector，所有操作都将直接生效且不进行收集

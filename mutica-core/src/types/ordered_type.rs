@@ -52,12 +52,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> OrderedType<T> {
 
     #[allow(clippy::new_ret_no_self)]
     pub fn new(level: usize, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Self {
-            level,
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
-        .dispatch()
+        Self { level, source_info, _phantom: std::marker::PhantomData }.dispatch()
     }
 }
 

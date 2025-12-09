@@ -83,9 +83,7 @@ impl<T> IdAllocator<T> {
             } else {
                 self.free_list_head // 链表的尾部接上旧的链表头
             };
-            self.entries.push(Entry::Free {
-                next_free_index: next_free,
-            });
+            self.entries.push(Entry::Free { next_free_index: next_free });
             self.generations.push(0);
         }
 
@@ -123,10 +121,7 @@ impl<T> IdAllocator<T> {
         }
 
         let generation = self.generations[new_id_index];
-        Id {
-            index: new_id_index,
-            generation,
-        }
+        Id { index: new_id_index, generation }
     }
 
     /// 移除一个 ID 并返回其存储的数据
@@ -156,11 +151,7 @@ impl<T> IdAllocator<T> {
             self.free_list_head = id.index;
             self.generations[id.index] = self.generations[id.index].wrapping_add(1);
 
-            if let Entry::Occupied(value) = old_entry {
-                Some(value)
-            } else {
-                None
-            }
+            if let Entry::Occupied(value) = old_entry { Some(value) } else { None }
         } else {
             // 尝试释放一个已经空闲的 ID
             None

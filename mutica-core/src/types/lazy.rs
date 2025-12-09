@@ -17,9 +17,7 @@ pub struct Lazy<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lazy<T> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -185,10 +183,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<T> {
         value: X,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
-        Self {
-            inner: ArcOpt::new((value.into_dispatcher(), source_info)),
-        }
-        .dispatch()
+        Self { inner: ArcOpt::new((value.into_dispatcher(), source_info)) }.dispatch()
     }
 
     pub fn value(&self) -> &Type<T> {

@@ -27,10 +27,7 @@ pub struct AllOf<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for AllOf<T> {
     fn clone(&self) -> Self {
-        Self {
-            types: self.types.clone(),
-            source_info: self.source_info.clone(),
-        }
+        Self { types: self.types.clone(), source_info: self.source_info.clone() }
     }
 }
 
@@ -233,11 +230,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
         match collected.len() {
             0 => panic!("Specialize requires at least one type"),
             1 => collected.into_iter().next().unwrap(),
-            _ => Self {
-                types: Arc::from(collected),
-                source_info,
-            }
-            .dispatch(),
+            _ => Self { types: Arc::from(collected), source_info }.dispatch(),
         }
     }
 

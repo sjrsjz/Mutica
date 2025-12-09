@@ -29,9 +29,7 @@ impl GcAllocObject<TypeGcOnceLock> for TypeGcOnceLock {
     type Inner = Type<TypeGcOnceLock>;
 
     fn new_placeholder() -> Self {
-        TypeGcOnceLock {
-            inner: OnceLock::new(),
-        }
+        TypeGcOnceLock { inner: OnceLock::new() }
     }
 
     fn get_value(&self) -> Option<&Self::Inner> {
@@ -45,14 +43,11 @@ impl GcAllocObject<TypeGcOnceLock> for TypeGcOnceLock {
             <Self::Inner as AsDispatcher<Self::Inner, TypeGcOnceLock>>::RefDispatcher<'_>,
         ) -> R,
     {
-        self.get_value()
-            .map(|inner| f(path, inner.as_ref_dispatcher()))
+        self.get_value().map(|inner| f(path, inner.as_ref_dispatcher()))
     }
 
     fn set_value(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, TypeGcOnceLock>> {
-        self.inner
-            .set(_value)
-            .map_err(|_| TypeError::RedeclaredType)
+        self.inner.set(_value).map_err(|_| TypeError::RedeclaredType)
     }
 
     fn take_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
@@ -144,9 +139,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
                     MultiFileBuilderError::SyntaxError(e) => {
                         let syntax_error = SyntaxError::new(e.clone());
                         let report = syntax_error.report(filepath.clone(), &source_content, None);
-                        report
-                            .eprint((filepath, ariadne::Source::from(source_content)))
-                            .ok();
+                        report.eprint((filepath, ariadne::Source::from(source_content))).ok();
                     }
                     MultiFileBuilderError::RecoveryError(e) => {
                         let report = mutica_compiler::parser::report_error_recovery(
@@ -154,15 +147,11 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
                             filepath.clone(),
                             &source_content,
                         );
-                        report
-                            .eprint((filepath, ariadne::Source::from(source_content)))
-                            .ok();
+                        report.eprint((filepath, ariadne::Source::from(source_content))).ok();
                     }
                     MultiFileBuilderError::IOError(e) => {
-                        let range = error_with_loc
-                            .location()
-                            .map(|r| r.span().clone())
-                            .unwrap_or(0..0);
+                        let range =
+                            error_with_loc.location().map(|r| r.span().clone()).unwrap_or(0..0);
                         ariadne::Report::build(
                             ariadne::ReportKind::Error,
                             filepath.as_str(),
@@ -180,18 +169,11 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
     };
 
     // println!("Basic AST: {:#?}", basic);
-    let linearized = basic
-        .0
-        .linearize(&mut LinearizeContext::new(), basic.0.location())
-        .finalize();
+    let linearized = basic.0.linearize(&mut LinearizeContext::new(), basic.0.location()).finalize();
     // println!("Linearized AST: {:#?}", linearized);
     let mut flow_errors = Vec::new();
-    let flowed = linearized.flow(
-        &mut ParseContext::new(),
-        false,
-        linearized.location(),
-        &mut flow_errors,
-    );
+    let flowed =
+        linearized.flow(&mut ParseContext::new(), false, linearized.location(), &mut flow_errors);
 
     if !flow_errors.is_empty() {
         // 获取源文件信息用于错误报告
@@ -200,17 +182,13 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
         // 报告所有错误
         let mut has_error = false;
         for e in &flow_errors {
-            let filepath = e
-                .location()
-                .map(|loc| loc.source().filepath())
-                .unwrap_or_else(|| filepath.clone());
+            let filepath =
+                e.location().map(|loc| loc.source().filepath()).unwrap_or_else(|| filepath.clone());
             let source_content = e
                 .location()
                 .map(|loc| loc.source().content().to_string())
                 .unwrap_or_else(|| source_content.to_string());
-            e.report()
-                .eprint((filepath, ariadne::Source::from(source_content)))
-                .ok();
+            e.report().eprint((filepath, ariadne::Source::from(source_content))).ok();
             if !e.is_warning() {
                 has_error = true;
             }
@@ -241,18 +219,12 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
             // 获取源文件信息用于错误报告
             let filepath = source.filepath();
             let source_content = source.content().to_string();
-            parse_error
-                .report()
-                .eprint((filepath, ariadne::Source::from(source_content)))
-                .ok();
+            parse_error.report().eprint((filepath, ariadne::Source::from(source_content))).ok();
             return;
         }
     };
     #[cfg(debug_assertions)]
-    println!(
-        "Built type: {}\n",
-        built_type.ty().display(&mut FastCycleDetector::new(), 0, 2)
-    );
+    println!("Built type: {}\n", built_type.ty().display(&mut FastCycleDetector::new(), 0, 2));
 
     let mut linear_scheduler =
         roots.context(|_| scheduler::LinearScheduler::new(built_type.ty().clone(), None)); // 确保 roots 直到 linear_scheduler 被创建完成才丢弃
@@ -364,10 +336,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
             .map(&mut FastCycleDetector::new(), |_, ty| match ty {
                 TypeRef::Tuple(tuple) if tuple.is_empty() => (),
                 _ => {
-                    println!(
-                        "{}",
-                        v.display(&mut FastCycleDetector::new(), 0, usize::MAX)
-                    );
+                    println!("{}", v.display(&mut FastCycleDetector::new(), 0, usize::MAX));
                 }
             })
             .unwrap_or_else(|e| panic!("Error during type mapping: {:?}", e))

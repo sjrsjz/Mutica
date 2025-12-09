@@ -79,12 +79,7 @@ impl<'ast> SourceMapping<'ast> {
                     Self::build_mapping(expr, mapping, source_file);
                 }
             }
-            LinearTypeAst::Invoke {
-                func,
-                arg,
-                continuation,
-                perform_handler,
-            } => {
+            LinearTypeAst::Invoke { func, arg, continuation, perform_handler } => {
                 if let Some(perform_handler) = perform_handler {
                     Self::build_mapping(perform_handler, mapping, source_file);
                 }
@@ -126,20 +121,14 @@ impl<'ast> SourceMapping<'ast> {
         &self,
         byte_offset: usize,
     ) -> Option<&'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>> {
-        if byte_offset < self.mapping.len() {
-            self.mapping[byte_offset]
-        } else {
-            None
-        }
+        if byte_offset < self.mapping.len() { self.mapping[byte_offset] } else { None }
     }
 
     pub fn get_reference(
         &self,
         byte_offset: usize,
     ) -> Option<WithLocation<Option<&LinearTypeAst<'ast>>>> {
-        self.at(byte_offset)
-            .map(|node| node.payload().reference())
-            .and_then(|r| r.cloned())
+        self.at(byte_offset).map(|node| node.payload().reference()).and_then(|r| r.cloned())
     }
 
     pub fn get_variable_context(&self, byte_offset: usize) -> Option<&[WithLocation<String>]> {
@@ -241,9 +230,7 @@ mod test {
                             let syntax_error = SyntaxError::new(e.clone());
                             let report =
                                 syntax_error.report(filepath.clone(), &source_content, None);
-                            report
-                                .eprint((filepath, ariadne::Source::from(source_content)))
-                                .ok();
+                            report.eprint((filepath, ariadne::Source::from(source_content))).ok();
                         }
                         MultiFileBuilderError::RecoveryError(e) => {
                             let report = mutica_compiler::parser::report_error_recovery(
@@ -264,10 +251,8 @@ mod test {
             }
         };
 
-        let linearized = basic
-            .0
-            .linearize(&mut LinearizeContext::new(), basic.0.location())
-            .finalize();
+        let linearized =
+            basic.0.linearize(&mut LinearizeContext::new(), basic.0.location()).finalize();
 
         let mut flow_errors = Vec::new();
         let flowed = linearized.flow(
@@ -285,10 +270,7 @@ mod test {
             let mut has_error = false;
             for e in &flow_errors {
                 e.report()
-                    .eprint((
-                        filepath.clone(),
-                        ariadne::Source::from(source_content.clone()),
-                    ))
+                    .eprint((filepath.clone(), ariadne::Source::from(source_content.clone())))
                     .ok();
                 if !e.is_warning() {
                     has_error = true;
@@ -355,10 +337,7 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
 
         let path = PathBuf::from("<test>");
 
-        println!(
-            "\n{}\n",
-            "=== Parsing and building mapping ===".bright_white().bold()
-        );
+        println!("\n{}\n", "=== Parsing and building mapping ===".bright_white().bold());
 
         // 使用 MultiFileBuilder 来构建整个项目
         let mut imported_ast = HashMap::new();
@@ -380,9 +359,7 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
                             let syntax_error = SyntaxError::new(e.clone());
                             let report =
                                 syntax_error.report(filepath.clone(), &source_content, None);
-                            report
-                                .eprint((filepath, ariadne::Source::from(source_content)))
-                                .ok();
+                            report.eprint((filepath, ariadne::Source::from(source_content))).ok();
                         }
                         MultiFileBuilderError::RecoveryError(e) => {
                             let report = mutica_compiler::parser::report_error_recovery(
@@ -390,9 +367,7 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
                                 filepath.clone(),
                                 &source_content,
                             );
-                            report
-                                .eprint((filepath, ariadne::Source::from(source_content)))
-                                .ok();
+                            report.eprint((filepath, ariadne::Source::from(source_content))).ok();
                         }
                         MultiFileBuilderError::IOError(e) => {
                             eprintln!("IO Error: {}", e);

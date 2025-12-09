@@ -6,9 +6,7 @@ pub struct ArcOpt<T> {
 
 impl<T> Clone for ArcOpt<T> {
     fn clone(&self) -> Self {
-        Self {
-            value: Arc::clone(&self.value),
-        }
+        Self { value: Arc::clone(&self.value) }
     }
 }
 
@@ -28,9 +26,7 @@ impl<T> Deref for ArcOpt<T> {
 
 impl<T> ArcOpt<T> {
     pub fn new(value: T) -> Self {
-        Self {
-            value: Arc::new(Some(value)),
-        }
+        Self { value: Arc::new(Some(value)) }
     }
 
     pub fn modify<F, E>(&mut self, f: F) -> Result<Option<()>, E>

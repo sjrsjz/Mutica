@@ -236,12 +236,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(debruijn_index: isize, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Variable {
-            debruijn_index,
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
-        .dispatch()
+        Variable { debruijn_index, source_info, _phantom: std::marker::PhantomData }.dispatch()
     }
 
     pub fn debruijn_index(&self) -> isize {

@@ -14,12 +14,7 @@ pub struct SourceFile {
 
 impl Debug for SourceFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "SourceFile {{ path: {:?}, content: <{} bytes> }}",
-            self.path,
-            self.content.len()
-        )
+        write!(f, "SourceFile {{ path: {:?}, content: <{} bytes> }}", self.path, self.content.len())
     }
 }
 
@@ -31,11 +26,7 @@ impl PartialEq for SourceFile {
 
 impl SourceFile {
     pub fn new(path: Option<PathBuf>, content: String) -> Self {
-        Self {
-            path,
-            color_mapping: RwLock::new(TokenColor::new_buffer(content.len())),
-            content,
-        }
+        Self { path, color_mapping: RwLock::new(TokenColor::new_buffer(content.len())), content }
     }
 
     pub fn filepath(&self) -> String {
@@ -55,15 +46,11 @@ impl SourceFile {
     }
 
     pub fn color_mapping(&self) -> std::sync::RwLockReadGuard<'_, Vec<TokenColor>> {
-        self.color_mapping
-            .read()
-            .expect("Failed to acquire read lock on color mapping")
+        self.color_mapping.read().expect("Failed to acquire read lock on color mapping")
     }
 
     pub fn color_mapping_mut(&self) -> std::sync::RwLockWriteGuard<'_, Vec<TokenColor>> {
-        self.color_mapping
-            .write()
-            .expect("Failed to acquire write lock on color mapping")
+        self.color_mapping.write().expect("Failed to acquire write lock on color mapping")
     }
 }
 

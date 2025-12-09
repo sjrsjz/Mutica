@@ -46,10 +46,7 @@ pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
     fn clone(&self) -> Self {
-        Self {
-            reference: self.reference.clone(),
-            source_info: self.source_info.clone(),
-        }
+        Self { reference: self.reference.clone(), source_info: self.source_info.clone() }
     }
 }
 
@@ -118,10 +115,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let pointer = gc.create(T::new_placeholder());
-        let fix_point = FixPoint {
-            reference: pointer.as_weak(),
-            source_info,
-        };
+        let fix_point = FixPoint { reference: pointer.as_weak(), source_info };
         roots.push(pointer);
         Type::FixPoint(fix_point)
     }
@@ -286,8 +280,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 }
                 let temp_fixpoint = Self::new_placeholder(ctx.gc, ctx.roots);
                 // 假设递归类型的归约结果为 temp_fixpoint
-                ctx.rec_assumptions
-                    .push((inner_type.tagged_ptr(), temp_fixpoint.clone(), false));
+                ctx.rec_assumptions.push((inner_type.tagged_ptr(), temp_fixpoint.clone(), false));
                 let result = (*inner_type).clone().reduce(ctx);
                 let (_, _, used) = ctx.rec_assumptions.pop().unwrap();
                 if used {

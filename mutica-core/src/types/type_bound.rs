@@ -174,18 +174,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for TypeBound<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeBound<T> {
     pub fn top(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Self {
-            kind: TypeBoundKind::Top,
-            source_info,
-        }
-        .dispatch()
+        Self { kind: TypeBoundKind::Top, source_info }.dispatch()
     }
 
     pub fn bottom(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Self {
-            kind: TypeBoundKind::Bottom,
-            source_info,
-        }
-        .dispatch()
+        Self { kind: TypeBoundKind::Bottom, source_info }.dispatch()
     }
 }

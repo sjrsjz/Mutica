@@ -46,19 +46,12 @@ pub struct Invoke<T: GcAllocObject<T, Inner = Type<T>>> {
     // 3: source_info
     // 4: is_nf
     #[allow(clippy::type_complexity)]
-    inner: ArcOpt<(
-        Type<T>,
-        Type<T>,
-        InvokeCountinuationStyle<T>,
-        Option<Arc<SourceLocation>>,
-    )>,
+    inner: ArcOpt<(Type<T>, Type<T>, InvokeCountinuationStyle<T>, Option<Arc<SourceLocation>>)>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Invoke<T> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -142,36 +135,32 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                     let (self_func, self_arg, self_cont_style, _) = self.inner.as_ref();
                     let (v_func, v_arg, v_cont_style, _) = v.inner.as_ref();
 
-                    Ok(
-                        test_true!(self_func.check(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
-                            & test_true!(
-                                self_arg.check(v_arg.as_ref_dispatcher(), &mut inner_ctx)?
-                            )
-                            & match (self_cont_style, v_cont_style) {
-                                (
-                                    InvokeCountinuationStyle::TailCall,
-                                    InvokeCountinuationStyle::TailCall,
-                                ) => ThreeValuedLogic::True,
-                                (
-                                    InvokeCountinuationStyle::WithContinuation(c1),
-                                    InvokeCountinuationStyle::WithContinuation(c2),
-                                ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                                (
-                                    InvokeCountinuationStyle::WithPerformHandler(c1),
-                                    InvokeCountinuationStyle::WithPerformHandler(c2),
-                                ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                                (
-                                    InvokeCountinuationStyle::WithBoth(c1a, c1b),
-                                    InvokeCountinuationStyle::WithBoth(c2a, c2b),
-                                ) => {
-                                    test_true!(c1a.check(c2a.as_ref_dispatcher(), &mut inner_ctx)?)
-                                        & test_true!(
-                                            c1b.check(c2b.as_ref_dispatcher(), &mut inner_ctx)?
-                                        )
-                                }
-                                _ => ThreeValuedLogic::False,
-                            },
-                    )
+                    Ok(test_true!(self_func.check(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
+                        & test_true!(self_arg.check(v_arg.as_ref_dispatcher(), &mut inner_ctx)?)
+                        & match (self_cont_style, v_cont_style) {
+                            (
+                                InvokeCountinuationStyle::TailCall,
+                                InvokeCountinuationStyle::TailCall,
+                            ) => ThreeValuedLogic::True,
+                            (
+                                InvokeCountinuationStyle::WithContinuation(c1),
+                                InvokeCountinuationStyle::WithContinuation(c2),
+                            ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                            (
+                                InvokeCountinuationStyle::WithPerformHandler(c1),
+                                InvokeCountinuationStyle::WithPerformHandler(c2),
+                            ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                            (
+                                InvokeCountinuationStyle::WithBoth(c1a, c1b),
+                                InvokeCountinuationStyle::WithBoth(c2a, c2b),
+                            ) => {
+                                test_true!(c1a.check(c2a.as_ref_dispatcher(), &mut inner_ctx)?)
+                                    & test_true!(
+                                        c1b.check(c2b.as_ref_dispatcher(), &mut inner_ctx)?
+                                    )
+                            }
+                            _ => ThreeValuedLogic::False,
+                        })
                 }
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -201,36 +190,32 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                     let (self_func, self_arg, self_cont_style, _) = self.inner.as_ref();
                     let (v_func, v_arg, v_cont_style, _) = v.inner.as_ref();
 
-                    Ok(
-                        test_true!(self_func.subof(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
-                            & test_true!(
-                                self_arg.subof(v_arg.as_ref_dispatcher(), &mut inner_ctx)?
-                            )
-                            & match (self_cont_style, v_cont_style) {
-                                (
-                                    InvokeCountinuationStyle::TailCall,
-                                    InvokeCountinuationStyle::TailCall,
-                                ) => ThreeValuedLogic::True,
-                                (
-                                    InvokeCountinuationStyle::WithContinuation(c1),
-                                    InvokeCountinuationStyle::WithContinuation(c2),
-                                ) => c1.subof(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                                (
-                                    InvokeCountinuationStyle::WithPerformHandler(c1),
-                                    InvokeCountinuationStyle::WithPerformHandler(c2),
-                                ) => c1.subof(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                                (
-                                    InvokeCountinuationStyle::WithBoth(c1a, c1b),
-                                    InvokeCountinuationStyle::WithBoth(c2a, c2b),
-                                ) => {
-                                    test_true!(c1a.subof(c2a.as_ref_dispatcher(), &mut inner_ctx)?)
-                                        & test_true!(
-                                            c1b.subof(c2b.as_ref_dispatcher(), &mut inner_ctx)?
-                                        )
-                                }
-                                _ => ThreeValuedLogic::False,
-                            },
-                    )
+                    Ok(test_true!(self_func.subof(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
+                        & test_true!(self_arg.subof(v_arg.as_ref_dispatcher(), &mut inner_ctx)?)
+                        & match (self_cont_style, v_cont_style) {
+                            (
+                                InvokeCountinuationStyle::TailCall,
+                                InvokeCountinuationStyle::TailCall,
+                            ) => ThreeValuedLogic::True,
+                            (
+                                InvokeCountinuationStyle::WithContinuation(c1),
+                                InvokeCountinuationStyle::WithContinuation(c2),
+                            ) => c1.subof(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                            (
+                                InvokeCountinuationStyle::WithPerformHandler(c1),
+                                InvokeCountinuationStyle::WithPerformHandler(c2),
+                            ) => c1.subof(c2.as_ref_dispatcher(), &mut inner_ctx)?,
+                            (
+                                InvokeCountinuationStyle::WithBoth(c1a, c1b),
+                                InvokeCountinuationStyle::WithBoth(c2a, c2b),
+                            ) => {
+                                test_true!(c1a.subof(c2a.as_ref_dispatcher(), &mut inner_ctx)?)
+                                    & test_true!(
+                                        c1b.subof(c2b.as_ref_dispatcher(), &mut inner_ctx)?
+                                    )
+                            }
+                            _ => ThreeValuedLogic::False,
+                        })
                 }
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -266,12 +251,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 Ok(Self::new(
                     func.clone().reduce(ctx)?,
                     arg.clone().reduce(ctx)?,
-                    self.continuation()
-                        .map(|c| c.clone().reduce(ctx))
-                        .transpose()?,
-                    self.perform_handler()
-                        .map(|c| c.clone().reduce(ctx))
-                        .transpose()?,
+                    self.continuation().map(|c| c.clone().reduce(ctx)).transpose()?,
+                    self.perform_handler().map(|c| c.clone().reduce(ctx)).transpose()?,
                     source_info.clone(),
                 ))
             }
@@ -340,10 +321,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
                 )
             }
         };
-        format!(
-            "Invoke(func: {}, arg: {}, cont: {})",
-            func_repr, arg_repr, cont_repr
-        )
+        format!("Invoke(func: {}, arg: {}, cont: {})", func_repr, arg_repr, cont_repr)
     }
 }
 
@@ -372,10 +350,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
             (Some(cont1), Some(cont2)) => InvokeCountinuationStyle::WithBoth(cont1, cont2),
         };
 
-        Self {
-            inner: ArcOpt::new((func, arg, continuation_style, source_info)),
-        }
-        .dispatch()
+        Self { inner: ArcOpt::new((func, arg, continuation_style, source_info)) }.dispatch()
     }
 
     pub fn func(&self) -> &Type<T> {
@@ -411,22 +386,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
 
     pub fn take(
         self,
-    ) -> (
-        Type<T>,
-        Type<T>,
-        InvokeCountinuationStyle<T>,
-        Option<Arc<SourceLocation>>,
-    ) {
+    ) -> (Type<T>, Type<T>, InvokeCountinuationStyle<T>, Option<Arc<SourceLocation>>) {
         match self.inner.take() {
             Ok((func, arg, cont_style, source_info)) => (func, arg, cont_style, source_info),
             Err(v) => {
                 let (func, arg, cont_style, source_info) = v.as_ref();
-                (
-                    func.clone(),
-                    arg.clone(),
-                    cont_style.clone(),
-                    source_info.clone(),
-                )
+                (func.clone(), arg.clone(), cont_style.clone(), source_info.clone())
             }
         }
     }

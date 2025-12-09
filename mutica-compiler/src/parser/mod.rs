@@ -46,10 +46,7 @@ pub fn calculate_full_error_span(
             min_pos = min_pos.min(*location);
             max_pos = max_pos.max(*location + 1); // At least 1 character
         }
-        UnrecognizedToken {
-            token: (start, _, end),
-            ..
-        } => {
+        UnrecognizedToken { token: (start, _, end), .. } => {
             min_pos = min_pos.min(*start);
             max_pos = max_pos.max(*end);
         }
@@ -57,9 +54,7 @@ pub fn calculate_full_error_span(
             min_pos = min_pos.min(*location);
             max_pos = max_pos.max(*location);
         }
-        ExtraToken {
-            token: (start, _, end),
-        } => {
+        ExtraToken { token: (start, _, end) } => {
             min_pos = min_pos.min(*start);
             max_pos = max_pos.max(*end);
         }
@@ -76,11 +71,7 @@ pub fn calculate_full_error_span(
     }
 
     // Ensure we have a valid range
-    if min_pos == usize::MAX {
-        (0, 1)
-    } else {
-        (min_pos, max_pos.max(min_pos + 1))
-    }
+    if min_pos == usize::MAX { (0, 1) } else { (min_pos, max_pos.max(min_pos + 1)) }
 }
 
 #[derive(Debug, Clone)]
@@ -182,9 +173,7 @@ impl<'ast> ParseError<'ast> {
                     );
                 }
 
-                report
-                    .with_help("A pattern cannot contain duplicate variable names")
-                    .finish()
+                report.with_help("A pattern cannot contain duplicate variable names").finish()
             }
             ParseError::UnusedVariable(ast, names) => {
                 let var_names: Vec<&str> = names.iter().map(|n| n.value().as_str()).collect();
@@ -221,7 +210,9 @@ impl<'ast> ParseError<'ast> {
                                 .with_message("Unable to locate source positions for unused variables")
                                 .with_color(Color::Yellow),
                         )
-                        .with_help("Consider removing unused variables or prefixing with '_' to intentionally ignore them")
+                        .with_help(
+                            "Consider removing unused variables or prefixing with '_' to intentionally ignore them",
+                        )
                         .finish();
                 }
 
@@ -347,9 +338,7 @@ impl ParseContext {
     const NOT_USED: usize = 0usize;
 
     pub fn new() -> Self {
-        Self {
-            declared_variables: vec![HashMap::new()],
-        }
+        Self { declared_variables: vec![HashMap::new()] }
     }
 
     pub fn capture(&self) -> Vec<WithLocation<String>> {
@@ -476,8 +465,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContextLayer<T> {
             return None;
         }
         let index = self.captured_index_mapping.len();
-        self.captured_index_mapping
-            .insert(name, -1 - index as isize);
+        self.captured_index_mapping.insert(name, -1 - index as isize);
         Some(index)
     }
 
@@ -504,9 +492,7 @@ impl Default for PatternCounter {
 
 impl PatternCounter {
     pub fn new() -> Self {
-        Self {
-            index_mapping: HashMap::new(),
-        }
+        Self { index_mapping: HashMap::new() }
     }
 
     pub fn alloc(&mut self, name: String) -> usize {
@@ -539,9 +525,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Default for BuildContext<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
     pub fn new() -> Self {
-        Self {
-            layers: vec![BuildContextLayer::new()],
-        }
+        Self { layers: vec![BuildContextLayer::new()] }
     }
 
     pub fn enter_layer(&mut self) {
@@ -549,21 +533,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
     }
 
     pub fn exit_layer(&mut self) -> BuildContextLayer<T> {
-        self.layers
-            .pop()
-            .expect("There should always be at least one layer")
+        self.layers.pop().expect("There should always be at least one layer")
     }
 
     pub fn current_layer_mut(&mut self) -> &mut BuildContextLayer<T> {
-        self.layers
-            .last_mut()
-            .expect("There should always be at least one layer")
+        self.layers.last_mut().expect("There should always be at least one layer")
     }
 
     pub fn current_layer(&self) -> &BuildContextLayer<T> {
-        self.layers
-            .last()
-            .expect("There should always be at least one layer")
+        self.layers.last().expect("There should always be at least one layer")
     }
 }
 
@@ -592,11 +570,7 @@ where
     P: Clone + Default,
 {
     pub fn new<'a, I: Into<&'a SourceLocation>>(value: T, location: Option<I>) -> Self {
-        Self {
-            value,
-            location: location.map(|l| l.into().clone()),
-            payload: Default::default(),
-        }
+        Self { value, location: location.map(|l| l.into().clone()), payload: Default::default() }
     }
 }
 
@@ -609,11 +583,7 @@ where
     }
 
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> WithLocation<U, P> {
-        WithLocation {
-            value: f(self.value),
-            location: self.location,
-            payload: self.payload,
-        }
+        WithLocation { value: f(self.value), location: self.location, payload: self.payload }
     }
 
     pub fn as_ref(&self) -> WithLocation<&T, P> {
@@ -641,11 +611,7 @@ where
     }
 
     pub fn map_payload<Q: Clone + Debug>(self, f: impl FnOnce(P) -> Q) -> WithLocation<T, Q> {
-        WithLocation {
-            value: self.value,
-            location: self.location,
-            payload: f(self.payload),
-        }
+        WithLocation { value: self.value, location: self.location, payload: f(self.payload) }
     }
 }
 
@@ -654,11 +620,7 @@ where
     P: Clone + Default,
 {
     fn from(value: T) -> WithLocation<T, P> {
-        WithLocation {
-            value,
-            location: None,
-            payload: Default::default(),
-        }
+        WithLocation { value, location: None, payload: Default::default() }
     }
 }
 
@@ -690,11 +652,7 @@ impl<'a> MultiFileBuilder<'a> {
         path: &'a mut FastCycleDetector<PathBuf>,
         errors: &'a mut Vec<WithLocation<MultiFileBuilderError>>,
     ) -> Self {
-        Self {
-            imported_ast,
-            path,
-            errors,
-        }
+        Self { imported_ast, path, errors }
     }
 
     #[allow(clippy::type_complexity)]
@@ -702,10 +660,7 @@ impl<'a> MultiFileBuilder<'a> {
         &mut self,
         path: PathBuf,
         code: String,
-    ) -> (
-        Option<(WithLocation<BasicTypeAst>, Arc<SourceFile>)>,
-        Arc<SourceFile>,
-    ) {
+    ) -> (Option<(WithLocation<BasicTypeAst>, Arc<SourceFile>)>, Arc<SourceFile>) {
         let source = Arc::new(SourceFile::new(Some(path.clone()), code));
         let lexer = lexer::LexerToken::lexer(source.content());
         let spanned_lexer = lexer.spanned().map(|(token_result, span)| {
@@ -722,10 +677,7 @@ impl<'a> MultiFileBuilder<'a> {
             Err(err) => {
                 self.errors.push(WithLocation::new(
                     MultiFileBuilderError::SyntaxError(err),
-                    Some(&SourceLocation::new(
-                        source.clone(),
-                        0..source.content().len(),
-                    )),
+                    Some(&SourceLocation::new(source.clone(), 0..source.content().len())),
                 ));
                 return (None, source);
             }
@@ -735,10 +687,7 @@ impl<'a> MultiFileBuilder<'a> {
         for err in rec_errors {
             self.errors.push(WithLocation::new(
                 MultiFileBuilderError::RecoveryError(err),
-                Some(&SourceLocation::new(
-                    source.clone(),
-                    0..source.content().len(),
-                )),
+                Some(&SourceLocation::new(source.clone(), 0..source.content().len())),
             ));
         }
         let ast = TypeAst::sanitize(ast);
@@ -758,18 +707,14 @@ impl<'a> MultiFileBuilder<'a> {
                     errors: self.errors,
                 };
                 let basic_ast = ast.into_basic(&mut new_ctx, ast.location());
-                self.imported_ast
-                    .insert(canonical_path, (basic_ast.clone(), source.clone()));
+                self.imported_ast.insert(canonical_path, (basic_ast.clone(), source.clone()));
                 (basic_ast, source.clone())
             })
             .map(|ast| (Some(ast), source.clone()))
             .unwrap_or_else(|| {
                 self.errors.push(WithLocation::new(
                     MultiFileBuilderError::IOError(std::io::Error::other("Cyclic import detected")),
-                    Some(&SourceLocation::new(
-                        source.clone(),
-                        0..source.content().len(),
-                    )),
+                    Some(&SourceLocation::new(source.clone(), 0..source.content().len())),
                 ));
                 (None, source)
             });
@@ -814,10 +759,7 @@ impl SyntaxError {
                             .with_color(Color::Red),
                     )
             }
-            UnrecognizedToken {
-                token: (start, token, end),
-                expected,
-            } => {
+            UnrecognizedToken { token: (start, token, end), expected } => {
                 let (line, col) = byte_offset_to_position(source, *start);
                 let char_start = byte_offset_to_char_offset(source, *start);
                 let char_end = byte_offset_to_char_offset(source, *end);
@@ -879,9 +821,7 @@ impl SyntaxError {
                             .with_color(Color::Red),
                     )
             }
-            ExtraToken {
-                token: (start, token, end),
-            } => {
+            ExtraToken { token: (start, token, end) } => {
                 let (line, col) = byte_offset_to_position(source, *start);
                 let char_start = byte_offset_to_char_offset(source, *start);
                 let char_end = byte_offset_to_char_offset(source, *end);
@@ -992,55 +932,41 @@ pub fn inject_std_library(
             std_ast.map(|std_ast| match std_ast {
                 BasicTypeAst::Variable(name) if name == "<placeholder>" => ast.clone(),
                 BasicTypeAst::Variable(_) => std_ast,
-                BasicTypeAst::Range { ty, min, delta } => BasicTypeAst::Range {
-                    ty: replace_placeholder(*ty, ast).into(),
-                    min,
-                    delta,
-                },
+                BasicTypeAst::Range { ty, min, delta } => {
+                    BasicTypeAst::Range { ty: replace_placeholder(*ty, ast).into(), min, delta }
+                }
                 BasicTypeAst::Float => std_ast,
                 BasicTypeAst::Char => std_ast,
                 BasicTypeAst::Top => std_ast,
                 BasicTypeAst::Bottom => std_ast,
-                BasicTypeAst::NatureNumber(v, ty) => BasicTypeAst::NatureNumber(
-                    v,
-                    replace_placeholder(*ty, ast).into(),
-                ),
+                BasicTypeAst::NatureNumber(v, ty) => {
+                    BasicTypeAst::NatureNumber(v, replace_placeholder(*ty, ast).into())
+                }
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
                 BasicTypeAst::OrderedType(_) => std_ast,
                 BasicTypeAst::Tuple(items) => BasicTypeAst::Tuple(
-                    items
-                        .into_iter()
-                        .map(|s| replace_placeholder(s, ast))
-                        .collect(),
+                    items.into_iter().map(|s| replace_placeholder(s, ast)).collect(),
                 ),
                 BasicTypeAst::Cons { head, tail } => BasicTypeAst::Cons {
                     head: replace_placeholder(*head, ast).into(),
                     tail: replace_placeholder(*tail, ast).into(),
                 },
                 BasicTypeAst::Generalize(items) => BasicTypeAst::Generalize(
-                    items
-                        .into_iter()
-                        .map(|item| replace_placeholder(item, ast))
-                        .collect(),
+                    items.into_iter().map(|item| replace_placeholder(item, ast)).collect(),
                 ),
                 BasicTypeAst::Specialize(items) => BasicTypeAst::Specialize(
-                    items
-                        .into_iter()
-                        .map(|item| replace_placeholder(item, ast))
-                        .collect(),
+                    items.into_iter().map(|item| replace_placeholder(item, ast)).collect(),
                 ),
-                BasicTypeAst::Invoke {
-                    func,
-                    arg,
-                    continuation,
-                    perform_handler,
-                } => BasicTypeAst::Invoke {
-                    func: replace_placeholder(*func, ast).into(),
-                    arg: replace_placeholder(*arg, ast).into(),
-                    continuation: continuation.map(|c| replace_placeholder(*c, ast).into()),
-                    perform_handler: perform_handler.map(|h| replace_placeholder(*h, ast).into()),
-                },
+                BasicTypeAst::Invoke { func, arg, continuation, perform_handler } => {
+                    BasicTypeAst::Invoke {
+                        func: replace_placeholder(*func, ast).into(),
+                        arg: replace_placeholder(*arg, ast).into(),
+                        continuation: continuation.map(|c| replace_placeholder(*c, ast).into()),
+                        perform_handler: perform_handler
+                            .map(|h| replace_placeholder(*h, ast).into()),
+                    }
+                }
                 BasicTypeAst::Match { branches } => BasicTypeAst::Match {
                     branches: branches
                         .into_iter()
@@ -1057,26 +983,24 @@ pub fn inject_std_library(
                     handler: handler.map(|h| replace_placeholder(*h, ast).into()),
                 },
                 BasicTypeAst::AtomicOpcode(_) => std_ast,
-                BasicTypeAst::Namespace { tag, expr } => BasicTypeAst::Namespace {
-                    tag,
-                    expr: replace_placeholder(*expr, ast).into(),
-                },
-                BasicTypeAst::Pattern { name, expr } => BasicTypeAst::Pattern {
-                    name,
-                    expr: replace_placeholder(*expr, ast).into(),
-                },
+                BasicTypeAst::Namespace { tag, expr } => {
+                    BasicTypeAst::Namespace { tag, expr: replace_placeholder(*expr, ast).into() }
+                }
+                BasicTypeAst::Pattern { name, expr } => {
+                    BasicTypeAst::Pattern { name, expr: replace_placeholder(*expr, ast).into() }
+                }
                 BasicTypeAst::Literal(v) => {
                     BasicTypeAst::Literal(replace_placeholder(*v, ast).into())
                 }
-                BasicTypeAst::Rot { value } => BasicTypeAst::Rot {
-                    value: replace_placeholder(*value, ast).into(),
-                },
-                BasicTypeAst::EqOf { value } => BasicTypeAst::EqOf {
-                    value: replace_placeholder(*value, ast).into(),
-                },
-                BasicTypeAst::SubOf { value } => BasicTypeAst::SubOf {
-                    value: replace_placeholder(*value, ast).into(),
-                },
+                BasicTypeAst::Rot { value } => {
+                    BasicTypeAst::Rot { value: replace_placeholder(*value, ast).into() }
+                }
+                BasicTypeAst::EqOf { value } => {
+                    BasicTypeAst::EqOf { value: replace_placeholder(*value, ast).into() }
+                }
+                BasicTypeAst::SubOf { value } => {
+                    BasicTypeAst::SubOf { value: replace_placeholder(*value, ast).into() }
+                }
                 BasicTypeAst::StaticFixPoint { param_name, expr } => BasicTypeAst::StaticFixPoint {
                     param_name,
                     expr: replace_placeholder(*expr, ast).into(),

@@ -21,10 +21,7 @@ pub struct Float<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Float<T> {
     fn clone(&self) -> Self {
-        Self {
-            source_info: self.source_info.clone(),
-            _phantom: std::marker::PhantomData,
-        }
+        Self { source_info: self.source_info.clone(), _phantom: std::marker::PhantomData }
     }
 }
 
@@ -117,9 +114,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                     (arg, "FloatValue or IntegerValue".into()).into(),
                 )),
             })?
-            .unwrap_or(Err(TypeError::UnresolvableType(
-                "Could not resolve argument".into(),
-            )))
+            .unwrap_or(Err(TypeError::UnresolvableType("Could not resolve argument".into())))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -162,10 +157,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Float<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Float<T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Float {
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
-        .dispatch()
+        Float { source_info, _phantom: std::marker::PhantomData }.dispatch()
     }
 }

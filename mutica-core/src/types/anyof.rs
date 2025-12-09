@@ -29,10 +29,7 @@ pub struct AnyOf<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for AnyOf<T> {
     fn clone(&self) -> Self {
-        Self {
-            types: self.types.clone(),
-            source_info: self.source_info.clone(),
-        }
+        Self { types: self.types.clone(), source_info: self.source_info.clone() }
     }
 }
 
@@ -236,11 +233,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
         match collected.len() {
             0 => panic!("Generalize requires at least one type"),
             1 => collected.into_iter().next().unwrap(),
-            _ => Self {
-                types: Arc::from(collected),
-                source_info,
-            }
-            .dispatch(),
+            _ => Self { types: Arc::from(collected), source_info }.dispatch(),
         }
     }
 

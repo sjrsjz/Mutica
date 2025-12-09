@@ -22,9 +22,7 @@ pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Pattern<T> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -53,11 +51,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
             return "...".to_string();
         }
         let (debruijn_index, expr, _) = self.inner.as_ref();
-        format!(
-            "λ.{} : {}",
-            debruijn_index,
-            expr.represent(path, depth, max_depth)
-        )
+        format!("λ.{} : {}", debruijn_index, expr.represent(path, depth, max_depth))
     }
 }
 
@@ -248,10 +242,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<T> {
         expr: X,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
-        Self {
-            inner: ArcOpt::new((debruijn_index, expr.into_dispatcher(), source_info)),
-        }
-        .dispatch()
+        Self { inner: ArcOpt::new((debruijn_index, expr.into_dispatcher(), source_info)) }
+            .dispatch()
     }
     pub fn debruijn_index(&self) -> usize {
         self.inner.as_ref().0

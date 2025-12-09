@@ -18,7 +18,6 @@ pub mod pattern;
 pub mod rot;
 pub mod sequence;
 pub mod subof;
-pub mod tuple;
 pub mod type_bound;
 pub mod variable;
 
@@ -52,7 +51,6 @@ use crate::{
         rot::Rotate,
         sequence::Sequence,
         subof::SubOf,
-        tuple::Tuple,
         type_bound::TypeBound,
         variable::Variable,
     },
@@ -76,7 +74,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
             Type::Char(v) => Type::<T>::Char(v.clone()),
             Type::CharValue(v) => Type::<T>::CharValue(v.clone()),
-            Type::Tuple(v) => Type::<T>::Tuple(v.clone()),
             Type::Any(v) => Type::<T>::Any(v.clone()),
             Type::All(v) => Type::<T>::All(v.clone()),
             Type::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
@@ -108,8 +105,6 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Char(Character<T>),
     // 字符值类型
     CharValue(CharacterValue<T>),
-    // 元组类型
-    Tuple(Tuple<T>),
     // 泛化类型
     Any(AnyOf<T>),
     // 专化类型
@@ -147,7 +142,6 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     FloatValue(&'a FloatValue<T>),
     Char(&'a Character<T>),
     CharValue(&'a CharacterValue<T>),
-    Tuple(&'a Tuple<T>),
     Any(&'a AnyOf<T>),
     All(&'a AllOf<T>),
     FixPoint(&'a FixPoint<T>),
@@ -201,7 +195,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::FloatValue(v) => v.check(other, ctx),
             TypeRef::Char(v) => v.check(other, ctx),
             TypeRef::CharValue(v) => v.check(other, ctx),
-            TypeRef::Tuple(v) => v.check(other, ctx),
             TypeRef::Any(v) => v.check(other, ctx),
             TypeRef::All(v) => v.check(other, ctx),
             TypeRef::FixPoint(v) => v.check(other, ctx),
@@ -231,7 +224,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::FloatValue(v) => v.subof(other, ctx),
             TypeRef::Char(v) => v.subof(other, ctx),
             TypeRef::CharValue(v) => v.subof(other, ctx),
-            TypeRef::Tuple(v) => v.subof(other, ctx),
             TypeRef::Any(v) => v.subof(other, ctx),
             TypeRef::All(v) => v.subof(other, ctx),
             TypeRef::FixPoint(v) => v.subof(other, ctx),
@@ -257,7 +249,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::FloatValue(v) => v.tagged_ptr(),
             TypeRef::Char(v) => v.tagged_ptr(),
             TypeRef::CharValue(v) => v.tagged_ptr(),
-            TypeRef::Tuple(v) => v.tagged_ptr(),
             TypeRef::Any(v) => v.tagged_ptr(),
             TypeRef::All(v) => v.tagged_ptr(),
             TypeRef::FixPoint(v) => v.tagged_ptr(),
@@ -287,7 +278,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::FloatValue(v) => v.source_info(),
             TypeRef::Char(v) => v.source_info(),
             TypeRef::CharValue(v) => v.source_info(),
-            TypeRef::Tuple(v) => v.source_info(),
             TypeRef::Any(v) => v.source_info(),
             TypeRef::All(v) => v.source_info(),
             TypeRef::FixPoint(v) => v.source_info(),
@@ -313,7 +303,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::FloatValue(v) => v.report_source_info(),
             TypeRef::Char(v) => v.report_source_info(),
             TypeRef::CharValue(v) => v.report_source_info(),
-            TypeRef::Tuple(v) => v.report_source_info(),
             TypeRef::Any(v) => v.report_source_info(),
             TypeRef::All(v) => v.report_source_info(),
             TypeRef::FixPoint(v) => v.report_source_info(),
@@ -341,7 +330,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
             TypeRef::Char(v) => Type::<T>::Char(v.clone()),
             TypeRef::CharValue(v) => Type::<T>::CharValue(v.clone()),
-            TypeRef::Tuple(v) => Type::<T>::Tuple(v.clone()),
             TypeRef::Any(v) => Type::<T>::Any(v.clone()),
             TypeRef::All(v) => Type::<T>::All(v.clone()),
             TypeRef::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
@@ -438,12 +426,12 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             }
             TypeError::InfiniteRecursion => write!(f, "Infinite recursion"),
             TypeError::RedeclaredType => write!(f, "Type redeclared"),
-            TypeError::NonApplicableType(ty) => write!(f, "Non-applicable type: {:?}", ty),
-            TypeError::TupleIndexOutOfBounds(types) => write!(
-                f,
-                "Tuple index out of bounds for types: {:?} and {:?}",
-                types.0, types.1
-            ),
+            TypeError::NonApplicableType(ty) => {
+                write!(f, "Non-applicable type: {:?}", ty)
+            }
+            TypeError::TupleIndexOutOfBounds(types) => {
+                write!(f, "Tuple index out of bounds for types: {:?} and {:?}", types.0, types.1)
+            }
             TypeError::TypeMismatch(info) => {
                 write!(f, "Type mismatch: expected {}, found {:?}", info.1, info.0)
             }
@@ -452,14 +440,14 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
                 write!(f, "Undefined pattern variable: id = {}", id)
             }
             TypeError::AssertFailed(types) => {
-                write!(
-                    f,
-                    "Assert failed: {:?} doesn't accept {:?}",
-                    types.0, types.1
-                )
+                write!(f, "Assert failed: {:?} doesn't accept {:?}", types.0, types.1)
             }
-            TypeError::MissingContinuation(ty) => write!(f, "Missing continuation: {:?}", ty),
-            TypeError::MissingPerformHandler(ty) => write!(f, "Missing perform handler: {:?}", ty),
+            TypeError::MissingContinuation(ty) => {
+                write!(f, "Missing continuation: {:?}", ty)
+            }
+            TypeError::MissingPerformHandler(ty) => {
+                write!(f, "Missing perform handler: {:?}", ty)
+            }
             TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
             TypeError::Perform(ty) => write!(f, "Perform raised: {:?}", ty),
             TypeError::Break(ty) => write!(f, "Break raised: {:?}", ty),
@@ -872,7 +860,6 @@ macro_rules! type_dispatch {
             Type::Sequence(v) => v.$method($($args),*),
             Type::Float(v) => v.$method($($args),*),
             Type::FloatValue(v) => v.$method($($args),*),
-            Type::Tuple(v) => v.$method($($args),*),
             Type::Any(v) => v.$method($($args),*),
             Type::All(v) => v.$method($($args),*),
             Type::FixPoint(v) => v.$method($($args),*),
@@ -917,8 +904,7 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
         ) -> R,
         T: GcAllocObject<T>,
     {
-        self.get_value()
-            .map(|inner| f(path, inner.as_ref_dispatcher()))
+        self.get_value().map(|inner| f(path, inner.as_ref_dispatcher()))
     }
 
     fn take_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
@@ -1072,7 +1058,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::FloatValue(v) => TypeRef::FloatValue(v),
             Type::Char(v) => TypeRef::Char(v),
             Type::CharValue(v) => TypeRef::CharValue(v),
-            Type::Tuple(v) => TypeRef::Tuple(v),
             Type::Any(v) => TypeRef::Any(v),
             Type::All(v) => TypeRef::All(v),
             Type::FixPoint(v) => TypeRef::FixPoint(v),
@@ -1110,7 +1095,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::FloatValue(v) => TypeRef::FloatValue(v),
             Type::Char(v) => TypeRef::Char(v),
             Type::CharValue(v) => TypeRef::CharValue(v),
-            Type::Tuple(v) => TypeRef::Tuple(v),
             Type::Any(v) => TypeRef::Any(v),
             Type::All(v) => TypeRef::All(v),
             Type::FixPoint(v) => TypeRef::FixPoint(v),
@@ -1144,19 +1128,11 @@ pub struct TaggedPtr<T> {
 
 impl<T> TaggedPtr<T> {
     pub fn new(ptr: *const T, tag: usize) -> Self {
-        Self {
-            ptr,
-            tag,
-            length: None,
-        }
+        Self { ptr, tag, length: None }
     }
 
     pub fn new_unique(ptr: *const T) -> Self {
-        Self {
-            ptr,
-            tag: 0,
-            length: None,
-        }
+        Self { ptr, tag: 0, length: None }
     }
 
     pub fn with_length(mut self, length: usize) -> Self {
@@ -1192,12 +1168,7 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, 
         pattern_env: &'a mut Collector<(usize, U)>,
         rhs: bool,
     ) -> Self {
-        Self {
-            assumptions,
-            closure_env,
-            pattern_env,
-            rhs,
-        }
+        Self { assumptions, closure_env, pattern_env, rhs }
     }
 }
 
@@ -1218,13 +1189,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
     ) -> Self {
-        Self {
-            closure_env,
-            param_env,
-            rec_assumptions,
-            gc,
-            roots,
-        }
+        Self { closure_env, param_env, rec_assumptions, gc, roots }
     }
 }
 
@@ -1249,15 +1214,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
         roots: &'roots mut RootStack<U, V>,
         source_info: Option<&'a Arc<SourceLocation>>,
     ) -> Self {
-        Self {
-            arg,
-            closure_env,
-            param_env,
-            rec_assumptions,
-            gc,
-            roots,
-            source_info,
-        }
+        Self { arg, closure_env, param_env, rec_assumptions, gc, roots, source_info }
     }
 }
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:

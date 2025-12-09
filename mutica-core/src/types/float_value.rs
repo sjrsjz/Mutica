@@ -156,12 +156,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FloatValue<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> FloatValue<T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(value: f64, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        FloatValue {
-            value,
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
-        .dispatch()
+        FloatValue { value, source_info, _phantom: std::marker::PhantomData }.dispatch()
     }
 
     pub fn value(&self) -> f64 {

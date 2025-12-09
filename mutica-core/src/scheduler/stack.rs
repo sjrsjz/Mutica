@@ -146,11 +146,7 @@ impl<T> Stack<T> {
         if n >= self.frames.len() {
             return None;
         }
-        Some(StackView::new(
-            &self.stack,
-            &self.frames,
-            self.frames.len() - 1 - n,
-        ))
+        Some(StackView::new(&self.stack, &self.frames, self.frames.len() - 1 - n))
     }
 
     pub fn view(&self) -> StackView<'_, T> {
@@ -222,21 +218,13 @@ pub struct StackView<'a, T> {
 
 impl<'a, T> Clone for StackView<'a, T> {
     fn clone(&self) -> Self {
-        Self {
-            stack: self.stack,
-            frames: self.frames,
-            frame_index: self.frame_index,
-        }
+        Self { stack: self.stack, frames: self.frames, frame_index: self.frame_index }
     }
 }
 
 impl<'a, T> StackView<'a, T> {
     pub fn new(stack: &'a [T], frames: &'a [(usize, usize, usize)], frame_index: usize) -> Self {
-        Self {
-            stack,
-            frames,
-            frame_index,
-        }
+        Self { stack, frames, frame_index }
     }
 
     pub fn get(&self, index: usize) -> Option<&'a T> {
@@ -281,10 +269,6 @@ impl<'a, T> StackView<'a, T> {
 impl<'a, T> StackView<'a, T> {
     pub fn iter(&self) -> StackIter<'a, T> {
         let len = self.len();
-        StackIter {
-            stack: self.clone(),
-            front_index: 0,
-            back_index: len,
-        }
+        StackIter { stack: self.clone(), front_index: 0, back_index: len }
     }
 }

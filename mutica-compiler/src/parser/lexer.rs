@@ -90,17 +90,13 @@ fn parse_integer(lex: &mut Lexer<LexerToken>) -> Result<i64, LexicalError> {
     } else if slice.starts_with("0b") || slice.starts_with("0B") {
         i64::from_str_radix(&slice[2..], 2).map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
     } else {
-        slice
-            .parse()
-            .map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
+        slice.parse().map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
     }
 }
 
 // 解析浮点数字面量
 fn parse_float(lex: &mut Lexer<LexerToken>) -> Result<f64, LexicalError> {
-    lex.slice()
-        .parse()
-        .map_err(|e| LexicalError::InvalidFloat(e, lex.span()))
+    lex.slice().parse().map_err(|e| LexicalError::InvalidFloat(e, lex.span()))
 }
 
 // 解析字符串字面量，处理转义序列
@@ -158,10 +154,7 @@ pub enum LexerToken {
     Wildcard,
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_owned())]
     Ident(String),
-    #[regex(
-        r#"'(\\u\{[0-9a-fA-F]{1,6}\}|\\[nrt\\'"]|[^'\\])'"#,
-        parse_char_literal
-    )]
+    #[regex(r#"'(\\u\{[0-9a-fA-F]{1,6}\}|\\[nrt\\'"]|[^'\\])'"#, parse_char_literal)]
     CharLit(char),
 
     #[regex(r#""([^"\\]|\\.)*""#, parse_string_literal)]

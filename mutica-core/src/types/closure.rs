@@ -77,16 +77,11 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Representable for ClosureEnv
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureEnv<U, V> {
     pub fn new<T: AsDispatcher<U, V>>(v: impl IntoIterator<Item = T>) -> Self {
-        ClosureEnv::<U, V>(
-            v.into_iter().map(|t| t.into_dispatcher()).collect(),
-            PhantomData,
-        )
+        ClosureEnv::<U, V>(v.into_iter().map(|t| t.into_dispatcher()).collect(), PhantomData)
     }
 
     pub fn get(&self, index: usize) -> Result<&U, TypeError<U, V>> {
-        self.0
-            .get(index)
-            .ok_or_else(|| TypeError::UnboundVariable(-1 - index as isize))
+        self.0.get(index).ok_or_else(|| TypeError::UnboundVariable(-1 - index as isize))
     }
 }
 
@@ -164,9 +159,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ParamEnv<U, V> {
     }
 
     pub fn get(&self, index: usize) -> Result<&U, TypeError<U, V>> {
-        self.0
-            .get(index)
-            .ok_or_else(|| TypeError::UnboundVariable(index as isize))
+        self.0.get(index).ok_or_else(|| TypeError::UnboundVariable(index as isize))
     }
 }
 
@@ -178,11 +171,7 @@ pub struct ClosureBranch<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for ClosureBranch<U, V> {
     fn clone(&self) -> Self {
-        Self {
-            pattern: self.pattern.clone(),
-            expr: self.expr.clone(),
-            _pantom: PhantomData,
-        }
+        Self { pattern: self.pattern.clone(), expr: self.expr.clone(), _pantom: PhantomData }
     }
 }
 
@@ -221,9 +210,7 @@ pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Closure<T> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -504,9 +491,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 false,
             );
 
-            if let ThreeValuedLogic::True = ctx
-                .arg
-                .check(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
+            if let ThreeValuedLogic::True =
+                ctx.arg.check(inner.pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
                 && let Some(param_env) =
                     ParamEnv::from_collector(&mut matched_pattern, *pattern_count)?
             {
@@ -524,17 +510,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 return inner.expr.clone().reduce(&mut reduce_ctx);
             }
         }
-        let expect_arg = self
-            .branches()
-            .iter()
-            .map(|(b, _, _)| b.pattern())
-            .collect::<Vec<_>>();
+        let expect_arg = self.branches().iter().map(|(b, _, _)| b.pattern()).collect::<Vec<_>>();
         Err(TypeError::AssertFailed(
-            (
-                AnyOf::new(expect_arg, self.source_info().cloned()),
-                ctx.arg.clone(),
-            )
-                .into(),
+            (AnyOf::new(expect_arg, self.source_info().cloned()), ctx.arg.clone()).into(),
         ))
     }
 
@@ -614,20 +592,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
                 let expr_ty = expr.into_dispatcher();
                 // expr_ty 是惰性的, 不影响 is_nf
                 (
-                    ClosureBranch {
-                        pattern: pattern_ty,
-                        expr: expr_ty,
-                        _pantom: PhantomData,
-                    },
+                    ClosureBranch { pattern: pattern_ty, expr: expr_ty, _pantom: PhantomData },
                     closure_idx,
                     pattern_count,
                 )
             })
             .collect::<Vec<_>>();
 
-        Type::Closure(Closure {
-            inner: ArcOpt::new((branches_vec, closure_env, source_info)),
-        })
+        Type::Closure(Closure { inner: ArcOpt::new((branches_vec, closure_env, source_info)) })
     }
 
     pub fn env(&self) -> &[ClosureEnv<Type<T>, T>] {
@@ -649,9 +621,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         for (_, closure_idx, _) in new_branches.iter_mut().skip(self.branches().len()) {
             *closure_idx += offset;
         }
-        Closure {
-            inner: ArcOpt::new((new_branches, new_closure_env, source_info)),
-        }
-        .into_dispatcher()
+        Closure { inner: ArcOpt::new((new_branches, new_closure_env, source_info)) }
+            .into_dispatcher()
     }
 }

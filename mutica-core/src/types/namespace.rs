@@ -21,9 +21,7 @@ pub struct Namespace<T: GcAllocObject<T, Inner = Type<T>>> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Namespace<T> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -204,10 +202,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Namespace<T> {
         expr: I,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
-        Self {
-            inner: ArcOpt::new((tag.into(), expr.into_dispatcher(), source_info)),
-        }
-        .dispatch()
+        Self { inner: ArcOpt::new((tag.into(), expr.into_dispatcher(), source_info)) }.dispatch()
     }
 
     pub fn expr(&self) -> &Type<T> {

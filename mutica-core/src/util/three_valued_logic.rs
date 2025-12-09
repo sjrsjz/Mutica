@@ -59,11 +59,7 @@ impl ThreeValuedLogic {
 
 impl From<bool> for ThreeValuedLogic {
     fn from(value: bool) -> Self {
-        if value {
-            ThreeValuedLogic::True
-        } else {
-            ThreeValuedLogic::False
-        }
+        if value { ThreeValuedLogic::True } else { ThreeValuedLogic::False }
     }
 }
 
