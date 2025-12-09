@@ -7,12 +7,9 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, type_bound::TypeBound,
+        TypeRef, sequence::SequenceTail, type_bound::TypeBound,
     },
-    util::{
-        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
-        three_valued_logic::ThreeValuedLogic,
-    },
+    util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 // 元组类型，但是其允许通过cons类型解构
@@ -156,14 +153,44 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 }
 
                 TypeRef::Sequence(v) => {
-                    if !v.contains(self.len()) {
-                        return Ok(ThreeValuedLogic::False);
-                    }
                     let mut all = ThreeValuedLogic::True;
-                    for e in self.iter() {
-                        all &= test_true!(e.check(v.ty().as_ref_dispatcher(), &mut inner_ctx)?);
+                    let mut cursor = 0;
+                    for (prefix, repeat) in v.prefix() {
+                        for _ in 0..repeat.get() {
+                            if cursor >= self.len() {
+                                return Ok(ThreeValuedLogic::False);
+                            }
+                            let elem = &self.iter().nth(cursor).unwrap();
+                            all &=
+                                test_true!(elem.check(prefix.as_ref_dispatcher(), &mut inner_ctx)?);
+                            cursor += 1;
+                        }
                     }
-                    Ok(all)
+                    let suffix_len = self.len().saturating_sub(cursor);
+                    match v.tail() {
+                        SequenceTail::Nothing => Ok(if suffix_len == 0 {
+                            all
+                        } else {
+                            ThreeValuedLogic::False
+                        }),
+                        SequenceTail::Repeat(ty) => {
+                            for _ in 0..suffix_len {
+                                let elem = &self.iter().nth(cursor).unwrap();
+                                all &=
+                                    test_true!(elem.check(ty.as_ref_dispatcher(), &mut inner_ctx)?);
+                                cursor += 1;
+                            }
+                            Ok(all)
+                        }
+                        SequenceTail::Cons(ty) => {
+                            let viewed = self.view(cursor).ok_or(TypeError::UnresolvableType(
+                                "Could not view tuple suffix".into(),
+                            ))?;
+                            all &=
+                                test_true!(viewed.check(ty.as_ref_dispatcher(), &mut inner_ctx)?);
+                            Ok(all)
+                        }
+                    }
                 }
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -201,14 +228,44 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
                 }
 
                 TypeRef::Sequence(v) => {
-                    if !v.contains(self.len()) {
-                        return Ok(ThreeValuedLogic::False);
-                    }
                     let mut all = ThreeValuedLogic::True;
-                    for e in self.iter() {
-                        all &= test_true!(e.subof(v.ty().as_ref_dispatcher(), &mut inner_ctx)?);
+                    let mut cursor = 0;
+                    for (prefix, repeat) in v.prefix() {
+                        for _ in 0..repeat.get() {
+                            if cursor >= self.len() {
+                                return Ok(ThreeValuedLogic::False);
+                            }
+                            let elem = &self.iter().nth(cursor).unwrap();
+                            all &=
+                                test_true!(elem.subof(prefix.as_ref_dispatcher(), &mut inner_ctx)?);
+                            cursor += 1;
+                        }
                     }
-                    Ok(all)
+                    let suffix_len = self.len().saturating_sub(cursor);
+                    match v.tail() {
+                        SequenceTail::Nothing => Ok(if suffix_len == 0 {
+                            all
+                        } else {
+                            ThreeValuedLogic::False
+                        }),
+                        SequenceTail::Repeat(ty) => {
+                            for _ in 0..suffix_len {
+                                let elem = &self.iter().nth(cursor).unwrap();
+                                all &=
+                                    test_true!(elem.subof(ty.as_ref_dispatcher(), &mut inner_ctx)?);
+                                cursor += 1;
+                            }
+                            Ok(all)
+                        }
+                        SequenceTail::Cons(ty) => {
+                            let viewed = self.view(cursor).ok_or(TypeError::UnresolvableType(
+                                "Could not view tuple suffix".into(),
+                            ))?;
+                            all &=
+                                test_true!(viewed.subof(ty.as_ref_dispatcher(), &mut inner_ctx)?);
+                            Ok(all)
+                        }
+                    }
                 }
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -254,24 +311,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Tuple
 
     fn invoke(
         self,
-        ctx: InvokeContext<Type<T>, T>,
+        _ctx: InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        ctx.arg
-            .take(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::NatureNumber(iv) => {
-                    let index = iv.len();
-                    match self.get(index) {
-                        Some(t) => Ok(t.clone()),
-                        None => Err(super::TypeError::TupleIndexOutOfBounds(
-                            (self.dispatch(), iv.dispatch()).into(),
-                        )),
-                    }
-                }
-                _ => Ok(TypeBound::bottom(ctx.source_info.cloned())),
-            })?
-            .unwrap_or(Err(TypeError::UnresolvableType(
-                "Could not resolve argument".into(),
-            )))
+        Err(TypeError::NonApplicableType(self.into_dispatcher().into()))
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
