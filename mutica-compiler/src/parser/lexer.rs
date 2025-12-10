@@ -12,6 +12,7 @@ pub enum LexicalError {
     InvalidToken(Range<usize>),
     InvalidInteger(ParseIntError, Range<usize>),
     InvalidFloat(ParseFloatError, Range<usize>),
+    InvalidRepeatCount(usize, usize, usize),
 }
 
 impl Default for LexicalError {
@@ -26,6 +27,7 @@ impl LexicalError {
             LexicalError::InvalidToken(span) => span.clone(),
             LexicalError::InvalidInteger(_, span) => span.clone(),
             LexicalError::InvalidFloat(_, span) => span.clone(),
+            LexicalError::InvalidRepeatCount(_, start, end) => *start..*end,
         }
     }
 }
@@ -36,6 +38,9 @@ impl Display for LexicalError {
             LexicalError::InvalidToken(_) => write!(f, "Invalid token"),
             LexicalError::InvalidInteger(e, _) => write!(f, "Invalid integer: {}", e),
             LexicalError::InvalidFloat(e, _) => write!(f, "Invalid float: {}", e),
+            LexicalError::InvalidRepeatCount(n, _, _) => {
+                write!(f, "Invalid repeat count: {} (must be greater than 0)", n)
+            }
         }
     }
 }
@@ -80,15 +85,17 @@ fn parse_char_literal(lex: &mut Lexer<LexerToken>) -> Option<char> {
 }
 
 // 解析整型字面量 (支持 0x, 0o, 0b)
-fn parse_integer(lex: &mut Lexer<LexerToken>) -> Result<i64, LexicalError> {
+fn parse_nature_number(lex: &mut Lexer<LexerToken>) -> Result<usize, LexicalError> {
     let slice = lex.slice();
     if slice.starts_with("0x") || slice.starts_with("0X") {
-        i64::from_str_radix(&slice[2..], 16)
+        usize::from_str_radix(&slice[2..], 16)
             .map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
     } else if slice.starts_with("0o") || slice.starts_with("0O") {
-        i64::from_str_radix(&slice[2..], 8).map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
+        usize::from_str_radix(&slice[2..], 8)
+            .map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
     } else if slice.starts_with("0b") || slice.starts_with("0B") {
-        i64::from_str_radix(&slice[2..], 2).map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
+        usize::from_str_radix(&slice[2..], 2)
+            .map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
     } else {
         slice.parse().map_err(|e| LexicalError::InvalidInteger(e, lex.span()))
     }
@@ -148,8 +155,8 @@ pub enum LexerToken {
     #[regex(r"[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+", parse_float)]
     FloatNum(f64),
     // 支持十进制、十六进制(0x)、八进制(0o)、二进制(0b)
-    #[regex("0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+", parse_integer)]
-    Num(i64),
+    #[regex("0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+", parse_nature_number)]
+    Num(usize),
     #[token("_", priority = 3)]
     Wildcard,
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_owned())]

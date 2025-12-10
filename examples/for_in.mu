@@ -6,7 +6,7 @@ let iter: any = lst: List(any) => f: any => {
     loop go: t: any = lst;
     match t
         | () => ()
-        | (h: any) @ (t: any) => {
+        | (h: any ~ t: any) => {
             discard f(h);
             go(t)
         }
@@ -16,9 +16,10 @@ let iter: any = lst: List(any) => f: any => {
 // We can rewrite `f(v)(pattern => expr)` to `for pattern = f(v) in expr`
 
 // iter(1, 2, 3)(x: nat => {
-//     discard prnat!(x);
+//     discard print!(x);
 // })
 
 for x: nat = iter(1, 2, 3) in {
-    discard prnat!(x);
+    discard print!(x);
+    discard print!' ';
 }

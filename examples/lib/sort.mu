@@ -10,7 +10,7 @@ let merge: any = (cmp: any, lst1: List(any), lst2: List(any)) => {
     match t
         | ((), l2: any) => l2
         | (l1: any, ()) => l1
-        | ((h1: any) @ (t1: any), (h2: any) @ (t2: any)) => 
+        | ((h1: any ~ t1: any), (h2: any ~ t2: any)) => 
             if cmp(h1, h2)
                 then cons(h1, merge_go(t1, cons(h2, t2)))
                 else cons(h2, merge_go(cons(h1, t1), t2))
@@ -31,7 +31,7 @@ let merge_sort: any = cmp: any => lst: List(any) =>  {
     loop go: t: any = lst;
     match t
         | () => ()
-        | (v: any) @ () => cons(v, ())
+        | (v: any ~ ()) => cons(v, ())
         | l: any => {
             let (left: any, right: any) = split(l);
             let sorted_left: any = go(left);
@@ -47,15 +47,15 @@ let quick_sort: any = cmp: any => lst: List(any) => {
     loop go: t: any = lst;
     match t
         | () => ()
-        | v: (any @ ()) => v
-        | (pivot: any) @ (rest: any) => {
+        | v: (any ~ ()) => v
+        | (pivot: any ~ rest: any) => {
             // 分区函数
             let partition: any = l: List(any) => {
                 loop part: pt: any = (l, (), ());
                 let (lst_p: any, smaller: any, larger: any) = pt;
                 match lst_p
                     | () => (smaller, larger)
-                    | (h: any) @ (t: any) => if cmp(h, pivot)
+                    | (h: any ~ t: any) => if cmp(h, pivot)
                         then part(t, cons(h, smaller), larger)
                         else part(t, smaller, cons(h, larger))
                     | panic
@@ -67,7 +67,7 @@ let quick_sort: any = cmp: any => lst: List(any) => {
             loop concat: t2: any = sorted_small;
             match t2
                 | () => cons(pivot, sorted_large)
-                | (h: any) @ (t: any) => cons(h, concat(t))
+                | (h: any ~ t: any) => cons(h, concat(t))
                 | panic
         }
         | panic
@@ -80,7 +80,7 @@ let insert_sort: any = cmp: any => lst: List(any) => {
         loop go: t: any = sorted;
         match t
             | () => cons(x, ())
-            | (h: any) @ (rest: any) => if cmp(x, h)
+            | (h: any ~ rest: any) => if cmp(x, h)
                 then cons(x, t)
                 else cons(h, go(rest))
             | panic
@@ -89,7 +89,7 @@ let insert_sort: any = cmp: any => lst: List(any) => {
     loop go: t: any = lst;
     match t
         | () => ()
-        | (h: any) @ (t: any) => insert(h, go(t))
+        | (h: any ~ t: any) => insert(h, go(t))
         | panic
 };
 

@@ -30,31 +30,29 @@ let slice: any = (s: String, start: nat, end: nat) => {
         else Nothing
 };
 
-let nat_to_string: any = rec f: n: nat => {
-    if n < 0 then "-" + f(-n)
-    else match n
-        | eq 0 => "0"
-        | _ => {
+let nat_to_string: any = 
+    match
+        | 0 => "0"
+        | n: nat => {
             loop go: (acc: String, n: nat) = ((), n);
                 if n == 0 then acc
                 else {
                     let digit: (char,) = match n % 10
-                        | eq 0 => "0"
-                        | eq 1 => "1"
-                        | eq 2 => "2"
-                        | eq 3 => "3"
-                        | eq 4 => "4"
-                        | eq 5 => "5"
-                        | eq 6 => "6"
-                        | eq 7 => "7"
-                        | eq 8 => "8"
-                        | eq 9 => "9"
+                        | 0 => "0"
+                        | 1 => "1"
+                        | 2 => "2"
+                        | 3 => "3"
+                        | 4 => "4"
+                        | 5 => "5"
+                        | 6 => "6"
+                        | 7 => "7"
+                        | 8 => "8"
+                        | 9 => "9"
                         | panic;
                     go((digit + acc, n / 10))
                 }
         }
-        | panic
-};
+        | panic;
 
 String::String &
 println::println &

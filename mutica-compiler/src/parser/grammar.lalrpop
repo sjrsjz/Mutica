@@ -6,6 +6,7 @@ use mutica_core::util::source_info::SourceLocation;
 use mutica_core::util::colorize::TokenColor;
 use crate::parser::WithLocation;
 use crate::parser::calculate_full_error_span;
+use std::num::NonZero;
 use std::sync::Arc;
 grammar(source: &Arc<SourceFile>, colors: &mut Vec<TokenColor>);
 
@@ -18,7 +19,7 @@ extern {
     enum LexerToken {
         "Wildcard"      => LexerToken::Wildcard,
         "FloatNum"      => LexerToken::FloatNum(<f64>),
-        "Num"           => LexerToken::Num(<i64>),
+        "Num"           => LexerToken::Num(<usize>),
         "Ident"         => LexerToken::Ident(<String>),
         "CharLit"       => LexerToken::CharLit(<char>),
         "StringLit"     => LexerToken::StringLit(<String>),
@@ -93,7 +94,7 @@ extern {
     }
 }
 
-Num: i64 = <l:@L> <s:"Num"> <r:@R> => {
+Num: usize = <l:@L> <s:"Num"> <r:@R> => {
     TokenColor::fill_colors(colors, l..r, TokenColor::Number);
     s
 };
@@ -208,24 +209,9 @@ SemicolonTok: () = <l:@L> "Semicolon" <r:@R> => { TokenColor::fill_colors(colors
 
 
 AtomType: WithLocation<TypeAst> = {
-    <l:@L> <min: Num> RangeTok <delta: Num> <r:@R> => {
-        WithLocation::new(TypeAst::Range {
-            ty: Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            min: min as usize,
-            delta: Some(delta as usize),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-    <l:@L> <min: Num> RangeTok BangTok <r:@R> => {
-        WithLocation::new(TypeAst::Range {
-            ty: Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            min: min as usize,
-            delta: None,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-    <l:@L> NatTok <r:@R> => WithLocation::new(TypeAst::Range {
-        ty: Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        min: 0,
-        delta: None,
+   <l:@L> NatTok <r:@R> => WithLocation::new(TypeAst::List {
+        head: vec![],
+        tail: Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> FloatTok <r:@R> => WithLocation::new(TypeAst::Float, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> CharTok <r:@R> => WithLocation::new(TypeAst::Char, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -235,11 +221,18 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> WildcardTok <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> NoneTok <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <f: Float> <r:@R> => WithLocation::new(TypeAst::FloatLiteral(f), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <n: Num> <r:@R> => WithLocation::new(TypeAst::NatureNumber(n as usize, Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()))), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <n: Num> <r:@R> => {
+        if n == 0 {
+            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        } else {
+            let unit = WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref());
+            WithLocation::new(TypeAst::Tuple(vec![(unit, NonZero::new(n).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }
+    },
     <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(id), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <s: StringLiteral> <r:@R> => {
-        let chars: Vec<WithLocation<TypeAst>> = s.chars().map(|ch| WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref())).collect();
+        let chars: Vec<(WithLocation<TypeAst>, NonZero<usize>)> = s.chars().map(|ch| (WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref()), NonZero::new(1).unwrap())).collect();
         WithLocation::new(TypeAst::Tuple(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <io: Ident> BangTok <r:@R> => {
@@ -427,7 +420,23 @@ Closure: WithLocation<TypeAst> = {
 
 Tuple: WithLocation<TypeAst> = {
     <l:@L> <r:@R> => WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <items: Comma<TupleElement>> <r:@R> => WithLocation::new(TypeAst::Tuple(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <items: Comma<TupleElementWithNum>> <r:@R> => WithLocation::new(TypeAst::Tuple(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <prefix: Comma<TupleElementWithNum>> RangeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::List {
+            head: prefix,
+            tail: Box::new(repeat),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <prefix: Comma<TupleElementWithNum>> TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
+            head: prefix,
+            tail: Box::new(repeat),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <prefix: TupleElement> RangeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::List {
+            head: vec![(prefix, NonZero::new(1).unwrap())],
+            tail: Box::new(repeat),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <prefix: TupleElement> TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
+            head: vec![(prefix, NonZero::new(1).unwrap())],
+            tail: Box::new(repeat),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <item: TupleElement> => item,
 }
 
@@ -492,6 +501,19 @@ Factor: WithLocation<TypeAst> = {
 }
 
 
+TupleElementWithNum: (WithLocation<TypeAst>, NonZero<usize>) = {
+    <e: TupleElement> => (e, NonZero::new(1).unwrap()),
+    <l:@L> <n: Num> AtTok <e: TupleElement> <r:@R> =>? {
+        if n <= 0 {
+            Err(lalrpop_util::ParseError::User {
+                error: LexicalError::InvalidRepeatCount(n, l, r)
+            })
+        } else {
+            Ok((e, NonZero::new(n as usize).unwrap()))
+        }
+    },
+};
+
 TupleElement = Generalize;
 
 Generalize: WithLocation<TypeAst> = {
@@ -538,7 +560,7 @@ Or: WithLocation<TypeAst> = {
     <l:@L> <left: Or> DoublePipeTok <right: And> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#or".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <t: And> => t,
@@ -548,7 +570,7 @@ And: WithLocation<TypeAst> = {
     <l:@L> <left: And> DoubleAmpersandTok <right: Compare> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#and".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <t: Compare> => t,
@@ -570,31 +592,31 @@ Compare: WithLocation<TypeAst> = {
     <l:@L> <left: Compare> LtTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#lt".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: Compare> LteTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#lte".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: Compare> GtTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#gt".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: Compare> GteTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#gte".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: Compare> IsTok <right: AddSub> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#is".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <t: AddSub> => t,
@@ -604,13 +626,13 @@ AddSub: WithLocation<TypeAst> = {
     <l:@L> <left: AddSub> <op_l:@L> PlusTok <op_r:@R> <right: Mod> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#add".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: AddSub> MinusTok <right: Mod> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#sub".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <t: Mod> => t,
@@ -620,7 +642,7 @@ Mod: WithLocation<TypeAst> = {
     <l:@L> <left: Mod> PercentTok <right: MulDiv> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#mod".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <t: MulDiv> => t,
@@ -630,27 +652,18 @@ MulDiv: WithLocation<TypeAst> = {
     <l:@L> <left: MulDiv> StarTok <right: Factor> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#mul".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <left: MulDiv> SlashTok <right: Factor> <r:@R> => {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#div".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![left, right]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-    <c: Construct> => c,
-}
-
-Construct: WithLocation<TypeAst> = {
-    <l:@L> <head: Factor> AtTok <body: Construct> <r:@R> => {
-        WithLocation::new(TypeAst::Cons {
-            head: vec![head],
-            tail: Box::new(body),
+            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <f: Factor> => f,
 }
+
 
 Binding: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
     <id: Type> AssignTok <value: Type> => (id, value),
@@ -735,11 +748,11 @@ Expression: WithLocation<TypeAst> = {
                             Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
                         )),
                         arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![
-                            extend_expr.1,
-                            WithLocation::new(
+                            (extend_expr.1, NonZero::new(1).unwrap()),
+                            (WithLocation::new(
                                 TypeAst::Variable(extend_expr.0),
                                 Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                            ),
+                            ), NonZero::new(1).unwrap()),
                         ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                     },
                     Some(SourceLocation::new(source.clone(), l..r)).as_ref()
@@ -765,11 +778,11 @@ Expression: WithLocation<TypeAst> = {
                             Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
                         )),
                         arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![
-                            extend_expr.1,
-                            WithLocation::new(
+                            (extend_expr.1, NonZero::new(1).unwrap()),
+                            (WithLocation::new(
                                 TypeAst::Variable(extend_expr.0),
                                 Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                            ),
+                            ), NonZero::new(1).unwrap()),
                         ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                     },
                     Some(SourceLocation::new(source.clone(), l..r)).as_ref()

@@ -334,7 +334,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
     match result {
         Ok(v) => v
             .map(&mut FastCycleDetector::new(), |_, ty| match ty {
-                TypeRef::Tuple(tuple) if tuple.is_empty() => (),
+                TypeRef::Sequence(tuple) if tuple.is_unit() => (),
                 _ => {
                     println!("{}", v.display(&mut FastCycleDetector::new(), 0, usize::MAX));
                 }

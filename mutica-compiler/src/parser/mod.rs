@@ -939,17 +939,18 @@ pub fn inject_std_library(
                 BasicTypeAst::Char => std_ast,
                 BasicTypeAst::Top => std_ast,
                 BasicTypeAst::Bottom => std_ast,
-                BasicTypeAst::NatureNumber(v, ty) => {
-                    BasicTypeAst::NatureNumber(v, replace_placeholder(*ty, ast).into())
-                }
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
                 BasicTypeAst::OrderedType(_) => std_ast,
                 BasicTypeAst::Tuple(items) => BasicTypeAst::Tuple(
-                    items.into_iter().map(|s| replace_placeholder(s, ast)).collect(),
+                    items.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
                 ),
+                BasicTypeAst::List { head, tail } => BasicTypeAst::List {
+                    head: head.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
+                    tail: replace_placeholder(*tail, ast).into(),
+                },
                 BasicTypeAst::Cons { head, tail } => BasicTypeAst::Cons {
-                    head: head.into_iter().map(|s| replace_placeholder(s, ast)).collect(),
+                    head: head.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
                     tail: replace_placeholder(*tail, ast).into(),
                 },
                 BasicTypeAst::Generalize(items) => BasicTypeAst::Generalize(

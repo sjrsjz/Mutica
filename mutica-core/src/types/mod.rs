@@ -1127,6 +1127,10 @@ pub struct TaggedPtr<T> {
 }
 
 impl<T> TaggedPtr<T> {
+    pub fn unit() -> Self {
+        Self { ptr: std::ptr::null(), tag: 0, length: None }
+    }
+
     pub fn new(ptr: *const T, tag: usize) -> Self {
         Self { ptr, tag, length: None }
     }

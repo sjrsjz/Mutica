@@ -69,14 +69,13 @@ pub enum TypeAst {
     FloatLiteral(f64),
     CharLiteral(char),
     Variable(String),
-    NatureNumber(usize, Box<WithLocation<TypeAst>>), // value, type
-    Tuple(Vec<WithLocation<TypeAst>>),
+    Tuple(Vec<(WithLocation<TypeAst>, NonZero<usize>)>),
     Cons {
-        head: Vec<WithLocation<TypeAst>>,
+        head: Vec<(WithLocation<TypeAst>, NonZero<usize>)>,
         tail: Box<WithLocation<TypeAst>>,
     },
     List {
-        head: Vec<WithLocation<TypeAst>>,
+        head: Vec<(WithLocation<TypeAst>, NonZero<usize>)>,
         tail: Box<WithLocation<TypeAst>>,
     },
     Generalize(Vec<WithLocation<TypeAst>>),
@@ -155,14 +154,17 @@ pub enum BasicTypeAst {
     Char,
     Top,
     Bottom,
-    NatureNumber(usize, Box<WithLocation<BasicTypeAst>>), // value, type
     FloatLiteral(f64),
     CharLiteral(char),
     OrderedType(usize),
     Variable(String),
-    Tuple(Vec<WithLocation<BasicTypeAst>>),
+    Tuple(Vec<(WithLocation<BasicTypeAst>, NonZero<usize>)>),
+    List {
+        head: Vec<(WithLocation<BasicTypeAst>, NonZero<usize>)>,
+        tail: Box<WithLocation<BasicTypeAst>>,
+    },
     Cons {
-        head: Vec<WithLocation<BasicTypeAst>>,
+        head: Vec<(WithLocation<BasicTypeAst>, NonZero<usize>)>,
         tail: Box<WithLocation<BasicTypeAst>>,
     },
     Generalize(Vec<WithLocation<BasicTypeAst>>),
@@ -369,14 +371,6 @@ impl BasicTypeAst {
             BasicTypeAst::Bottom => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Bottom, loc))
             }
-            BasicTypeAst::NatureNumber(v, ty) => {
-                let ty_result = ty.linearize(ctx, ty.location());
-                let tail_ty = ty_result.tail_type().clone();
-                LinearizeResult::new_with_binding(
-                    ty_result.bindings,
-                    WithLocation::new(LinearTypeAst::NatureNumber(*v, Box::new(tail_ty)), loc),
-                )
-            }
             BasicTypeAst::FloatLiteral(v) => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::FloatLiteral(*v), loc))
             }
@@ -391,25 +385,57 @@ impl BasicTypeAst {
                 loc,
             )),
             BasicTypeAst::Tuple(v) => {
-                let elements = v.iter().map(|e| e.linearize(ctx, e.location())).collect::<Vec<_>>();
-                let ty =
-                    LinearTypeAst::Tuple(elements.iter().map(|e| e.tail_type().clone()).collect());
+                let elements =
+                    v.iter().map(|(e, n)| (e.linearize(ctx, e.location()), *n)).collect::<Vec<_>>();
+                let ty = LinearTypeAst::Tuple(
+                    elements.iter().map(|(e, n)| (e.tail_type().clone(), *n)).collect(),
+                );
 
                 LinearizeResult::new_with_binding(
-                    elements.into_iter().flat_map(|e| e.bindings.into_iter()).collect(),
+                    elements.into_iter().flat_map(|(e, _)| e.bindings.into_iter()).collect(),
                     WithLocation::new(ty, loc),
                 )
             }
-            BasicTypeAst::Cons { head, tail } => {
-                let head_results = head.iter().map(|e| e.linearize(ctx, e.location())).collect::<Vec<_>>();
+            BasicTypeAst::List { head, tail } => {
+                let head_results = head
+                    .iter()
+                    .map(|(e, n)| (e.linearize(ctx, e.location()), *n))
+                    .collect::<Vec<_>>();
                 let tail_result = tail.linearize(ctx, tail.location());
                 let mut bindings = Vec::new();
                 for hr in &head_results {
-                    bindings.extend(hr.bindings.clone());
+                    bindings.extend(hr.0.bindings.clone());
                 }
                 bindings.extend(tail_result.bindings.clone());
-                let head_types = head_results.into_iter().map(|r| r.tail_type().clone()).collect::<Vec<_>>();
-                let ty = LinearTypeAst::Cons { head: head_types, tail: Box::new(tail_result.tail_type().clone()) };
+                let head_types = head_results
+                    .into_iter()
+                    .map(|(r, n)| (r.tail_type().clone(), n))
+                    .collect::<Vec<_>>();
+                let ty = LinearTypeAst::List {
+                    head: head_types,
+                    tail: Box::new(tail_result.tail_type().clone()),
+                };
+                LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
+            }
+            BasicTypeAst::Cons { head, tail } => {
+                let head_results = head
+                    .iter()
+                    .map(|(e, n)| (e.linearize(ctx, e.location()), *n))
+                    .collect::<Vec<_>>();
+                let tail_result = tail.linearize(ctx, tail.location());
+                let mut bindings = Vec::new();
+                for hr in &head_results {
+                    bindings.extend(hr.0.bindings.clone());
+                }
+                bindings.extend(tail_result.bindings.clone());
+                let head_types = head_results
+                    .into_iter()
+                    .map(|(r, n)| (r.tail_type().clone(), n))
+                    .collect::<Vec<_>>();
+                let ty = LinearTypeAst::Cons {
+                    head: head_types,
+                    tail: Box::new(tail_result.tail_type().clone()),
+                };
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Generalize(v) => {
@@ -580,14 +606,17 @@ pub enum LinearTypeAst<'ast> {
     Float,
     Top,
     Bottom,
-    NatureNumber(usize, Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>), // value, type
     FloatLiteral(f64),
     CharLiteral(char),
     OrderedType(usize),
     Variable(String), // None 表示续体
-    Tuple(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    Tuple(Vec<(WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, NonZero<usize>)>),
+    List {
+        head: Vec<(WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, NonZero<usize>)>,
+        tail: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+    },
     Cons {
-        head: Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        head: Vec<(WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, NonZero<usize>)>,
         tail: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
     Generalize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
@@ -656,13 +685,6 @@ impl TypeAst {
             TypeAst::Top => WithLocation::new(BasicTypeAst::Top, loc),
             TypeAst::Bottom => WithLocation::new(BasicTypeAst::Bottom, loc),
             TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // discard 只允许丢弃unit
-            TypeAst::NatureNumber(v, ty) => WithLocation::new(
-                BasicTypeAst::NatureNumber(
-                    *v,
-                    Box::new(ty.into_basic(multifile_builder, ty.location())),
-                ),
-                loc,
-            ),
             TypeAst::FloatLiteral(v) => WithLocation::new(BasicTypeAst::FloatLiteral(*v), loc),
             TypeAst::CharLiteral(v) => WithLocation::new(BasicTypeAst::CharLiteral(*v), loc),
             TypeAst::Variable(name) => WithLocation::new(BasicTypeAst::Variable(name.clone()), loc),
@@ -670,21 +692,27 @@ impl TypeAst {
                 BasicTypeAst::Tuple(
                     elements
                         .iter()
-                        .map(|e| e.into_basic(multifile_builder, e.location()))
+                        .map(|(e, count)| (e.into_basic(multifile_builder, e.location()), *count))
                         .collect(),
                 ),
                 loc,
             ),
             TypeAst::Cons { head, tail } => WithLocation::new(
                 BasicTypeAst::Cons {
-                    head: head.iter().map(|e| e.into_basic(multifile_builder, e.location())).collect(),
+                    head: head
+                        .iter()
+                        .map(|(e, count)| (e.into_basic(multifile_builder, e.location()), *count))
+                        .collect(),
                     tail: Box::new(tail.into_basic(multifile_builder, tail.location())),
                 },
                 loc,
             ),
             TypeAst::List { head, tail } => WithLocation::new(
-                BasicTypeAst::Cons {
-                    head: head.iter().map(|e| e.into_basic(multifile_builder, e.location())).collect(),
+                BasicTypeAst::List {
+                    head: head
+                        .iter()
+                        .map(|(e, count)| (e.into_basic(multifile_builder, e.location()), *count))
+                        .collect(),
                     tail: Box::new(tail.into_basic(multifile_builder, tail.location())),
                 },
                 loc,
@@ -783,25 +811,31 @@ impl TypeAst {
                                 (
                                     WithLocation::new(
                                         BasicTypeAst::Tuple(vec![
-                                            WithLocation::new(
-                                                BasicTypeAst::Pattern {
-                                                    name: "_eq#x".to_string(),
-                                                    expr: Box::new(WithLocation::new(
-                                                        BasicTypeAst::Top,
-                                                        loc,
-                                                    )),
-                                                },
-                                                loc,
+                                            (
+                                                WithLocation::new(
+                                                    BasicTypeAst::Pattern {
+                                                        name: "_eq#x".to_string(),
+                                                        expr: Box::new(WithLocation::new(
+                                                            BasicTypeAst::Top,
+                                                            loc,
+                                                        )),
+                                                    },
+                                                    loc,
+                                                ),
+                                                NonZero::new(1).unwrap(),
                                             ),
-                                            WithLocation::new(
-                                                BasicTypeAst::Pattern {
-                                                    name: "_eq#x".to_string(),
-                                                    expr: Box::new(WithLocation::new(
-                                                        BasicTypeAst::Top,
-                                                        loc,
-                                                    )),
-                                                },
-                                                loc,
+                                            (
+                                                WithLocation::new(
+                                                    BasicTypeAst::Pattern {
+                                                        name: "_eq#x".to_string(),
+                                                        expr: Box::new(WithLocation::new(
+                                                            BasicTypeAst::Top,
+                                                            loc,
+                                                        )),
+                                                    },
+                                                    loc,
+                                                ),
+                                                NonZero::new(1).unwrap(),
                                             ),
                                         ]),
                                         loc,
@@ -824,8 +858,14 @@ impl TypeAst {
                     )),
                     arg: Box::new(WithLocation::new(
                         BasicTypeAst::Tuple(vec![
-                            left.into_basic(multifile_builder, left.location()),
-                            right.into_basic(multifile_builder, right.location()),
+                            (
+                                left.into_basic(multifile_builder, left.location()),
+                                NonZero::new(1).unwrap(),
+                            ),
+                            (
+                                right.into_basic(multifile_builder, right.location()),
+                                NonZero::new(1).unwrap(),
+                            ),
                         ]),
                         loc,
                     )),
@@ -841,25 +881,31 @@ impl TypeAst {
                                 (
                                     WithLocation::new(
                                         BasicTypeAst::Tuple(vec![
-                                            WithLocation::new(
-                                                BasicTypeAst::Pattern {
-                                                    name: "_neq#x".to_string(),
-                                                    expr: Box::new(WithLocation::new(
-                                                        BasicTypeAst::Top,
-                                                        loc,
-                                                    )),
-                                                },
-                                                loc,
+                                            (
+                                                WithLocation::new(
+                                                    BasicTypeAst::Pattern {
+                                                        name: "_neq#x".to_string(),
+                                                        expr: Box::new(WithLocation::new(
+                                                            BasicTypeAst::Top,
+                                                            loc,
+                                                        )),
+                                                    },
+                                                    loc,
+                                                ),
+                                                NonZero::new(1).unwrap(),
                                             ),
-                                            WithLocation::new(
-                                                BasicTypeAst::Pattern {
-                                                    name: "_neq#x".to_string(),
-                                                    expr: Box::new(WithLocation::new(
-                                                        BasicTypeAst::Top,
-                                                        loc,
-                                                    )),
-                                                },
-                                                loc,
+                                            (
+                                                WithLocation::new(
+                                                    BasicTypeAst::Pattern {
+                                                        name: "_neq#x".to_string(),
+                                                        expr: Box::new(WithLocation::new(
+                                                            BasicTypeAst::Top,
+                                                            loc,
+                                                        )),
+                                                    },
+                                                    loc,
+                                                ),
+                                                NonZero::new(1).unwrap(),
                                             ),
                                         ]),
                                         loc,
@@ -882,8 +928,14 @@ impl TypeAst {
                     )),
                     arg: Box::new(WithLocation::new(
                         BasicTypeAst::Tuple(vec![
-                            left.into_basic(multifile_builder, left.location()),
-                            right.into_basic(multifile_builder, right.location()),
+                            (
+                                left.into_basic(multifile_builder, left.location()),
+                                NonZero::new(1).unwrap(),
+                            ),
+                            (
+                                right.into_basic(multifile_builder, right.location()),
+                                NonZero::new(1).unwrap(),
+                            ),
                         ]),
                         loc,
                     )),
@@ -1016,12 +1068,12 @@ impl TypeAst {
             TypeAst::Range { ty, .. } => {
                 ty.collect_errors(errors);
             }
-            TypeAst::NatureNumber(_, ty) => {
-                ty.collect_errors(errors);
+            TypeAst::Tuple(elements) => {
+                for (elem, _) in elements {
+                    elem.collect_errors(errors);
+                }
             }
-            TypeAst::Tuple(elements)
-            | TypeAst::Generalize(elements)
-            | TypeAst::Specialize(elements) => {
+            TypeAst::Generalize(elements) | TypeAst::Specialize(elements) => {
                 for elem in elements {
                     elem.collect_errors(errors);
                 }
@@ -1084,13 +1136,13 @@ impl TypeAst {
                 value.collect_errors(errors);
             }
             TypeAst::Cons { head, tail } => {
-                for elem in head {
+                for (elem, _) in head {
                     elem.collect_errors(errors);
                 }
                 tail.collect_errors(errors);
             }
             TypeAst::List { head, tail } => {
-                for elem in head {
+                for (elem, _) in head {
                     elem.collect_errors(errors);
                 }
                 tail.collect_errors(errors);
@@ -1123,16 +1175,15 @@ impl TypeAst {
             TypeAst::Range { ty, min, delta } => {
                 TypeAst::Range { ty: Box::new(Self::sanitize(*ty)), min, delta }
             }
-            TypeAst::NatureNumber(v, ty) => TypeAst::NatureNumber(v, Box::new(Self::sanitize(*ty))),
-            TypeAst::Tuple(elements) => {
-                TypeAst::Tuple(elements.into_iter().map(Self::sanitize).collect())
-            }
+            TypeAst::Tuple(elements) => TypeAst::Tuple(
+                elements.into_iter().map(|(e, count)| (Self::sanitize(e), count)).collect(),
+            ),
             TypeAst::Cons { head, tail } => TypeAst::Cons {
-                head: head.into_iter().map(Self::sanitize).collect(),
+                head: head.into_iter().map(|(e, count)| (Self::sanitize(e), count)).collect(),
                 tail: Box::new(Self::sanitize(*tail)),
             },
             TypeAst::List { head, tail } => TypeAst::List {
-                head: head.into_iter().map(Self::sanitize).collect(),
+                head: head.into_iter().map(|(e, count)| (Self::sanitize(e), count)).collect(),
                 tail: Box::new(Self::sanitize(*tail)),
             },
             TypeAst::Generalize(elements) => {
@@ -1325,15 +1376,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 WithLocation::new(LinearTypeAst::Bottom, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
-            LinearTypeAst::NatureNumber(v, ty) => {
-                let ty_res = ty.flow(ctx, pattern_mode, ty.location(), errors);
-                FlowResult::complex(
-                    WithLocation::new(LinearTypeAst::NatureNumber(*v, Box::new(ty_res.ty)), loc),
-                    ty_res.captures,
-                    ty_res.patterns,
-                )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
-            }
             LinearTypeAst::FloatLiteral(v) => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::FloatLiteral(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
@@ -1379,9 +1421,9 @@ impl<'ast> LinearTypeAst<'ast> {
                 let mut new_elements = Vec::new();
                 let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
-                for elem in elements {
+                for (elem, count) in elements {
                     let res = elem.flow(ctx, pattern_mode, elem.location(), errors);
-                    new_elements.push(res.ty);
+                    new_elements.push((res.ty, *count));
                     all_captures.extend(res.captures);
                     all_patterns.extend(
                         res.patterns
@@ -1396,13 +1438,45 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
+            LinearTypeAst::List { head, tail } => {
+                let mut new_heads = Vec::new();
+                let mut all_captures = HashMap::new();
+                let mut all_patterns = PatternEnv::new();
+                for (h, count) in head {
+                    let res = h.flow(ctx, pattern_mode, h.location(), errors);
+                    new_heads.push((res.ty, *count));
+                    all_captures.extend(res.captures);
+                    all_patterns.extend(
+                        res.patterns
+                            .into_iter()
+                            .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                    );
+                }
+                let tail_res = tail.flow(ctx, pattern_mode, tail.location(), errors);
+                all_captures.extend(tail_res.captures);
+                all_patterns.extend(
+                    tail_res
+                        .patterns
+                        .into_iter()
+                        .map(|(name, loc)| WithLocation::new(name, loc.location())),
+                );
+                FlowResult::complex(
+                    WithLocation::new(
+                        LinearTypeAst::List { head: new_heads, tail: Box::new(tail_res.ty) },
+                        loc,
+                    ),
+                    all_captures,
+                    all_patterns,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
             LinearTypeAst::Cons { head, tail } => {
                 let mut new_heads = Vec::new();
                 let mut all_captures = HashMap::new();
                 let mut all_patterns = PatternEnv::new();
-                for h in head {
+                for (h, count) in head {
                     let res = h.flow(ctx, pattern_mode, h.location(), errors);
-                    new_heads.push(res.ty);
+                    new_heads.push((res.ty, *count));
                     all_captures.extend(res.captures);
                     all_patterns.extend(
                         res.patterns
@@ -1851,7 +1925,11 @@ impl<'ast> LinearTypeAst<'ast> {
                         )
                     } else {
                         // min > 0, 使用nature_number
-                        Sequence::nature_number(*min, ty_result.ty.clone(), loc.cloned().map(Arc::new))
+                        Sequence::nature_number(
+                            *min,
+                            ty_result.ty.clone(),
+                            loc.cloned().map(Arc::new),
+                        )
                     },
                     ty_result.patterns,
                 ))
@@ -1868,14 +1946,6 @@ impl<'ast> LinearTypeAst<'ast> {
             }
             LinearTypeAst::Bottom => {
                 Ok(BuildResult::simple(TypeBound::bottom(loc.cloned().map(Arc::new))))
-            }
-            LinearTypeAst::NatureNumber(v, ty) => {
-                let ty_result =
-                    ty.to_type(ctx, pattern_counter, pattern_mode, gc, roots, ty.location())?;
-                Ok(BuildResult::complex(
-                    Sequence::nature_number(*v, ty_result.ty, loc.cloned().map(Arc::new)),
-                    ty_result.patterns,
-                ))
             }
             LinearTypeAst::FloatLiteral(v) => {
                 Ok(BuildResult::simple(FloatValue::new(*v, loc.cloned().map(Arc::new))))
@@ -1901,7 +1971,7 @@ impl<'ast> LinearTypeAst<'ast> {
             }
             LinearTypeAst::Tuple(basic_type_asts) => {
                 let mut types = Vec::new();
-                for bta in basic_type_asts {
+                for (bta, _count) in basic_type_asts {
                     types.push(bta.to_type(
                         ctx,
                         pattern_counter,
@@ -1912,21 +1982,73 @@ impl<'ast> LinearTypeAst<'ast> {
                     )?);
                 }
                 let (types, patterns) = BuildResult::fold(types);
-                Ok(BuildResult::complex(Sequence::new_tuple(&types, loc.cloned().map(Arc::new)), patterns))
+                let types = types
+                    .into_iter()
+                    .zip(basic_type_asts.iter())
+                    .map(|(t, (_bta, count))| (t, *count))
+                    .collect::<Vec<_>>();
+                Ok(BuildResult::complex(
+                    Sequence::new_simple(types, loc.cloned().map(Arc::new)),
+                    patterns,
+                ))
             }
-            LinearTypeAst::Cons { head, tail } => {
+            LinearTypeAst::List { head, tail } => {
                 let mut results = Vec::new();
-                for h in head {
-                    results.push(h.to_type(ctx, pattern_counter, pattern_mode, gc, roots, h.location())?);
+                for (h, _count) in head {
+                    results.push(h.to_type(
+                        ctx,
+                        pattern_counter,
+                        pattern_mode,
+                        gc,
+                        roots,
+                        h.location(),
+                    )?);
                 }
-                let tail_res = tail.to_type(ctx, pattern_counter, pattern_mode, gc, roots, tail.location())?;
+                let tail_res =
+                    tail.to_type(ctx, pattern_counter, pattern_mode, gc, roots, tail.location())?;
                 results.push(tail_res);
                 let (types, patterns) = BuildResult::fold(results);
                 // last element is the tail
                 let tail_ty = types.last().unwrap().clone();
-                let prefix_types = types[..types.len()-1].to_vec();
-                let prefix = prefix_types.into_iter().map(|t| (t, NonZero::new(1).unwrap())).collect::<Vec<_>>();
-                Ok(BuildResult::complex(Sequence::new_cons(prefix, tail_ty, loc.cloned().map(Arc::new)), patterns))
+                let prefix_types = types[..types.len() - 1].to_vec();
+                let prefix = prefix_types
+                    .into_iter()
+                    .zip(head.iter())
+                    .map(|(t, (_h, count))| (t, *count))
+                    .collect::<Vec<_>>();
+                Ok(BuildResult::complex(
+                    Sequence::new_repeat(prefix, tail_ty, loc.cloned().map(Arc::new)),
+                    patterns,
+                ))
+            }
+            LinearTypeAst::Cons { head, tail } => {
+                let mut results = Vec::new();
+                for (h, _count) in head {
+                    results.push(h.to_type(
+                        ctx,
+                        pattern_counter,
+                        pattern_mode,
+                        gc,
+                        roots,
+                        h.location(),
+                    )?);
+                }
+                let tail_res =
+                    tail.to_type(ctx, pattern_counter, pattern_mode, gc, roots, tail.location())?;
+                results.push(tail_res);
+                let (types, patterns) = BuildResult::fold(results);
+                // last element is the tail
+                let tail_ty = types.last().unwrap().clone();
+                let prefix_types = types[..types.len() - 1].to_vec();
+                let prefix = prefix_types
+                    .into_iter()
+                    .zip(head.iter())
+                    .map(|(t, (_h, count))| (t, *count))
+                    .collect::<Vec<_>>();
+                Ok(BuildResult::complex(
+                    Sequence::new_cons(prefix, tail_ty, loc.cloned().map(Arc::new)),
+                    patterns,
+                ))
             }
             LinearTypeAst::Generalize(basic_type_asts) => {
                 let mut types = Vec::new();

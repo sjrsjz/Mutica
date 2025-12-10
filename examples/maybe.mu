@@ -6,4 +6,4 @@ let {
 } = pkg;
 let v1: any = Just(41);
 let v2: any = Nothing;
-map(v1)(x: int => x + 1), map(v2)(x: int => x + 1)
+map(v1)(x: nat => x + 1), map(v2)(x: nat => x + 1)

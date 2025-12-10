@@ -47,20 +47,25 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::Char => (),
             LinearTypeAst::Top => (),
             LinearTypeAst::Bottom => (),
-            LinearTypeAst::NatureNumber(_, ty) => {
-                Self::build_mapping(ty, mapping, source_file);
-            }
             LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
             LinearTypeAst::OrderedType(_) => (),
             LinearTypeAst::Variable(_) => (),
             LinearTypeAst::Tuple(items) => {
-                for item in items {
+                for (item, _count) in items {
                     Self::build_mapping(item, mapping, source_file);
                 }
             }
+            LinearTypeAst::List { head, tail } => {
+                for (h, _count) in head {
+                    Self::build_mapping(h, mapping, source_file);
+                }
+                Self::build_mapping(tail, mapping, source_file);
+            }
             LinearTypeAst::Cons { head, tail } => {
-                Self::build_mapping(head, mapping, source_file);
+                for (h, _count) in head {
+                    Self::build_mapping(h, mapping, source_file);
+                }
                 Self::build_mapping(tail, mapping, source_file);
             }
             LinearTypeAst::Generalize(items) => {

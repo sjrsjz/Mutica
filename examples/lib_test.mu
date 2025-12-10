@@ -43,8 +43,8 @@ let {
 // 创建测试列表: [1, 2, 3, 4, 5]
 let test_list: any = cons(1, cons(2, cons(3, cons(4, cons(5, Nil)))));
 let (_x: any, _x: any) = (test_list, (1, 2, 3, 4, 5)); // 类型检查
-let print_int_list: any = lst: List(int) => {
-    discard iter(lst)(x: int => {
+let print_int_list: any = lst: List(nat) => {
+    discard iter(lst)(x: nat => {
         discard print!(x);
         discard print!(' ');
     });
@@ -52,17 +52,17 @@ let print_int_list: any = lst: List(int) => {
 };
 
 // 测试 filter: 过滤出大于 2 的元素，期望结果: [3, 4, 5]
-discard print_int_list[filter(test_list)(x: int => x > 2)];
+discard print_int_list[filter(test_list)(x: nat => x > 2)];
 
 // 测试 fold: 计算列表元素之和，期望结果: 15
-discard println![fold(test_list)(0)((acc: int, x: int) => acc + x)];
+discard println![fold(test_list)(0)((acc: nat, x: nat) => acc + x)];
 
 // 测试 foldr: 构建新列表，期望结果: [2, 4, 6, 8, 10]
-discard print_int_list[foldr(test_list)(Nil)((h: int, acc: any) => cons(h * 2, acc))];
+discard print_int_list[foldr(test_list)(Nil)((h: nat, acc: any) => cons(h * 2, acc))];
 
 // 测试 append: 连接两个列表，期望结果: [1, 2, 3, 4]
-let list1: List(int) = cons(1, cons(2, Nil));
-let list2: List(int) = cons(3, cons(4, Nil));
+let list1: List(nat) = cons(1, cons(2, Nil));
+let list2: List(nat) = cons(3, cons(4, Nil));
 discard print_int_list[append(list1)(list2)];
 
 // 测试 reverse: 反转列表，期望结果: [5, 4, 3, 2, 1]
@@ -78,25 +78,25 @@ discard print_int_list[take(test_list)(3)];
 discard print_int_list[drop(test_list)(2)];
 
 // 测试 find: 查找第一个大于 3 的元素，期望结果: Just::4
-discard println![find(test_list)(x: int => x > 3)];
+discard println![find(test_list)(x: nat => x > 3)];
 
 // 测试 find: 查找不存在的元素，期望结果: Nothing::()
-discard println![find(test_list)(x: int => x > 10)];
+discard println![find(test_list)(x: nat => x > 10)];
 
 // 测试 list_all: 检查是否所有元素都大于 0，期望结果: true
-discard println![list_all(test_list)(x: int => x > 0)];
+discard println![list_all(test_list)(x: nat => x > 0)];
 
 // 测试 list_all: 检查是否所有元素都大于 3，期望结果: false
-discard println![list_all(test_list)(x: int => x > 3)];
+discard println![list_all(test_list)(x: nat => x > 3)];
 
 // 测试 list_any: 检查是否存在元素大于 4，期望结果: true
-discard println![list_any(test_list)(x: int => x > 4)];
+discard println![list_any(test_list)(x: nat => x > 4)];
 
 // 测试 list_any: 检查是否存在元素小于 0，期望结果: false
-discard println![list_any(test_list)(x: int => x < 0)];
+discard println![list_any(test_list)(x: nat => x < 0)];
 
 // 测试 map: 将所有元素乘以 2，期望结果: [2, 4, 6, 8, 10]
-discard print_int_list[list_map(test_list)(x: int => x * 2)];
+discard print_int_list[list_map(test_list)(x: nat => x * 2)];
 
 // 测试 len: 获取列表长度，期望结果: 5
 discard println![len(test_list)];
@@ -104,9 +104,9 @@ discard println![len(test_list)];
 // 组合测试: filter + map + fold
 // 找出所有偶数，乘以 3，然后求和，期望结果: (2 + 4) * 3 = 18
 discard println![{
-    let evens: any = filter(test_list)(x: int => x % 2 == 0);
-    let tripled: any = list_map(evens)(x: int => x * 3);
-    fold(tripled)(0)((acc: int, x: int) => acc + x)
+    let evens: any = filter(test_list)(x: nat => x % 2 == 0);
+    let tripled: any = list_map(evens)(x: nat => x * 3);
+    fold(tripled)(0)((acc: nat, x: nat) => acc + x)
 }];
 
 

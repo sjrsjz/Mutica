@@ -13,9 +13,9 @@ let {
 
 let Json: any = dyn_rec object: (
     List(object) |
-    (rot [rec t: [() & (none @ t)]], object) |
+    (rot [rec t: [() & (none ~ t)]], object) |
     String |
-    int |
+    nat |
     float |
     true |
     false
@@ -30,7 +30,7 @@ let print_json: any =  rec go: spacing: String => match
         discard print(spacing);
         println("true")
     }
-    | v: int => {
+    | v: nat => {
         discard print(spacing);
         println! v
     }
@@ -42,7 +42,7 @@ let print_json: any =  rec go: spacing: String => match
         discard print(spacing);
         println(v)
     }
-    | (rot (k: [rec t: [() & (none @ t)]]), v: Json) => {
+    | (rot (k: [rec t: [() & (none ~ t)]]), v: Json) => {
         discard print(spacing);
         discard println("> " + k);
         go(spacing + "  ")(v)
