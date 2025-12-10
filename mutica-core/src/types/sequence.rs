@@ -759,14 +759,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.ty {
-            SequenceType::Unit => Ok(self.into_dispatcher().into()),
+            SequenceType::Unit => Ok(self.into_dispatcher()),
             SequenceType::NonEmptyTuple(prefix) => {
                 let mut new_prefix = Vec::with_capacity(prefix.len());
                 for (ty, count) in prefix.iter() {
                     let reduced_ty = ty.clone().reduce(ctx)?.into_dispatcher();
                     new_prefix.push((reduced_ty, *count));
                 }
-                Ok(Sequence::new_simple(new_prefix.into_iter(), self.source_info.clone()))
+                Ok(Sequence::new_simple(new_prefix, self.source_info.clone()))
             }
             SequenceType::Repeat(prefix, tail) => {
                 let mut new_prefix = Vec::with_capacity(prefix.len());
@@ -775,11 +775,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                     new_prefix.push((reduced_ty, *count));
                 }
                 let reduced_tail = tail.0.clone().reduce(ctx)?.into_dispatcher();
-                Ok(Sequence::new_repeat(
-                    new_prefix.into_iter(),
-                    reduced_tail,
-                    self.source_info.clone(),
-                ))
+                Ok(Sequence::new_repeat(new_prefix, reduced_tail, self.source_info.clone()))
             }
             SequenceType::Cons(prefix, tail) => {
                 let mut new_prefix = Vec::with_capacity(prefix.len());
@@ -788,11 +784,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                     new_prefix.push((reduced_ty, *count));
                 }
                 let reduced_tail = tail.as_ref().clone().reduce(ctx)?.into_dispatcher();
-                Ok(Sequence::new_cons(
-                    new_prefix.into_iter(),
-                    reduced_tail,
-                    self.source_info.clone(),
-                ))
+                Ok(Sequence::new_cons(new_prefix, reduced_tail, self.source_info.clone()))
             }
         }
     }
@@ -905,6 +897,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         Self { ty: SequenceType::Unit, source_info, offset: 0 }
     }
 
+    pub fn nature_number<V: AsDispatcher<Type<T>, T>>(
+        num: usize,
+        ty: V,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
+        if num == 0 {
+            Self::unit(source_info)
+        } else {
+            Self {
+                ty: SequenceType::NonEmptyTuple(Arc::from(vec![(
+                    ty.into_dispatcher(),
+                    NonZero::new(num).unwrap(),
+                )])),
+                source_info,
+                offset: 0,
+            }
+            .dispatch()
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
     pub fn check_prefix(
         &self,
         other: &Sequence<T>,
@@ -1024,22 +1037,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
                 let len = self.physical_prefix_len();
                 if offset + self.offset > len {
                     None
+                } else if offset + self.offset == len {
+                    // 视图正好是空的
+                    Some(Sequence {
+                        ty: SequenceType::Unit,
+                        source_info: self.source_info.clone(),
+                        offset: 0,
+                    })
                 } else {
-                    if offset + self.offset == len {
-                        // 视图正好是空的
-                        Some(Sequence {
-                            ty: SequenceType::Unit,
-                            source_info: self.source_info.clone(),
-                            offset: 0,
-                        })
-                    } else {
-                        // 视图仍然有元素
-                        Some(Sequence {
-                            ty: self.ty.clone(),
-                            source_info: self.source_info.clone(),
-                            offset: self.offset + offset,
-                        })
-                    }
+                    // 视图仍然有元素
+                    Some(Sequence {
+                        ty: self.ty.clone(),
+                        source_info: self.source_info.clone(),
+                        offset: self.offset + offset,
+                    })
                 }
             }
             SequenceType::Cons(_, _) => {
@@ -1343,7 +1354,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         // 优化：如果 Template 首尾相同，中间的 push 可以大幅合并
         for _ in 0..factor {
             for (ty, count) in &template {
-                push_rle(*ty, *count)?;
+                push_rle(ty, *count)?;
             }
         }
 
@@ -1406,5 +1417,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
                 panic!("Cannot get length of Cons sequence");
             }
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }

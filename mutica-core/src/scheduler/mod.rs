@@ -12,8 +12,7 @@ use crate::{
         character_value::CharacterValue,
         closure::{ClosureEnv, ParamEnv},
         invoke::{Invoke, InvokeCountinuationStyle},
-        nature_number::NatureNumber,
-        tuple::Tuple,
+        sequence::Sequence,
     },
     util::{
         allocator::{Id, IdAllocator},
@@ -107,12 +106,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 "print" => {
                     let str = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
                     print!("{}", str);
-                    Ok(Some(Tuple::new(Vec::<Type<T>>::new(), source_info.cloned())))
+                    Ok(Some(Sequence::unit(source_info.cloned())))
                 }
                 "println" => {
                     let str = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
                     println!("{}", str);
-                    Ok(Some(Tuple::new(Vec::<Type<T>>::new(), source_info.cloned())))
+                    Ok(Some(Sequence::unit(source_info.cloned())))
                 }
                 "input" => {
                     let mut input = String::new();
@@ -121,12 +120,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         .chars()
                         .map(|c| CharacterValue::new(c, source_info.cloned()))
                         .collect::<Vec<_>>();
-                    Ok(Some(Tuple::new(chars, source_info.cloned())))
+                    Ok(Some(Sequence::new_tuple(chars, source_info.cloned())))
                 }
                 "flush" => {
                     use std::io;
                     io::stdout().flush().unwrap();
-                    Ok(Some(Tuple::new(Vec::<Type<T>>::new(), source_info.cloned())))
+                    Ok(Some(Sequence::unit(source_info.cloned())))
                 }
                 // 类型表示相关
                 "repr" => {
@@ -135,7 +134,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         .chars()
                         .map(|c| CharacterValue::new(c, source_info.cloned()))
                         .collect::<Vec<_>>();
-                    Ok(Some(Tuple::new(chars, source_info.cloned())))
+                    Ok(Some(Sequence::new_tuple(chars, source_info.cloned())))
                 }
                 "display" => {
                     let disp = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
@@ -143,7 +142,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         .chars()
                         .map(|c| CharacterValue::new(c, source_info.cloned()))
                         .collect::<Vec<_>>();
-                    Ok(Some(Tuple::new(chars, source_info.cloned())))
+                    Ok(Some(Sequence::new_tuple(chars, source_info.cloned())))
                 }
                 // 代数效应相关
                 "perform" => Err(TypeError::Perform(arg.clone().into())),
@@ -152,9 +151,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 // 类型结构描述相关
                 "tuple_len" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                        TypeRef::Tuple(v) => Ok(Some(NatureNumber::new(
+                        TypeRef::Sequence(v) => Ok(Some(Sequence::nature_number(
                             v.len(),
-                            Tuple::unit(),
+                            Sequence::unit(source_info.cloned()),
                             source_info.cloned(),
                         ))),
                         _ => Err(TypeError::TypeMismatch(
@@ -166,20 +165,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     ))),
                 "as_tuple" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                        TypeRef::Tuple(_) => Ok(Some(arg.clone_data())),
+                        TypeRef::Sequence(_) => Ok(Some(arg.clone_data())),
                         TypeRef::Any(v) => {
                             let mut elements = Vec::new();
                             for ty in v.types() {
                                 elements.push(ty.clone());
                             }
-                            Ok(Some(Tuple::new(elements, source_info.cloned())))
+                            Ok(Some(Sequence::new_tuple(elements, source_info.cloned())))
                         }
                         TypeRef::All(v) => {
                             let mut elements = Vec::new();
                             for ty in v.types() {
                                 elements.push(ty.clone());
                             }
-                            Ok(Some(Tuple::new(elements, source_info.cloned())))
+                            Ok(Some(Sequence::new_tuple(elements, source_info.cloned())))
                         }
                         _ => Err(TypeError::TypeMismatch(
                             (arg.clone_data(), "Tuple | List | Generalize | Specialize".into())
@@ -192,33 +191,39 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 // 可变状态相关
                 "alloc" => {
                     let id = self.allocated_types.alloc(arg.clone());
-                    Ok(Some(Tuple::new(
+                    Ok(Some(Sequence::new_tuple(
                         vec![
-                            NatureNumber::new(id.index(), Tuple::unit(), source_info.cloned()),
-                            NatureNumber::new(id.generation(), Tuple::unit(), source_info.cloned()),
+                            Sequence::nature_number(
+                                id.index(),
+                                Sequence::unit(source_info.cloned()),
+                                source_info.cloned(),
+                            ),
+                            Sequence::nature_number(
+                                id.generation(),
+                                Sequence::unit(source_info.cloned()),
+                                source_info.cloned(),
+                            ),
                         ],
                         source_info.cloned(),
                     )))
                 }
                 "dealloc" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| {
-                        if let TypeRef::Tuple(tuple) = arg {
+                        if let TypeRef::Sequence(tuple) = arg {
                             if tuple.len() != 2 {
                                 return Err(TypeError::TypeMismatch(
                                     (arg.clone_data(), "Tuple of length 2".into()).into(),
                                 ));
                             }
-                            let index_ty = tuple.get(0).unwrap();
-                            let generation_ty = tuple.get(1).unwrap();
-                            if let (
-                                TypeRef::NatureNumber(index_iv),
-                                TypeRef::NatureNumber(gen_iv),
-                            ) = (index_ty.as_ref_dispatcher(), generation_ty.as_ref_dispatcher())
+                            let index_ty = tuple.get_prefix_value(0).unwrap();
+                            let generation_ty = tuple.get_prefix_value(1).unwrap();
+                            if let (Type::Sequence(index_iv), Type::Sequence(gen_iv)) =
+                                (index_ty, generation_ty)
                             {
                                 let index = index_iv.len();
                                 let generation = gen_iv.len();
                                 self.allocated_types.dealloc(Id::from_parts(index, generation));
-                                Ok(Some(Tuple::new(Vec::<Type<T>>::new(), source_info.cloned())))
+                                Ok(Some(Sequence::unit(source_info.cloned())))
                             } else {
                                 Err(TypeError::TypeMismatch(
                                     (arg.clone_data(), "Tuple of two IntegerValues".into()).into(),
@@ -233,15 +238,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     ))),
                 "get" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| {
-                        if let TypeRef::Tuple(tuple) = arg {
+                        if let TypeRef::Sequence(tuple) = arg {
                             if tuple.len() != 2 {
                                 return Err(TypeError::TypeMismatch(
                                     (arg.clone_data(), "Tuple of length 2".into()).into(),
                                 ));
                             }
-                            let index_ty = tuple.get(0).unwrap();
-                            let generation_ty = tuple.get(1).unwrap();
-                            if let (Type::NatureNumber(index_iv), Type::NatureNumber(gen_iv)) =
+                            let index_ty = tuple.get_prefix_value(0).unwrap();
+                            let generation_ty = tuple.get_prefix_value(1).unwrap();
+                            if let (Type::Sequence(index_iv), Type::Sequence(gen_iv)) =
                                 (index_ty, generation_ty)
                             {
                                 let index = index_iv.len();
@@ -270,29 +275,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     ))),
                 "set" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| {
-                        if let TypeRef::Tuple(tuple) = arg {
+                        if let TypeRef::Sequence(tuple) = arg {
                             if tuple.len() != 2 {
                                 return Err(TypeError::TypeMismatch(
                                     (arg.clone_data(), "Tuple of length 2".into()).into(),
                                 ));
                             }
-                            let id_ty = tuple.get(0).unwrap();
-                            let value_ty = tuple.get(1).unwrap();
+                            let id_ty = tuple.get_prefix_value(0).unwrap();
+                            let value_ty = tuple.get_prefix_value(1).unwrap();
                             id_ty
                                 .map(&mut FastCycleDetector::new(), |_, id_ty| {
-                                    if let TypeRef::Tuple(id_tup) = id_ty {
+                                    if let TypeRef::Sequence(id_tup) = id_ty {
                                         if id_tup.len() != 2 {
                                             return Err(TypeError::TypeMismatch(
                                                 (id_ty.clone_data(), "Tuple of length 2".into())
                                                     .into(),
                                             ));
                                         }
-                                        let index_ty = id_tup.get(0).unwrap();
-                                        let generation_ty = id_tup.get(1).unwrap();
-                                        if let (
-                                            Type::NatureNumber(index_iv),
-                                            Type::NatureNumber(gen_iv),
-                                        ) = (index_ty, generation_ty)
+                                        let index_ty = id_tup.get_prefix_value(0).unwrap();
+                                        let generation_ty = id_tup.get_prefix_value(1).unwrap();
+                                        if let (Type::Sequence(index_iv), Type::Sequence(gen_iv)) =
+                                            (index_ty, generation_ty)
                                         {
                                             let index = index_iv.len();
                                             let generation = gen_iv.len();
@@ -300,10 +303,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                             match self.allocated_types.get_mut(id) {
                                                 Some(v) => {
                                                     *v = value_ty.clone();
-                                                    Ok(Some(Tuple::new(
-                                                        Vec::<Type<T>>::new(),
-                                                        source_info.cloned(),
-                                                    )))
+                                                    Ok(Some(Sequence::unit(source_info.cloned())))
                                                 }
                                                 None => Err(TypeError::RuntimeError(Arc::new(
                                                     std::io::Error::new(

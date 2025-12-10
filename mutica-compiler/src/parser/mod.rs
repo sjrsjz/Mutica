@@ -949,7 +949,7 @@ pub fn inject_std_library(
                     items.into_iter().map(|s| replace_placeholder(s, ast)).collect(),
                 ),
                 BasicTypeAst::Cons { head, tail } => BasicTypeAst::Cons {
-                    head: replace_placeholder(*head, ast).into(),
+                    head: head.into_iter().map(|s| replace_placeholder(s, ast)).collect(),
                     tail: replace_placeholder(*tail, ast).into(),
                 },
                 BasicTypeAst::Generalize(items) => BasicTypeAst::Generalize(

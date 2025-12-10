@@ -645,7 +645,7 @@ MulDiv: WithLocation<TypeAst> = {
 Construct: WithLocation<TypeAst> = {
     <l:@L> <head: Factor> AtTok <body: Construct> <r:@R> => {
         WithLocation::new(TypeAst::Cons {
-            head: Box::new(head),
+            head: vec![head],
             tail: Box::new(body),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
