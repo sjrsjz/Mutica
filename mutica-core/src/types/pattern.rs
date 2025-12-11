@@ -4,54 +4,47 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, GcAllocObject,
+        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
+        TypeCheckContext, TypeError, TypeRef,
     },
-    util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
+    util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
-
-use crate::types::CoinductiveTypeRef;
 
 // 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
 // 但是为了实现的简洁性，这里就先分开了
 pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
-    #[allow(clippy::type_complexity)]
-    inner: ArcOpt<(usize, Type<T>, Option<Arc<SourceLocation>>)>,
+    bind_name: Arc<str>,
+    source_info: Option<Arc<SourceLocation>>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Pattern<T> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            bind_name: self.bind_name.clone(),
+            source_info: self.source_info.clone(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Pattern<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        let (_, expr, _) = self.inner.as_ref();
-        expr.collect(queue);
-    }
+    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Pattern<T> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        let (_, expr, _) = self.inner.as_ref();
-        expr.upgrade(collected);
-    }
+    fn upgrade(&self, _collected: &mut Vec<GCArc<T>>) {}
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
     fn represent(
         &self,
-        path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
-        depth: usize,
-        max_depth: usize,
+        _path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
+        _depth: usize,
+        _max_depth: usize,
     ) -> String {
-        if depth > max_depth {
-            return "...".to_string();
-        }
-        let (debruijn_index, expr, _) = self.inner.as_ref();
-        format!("λ.{} : {}", debruijn_index, expr.represent(path, depth, max_depth))
+        format!("λ.{}", self.bind_name)
     }
 }
 
@@ -76,24 +69,38 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        if ctx.rhs {
-            ctx.pattern_env.collect(|pattern_env| {
-                let mut inner_ctx =
-                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                let (debruijn_index, expr, _) = self.inner.as_ref();
-                match expr.check(other, &mut inner_ctx)? {
-                    ThreeValuedLogic::True => {
-                        pattern_env.push((*debruijn_index, other.clone_data()));
-                        Ok(ThreeValuedLogic::True)
+        (match ctx.collected.lookup(&self.bind_name) {
+            Some(existing) => existing.clone(),
+            None => {
+                return ctx.pattern_collector.collect(|pattern_env| {
+                    let mut inner_ctx = TypeCheckContext::new(
+                        ctx.assumptions,
+                        pattern_env,
+                        ctx.lhs_env,
+                        ctx.rhs_env,
+                        ctx.collected,
+                    );
+                    match other {
+                        TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                        TypeRef::Bound(v)
+                            if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                        {
+                            Ok(ThreeValuedLogic::True)
+                        }
+                        // Pattern 无法直接匹配其他类型
+                        _ => Ok(ThreeValuedLogic::False),
                     }
-                    ThreeValuedLogic::False => Ok(ThreeValuedLogic::False),
-                    ThreeValuedLogic::Unknown => Ok(ThreeValuedLogic::Unknown),
-                }
-            })
-        } else {
-            let (_, expr, _) = self.inner.as_ref();
-            expr.check(other, ctx)
-        }
+                });
+            }
+        })
+        .check(other, ctx)
     }
 
     fn subof(
@@ -101,54 +108,46 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        if ctx.rhs {
-            ctx.pattern_env.collect(|pattern_env| {
-                let mut inner_ctx =
-                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                let (debruijn_index, expr, _) = self.inner.as_ref();
-                match expr.subof(other, &mut inner_ctx)? {
-                    ThreeValuedLogic::True => {
-                        pattern_env.push((*debruijn_index, other.clone_data()));
-                        Ok(ThreeValuedLogic::True)
+        (match ctx.collected.lookup(&self.bind_name) {
+            Some(existing) => existing.clone(),
+            None => {
+                return ctx.pattern_collector.collect(|pattern_env| {
+                    let mut inner_ctx = TypeCheckContext::new(
+                        ctx.assumptions,
+                        pattern_env,
+                        ctx.lhs_env,
+                        ctx.rhs_env,
+                        ctx.collected,
+                    );
+                    match other {
+                        TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                        TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                        TypeRef::Bound(v)
+                            if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                        {
+                            Ok(ThreeValuedLogic::True)
+                        }
+                        _ => Ok(ThreeValuedLogic::False),
                     }
-                    ThreeValuedLogic::False => Ok(ThreeValuedLogic::False),
-                    ThreeValuedLogic::Unknown => Ok(ThreeValuedLogic::Unknown),
-                }
-            })
-        } else {
-            let (_, expr, _) = self.inner.as_ref();
-            expr.subof(other, ctx)
-        }
+                });
+            }
+        })
+        .subof(other, ctx)
     }
 
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self.inner.take() {
-            Ok(v) => {
-                let (_, expr, _) = v;
-                expr.invoke(ctx)
-            }
-            Err(v) => {
-                let (_, expr, _) = v.as_ref();
-                expr.clone().invoke(ctx)
-            }
-        }
+    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Err(TypeError::NonApplicableType(self.into_dispatcher().into()))
     }
 
     fn reduce(
-        mut self,
-        ctx: &mut ReductionContext<Type<T>, T>,
+        self,
+        _ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self.inner.modify(|(debruijn_index, expr, source_info)| {
-            let new_expr = expr.reduce(ctx)?;
-            Ok((debruijn_index, new_expr, source_info))
-        })? {
-            Some(()) => Ok(self.dispatch()),
-            None => {
-                let (debruijn_index, expr, source_info) = self.inner.as_ref();
-                let new_expr = expr.clone().reduce(ctx)?;
-                Ok(Self::new(*debruijn_index, new_expr, source_info.clone()))
-            }
-        }
+        Ok(self.into_dispatcher())
     }
 
     fn tagged_ptr(&self) -> super::TaggedPtr<()> {
@@ -156,11 +155,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        self.inner.as_ref().2.as_ref()
+        self.source_info.as_ref()
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
-        if let Some(loc) = self.inner.as_ref().2.as_ref() {
+        if let Some(loc) = self.source_info.as_ref() {
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
@@ -188,24 +187,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        if ctx.rhs {
-            let (_, expr, _) = self.inner.as_ref();
-            other.check(expr.as_ref_dispatcher(), ctx)
-        } else {
-            ctx.pattern_env.collect(|pattern_env| {
-                let mut inner_ctx =
-                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                let (debruijn_index, expr, _) = self.inner.as_ref();
-                match other.check(expr.as_ref_dispatcher(), &mut inner_ctx)? {
-                    ThreeValuedLogic::True => {
-                        pattern_env.push((*debruijn_index, other.clone_data()));
-                        Ok(ThreeValuedLogic::True)
-                    }
-                    ThreeValuedLogic::False => Ok(ThreeValuedLogic::False),
-                    ThreeValuedLogic::Unknown => Ok(ThreeValuedLogic::Unknown),
+        other.check(
+            (match ctx.collected.lookup(&self.bind_name) {
+                Some(existing) => existing.clone(),
+                None => {
+                    ctx.pattern_collector.push((self.bind_name.clone(), other.clone_data()));
+                    return Ok(ThreeValuedLogic::True);
                 }
             })
-        }
+            .as_ref_dispatcher(),
+            ctx,
+        )
     }
 
     #[stacksafe::stacksafe]
@@ -214,42 +206,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        if ctx.rhs {
-            let (_, expr, _) = self.inner.as_ref();
-            other.subof(expr.as_ref_dispatcher(), ctx)
-        } else {
-            ctx.pattern_env.collect(|pattern_env| {
-                let mut inner_ctx =
-                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                let (debruijn_index, expr, _) = self.inner.as_ref();
-                match other.subof(expr.as_ref_dispatcher(), &mut inner_ctx)? {
-                    ThreeValuedLogic::True => {
-                        pattern_env.push((*debruijn_index, other.clone_data()));
-                        Ok(ThreeValuedLogic::True)
-                    }
-                    ThreeValuedLogic::False => Ok(ThreeValuedLogic::False),
-                    ThreeValuedLogic::Unknown => Ok(ThreeValuedLogic::Unknown),
+        other.subof(
+            (match ctx.collected.lookup(&self.bind_name) {
+                Some(existing) => existing.clone(),
+                None => {
+                    ctx.pattern_collector.push((self.bind_name.clone(), other.clone_data()));
+                    return Ok(ThreeValuedLogic::True);
                 }
             })
-        }
+            .as_ref_dispatcher(),
+            ctx,
+        )
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<X: AsDispatcher<Type<T>, T>>(
-        debruijn_index: usize,
-        expr: X,
-        source_info: Option<Arc<SourceLocation>>,
-    ) -> Type<T> {
-        Self { inner: ArcOpt::new((debruijn_index, expr.into_dispatcher(), source_info)) }
-            .dispatch()
-    }
-    pub fn debruijn_index(&self) -> usize {
-        self.inner.as_ref().0
+    pub fn new<S: Into<Arc<str>>>(bind_name: S, source_info: Option<Arc<SourceLocation>>) -> Self {
+        Self { bind_name: bind_name.into(), source_info, _phantom: std::marker::PhantomData }
     }
 
-    pub fn expr(&self) -> &Type<T> {
-        &self.inner.as_ref().1
+    pub fn bind_name(&self) -> &Arc<str> {
+        &self.bind_name
     }
 }

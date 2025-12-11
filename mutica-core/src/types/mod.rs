@@ -5,6 +5,7 @@ pub mod anyof;
 pub mod character;
 pub mod character_value;
 pub mod closure;
+pub mod constraint;
 pub mod eqof;
 pub mod fixpoint;
 pub mod float;
@@ -15,13 +16,13 @@ pub mod namespace;
 pub mod opcode;
 pub mod ordered_type;
 pub mod pattern;
-pub mod rot;
 pub mod sequence;
 pub mod subof;
 pub mod type_bound;
+pub mod unify;
 pub mod variable;
 
-use std::{error::Error, fmt::Debug, sync::Arc};
+use std::{error::Error, fmt::Debug, marker::PhantomData, sync::Arc};
 
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
@@ -37,7 +38,8 @@ use crate::{
         anyof::AnyOf,
         character::Character,
         character_value::CharacterValue,
-        closure::{Closure, ClosureEnv, ParamEnv},
+        closure::Closure,
+        constraint::Constraint,
         eqof::EqOf,
         fixpoint::FixPoint,
         float::Float,
@@ -48,10 +50,10 @@ use crate::{
         opcode::Opcode,
         ordered_type::OrderedType,
         pattern::Pattern,
-        rot::Rotate,
         sequence::Sequence,
         subof::SubOf,
         type_bound::TypeBound,
+        unify::{Environment, EnvironmentStack, EnvironmentView},
         variable::Variable,
     },
     util::{
@@ -82,9 +84,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Closure(v) => Type::<T>::Closure(v.clone()),
             Type::Opcode(v) => Type::<T>::Opcode(v.clone()),
             Type::Namespace(v) => Type::<T>::Namespace(v.clone()),
+            Type::Constraint(v) => Type::<T>::Constraint(v.clone()),
             Type::Pattern(v) => Type::<T>::Pattern(v.clone()),
             Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            Type::Rot(v) => Type::<T>::Rot(v.clone()),
             Type::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
             Type::EqOf(v) => Type::<T>::EqOf(v.clone()),
             Type::SubOf(v) => Type::<T>::SubOf(v.clone()),
@@ -121,12 +123,12 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Opcode(Opcode<T>),
     // 命名空间类型
     Namespace(Namespace<T>),
+    // 约束类型
+    Constraint(Constraint<T>),
     // 模式类型
     Pattern(Pattern<T>),
     // 惰性包装器
     Lazy(Lazy<T>),
-    // Rot变换
-    Rot(Rotate<T>),
     // 高阶类型
     OrderedType(OrderedType<T>),
     // 单例等价类型
@@ -150,9 +152,9 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Closure(&'a Closure<T>),
     Opcode(&'a Opcode<T>),
     Namespace(&'a Namespace<T>),
+    Constraint(&'a Constraint<T>),
     Pattern(&'a Pattern<T>),
     Lazy(&'a Lazy<T>),
-    Rot(&'a Rotate<T>),
     OrderedType(&'a OrderedType<T>),
     EqOf(&'a EqOf<T>),
     SubOf(&'a SubOf<T>),
@@ -203,9 +205,9 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Closure(v) => v.check(other, ctx),
             TypeRef::Opcode(v) => v.check(other, ctx),
             TypeRef::Namespace(v) => v.check(other, ctx),
+            TypeRef::Constraint(v) => v.check(other, ctx),
             TypeRef::Pattern(v) => v.check(other, ctx),
             TypeRef::Lazy(v) => v.check(other, ctx),
-            TypeRef::Rot(v) => v.check(other, ctx),
             TypeRef::OrderedType(v) => v.check(other, ctx),
             TypeRef::EqOf(v) => v.check(other, ctx),
             TypeRef::SubOf(v) => v.check(other, ctx),
@@ -232,9 +234,9 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Closure(v) => v.subof(other, ctx),
             TypeRef::Opcode(v) => v.subof(other, ctx),
             TypeRef::Namespace(v) => v.subof(other, ctx),
+            TypeRef::Constraint(v) => v.subof(other, ctx),
             TypeRef::Pattern(v) => v.subof(other, ctx),
             TypeRef::Lazy(v) => v.subof(other, ctx),
-            TypeRef::Rot(v) => v.subof(other, ctx),
             TypeRef::OrderedType(v) => v.subof(other, ctx),
             TypeRef::EqOf(v) => v.subof(other, ctx),
             TypeRef::SubOf(v) => v.subof(other, ctx),
@@ -257,9 +259,9 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Closure(v) => v.tagged_ptr(),
             TypeRef::Opcode(v) => v.tagged_ptr(),
             TypeRef::Namespace(v) => v.tagged_ptr(),
+            TypeRef::Constraint(v) => v.tagged_ptr(),
             TypeRef::Pattern(v) => v.tagged_ptr(),
             TypeRef::Lazy(v) => v.tagged_ptr(),
-            TypeRef::Rot(v) => v.tagged_ptr(),
             TypeRef::OrderedType(v) => v.tagged_ptr(),
             TypeRef::EqOf(v) => v.tagged_ptr(),
             TypeRef::SubOf(v) => v.tagged_ptr(),
@@ -286,9 +288,9 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Closure(v) => v.source_info(),
             TypeRef::Opcode(v) => v.source_info(),
             TypeRef::Namespace(v) => v.source_info(),
+            TypeRef::Constraint(v) => v.source_info(),
             TypeRef::Pattern(v) => v.source_info(),
             TypeRef::Lazy(v) => v.source_info(),
-            TypeRef::Rot(v) => v.source_info(),
             TypeRef::OrderedType(v) => v.source_info(),
             TypeRef::EqOf(v) => v.source_info(),
             TypeRef::SubOf(v) => v.source_info(),
@@ -311,9 +313,9 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Closure(v) => v.report_source_info(),
             TypeRef::Opcode(v) => v.report_source_info(),
             TypeRef::Namespace(v) => v.report_source_info(),
+            TypeRef::Constraint(v) => v.report_source_info(),
             TypeRef::Pattern(v) => v.report_source_info(),
             TypeRef::Lazy(v) => v.report_source_info(),
-            TypeRef::Rot(v) => v.report_source_info(),
             TypeRef::OrderedType(v) => v.report_source_info(),
             TypeRef::EqOf(v) => v.report_source_info(),
             TypeRef::SubOf(v) => v.report_source_info(),
@@ -338,9 +340,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Closure(v) => Type::<T>::Closure(v.clone()),
             TypeRef::Opcode(v) => Type::<T>::Opcode(v.clone()),
             TypeRef::Namespace(v) => Type::<T>::Namespace(v.clone()),
+            TypeRef::Constraint(v) => Type::<T>::Constraint(v.clone()),
             TypeRef::Pattern(v) => Type::<T>::Pattern(v.clone()),
             TypeRef::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            TypeRef::Rot(v) => Type::<T>::Rot(v.clone()),
             TypeRef::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
             TypeRef::EqOf(v) => Type::<T>::EqOf(v.clone()),
             TypeRef::SubOf(v) => Type::<T>::SubOf(v.clone()),
@@ -404,8 +406,8 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     NonApplicableType(Box<U>),
     TupleIndexOutOfBounds(Box<(U, U)>),
     TypeMismatch(Box<(U, String)>),
-    UnboundVariable(isize),
-    UndefinedPatternVariable(isize),
+    UnboundContextVariable(Box<str>),
+    UnboundEnvironmentVariable(Box<str>),
     AssertFailed(Box<(U, U)>),
     MissingContinuation(Box<U>),
     MissingPerformHandler(Box<U>),
@@ -435,9 +437,11 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::TypeMismatch(info) => {
                 write!(f, "Type mismatch: expected {}, found {:?}", info.1, info.0)
             }
-            TypeError::UnboundVariable(id) => write!(f, "Unbound variable: id = {}", id),
-            TypeError::UndefinedPatternVariable(id) => {
-                write!(f, "Undefined pattern variable: id = {}", id)
+            TypeError::UnboundContextVariable(id) => {
+                write!(f, "Unbound context variable: id = {}", id)
+            }
+            TypeError::UnboundEnvironmentVariable(id) => {
+                write!(f, "Unbound environment variable: id = {}", id)
             }
             TypeError::AssertFailed(types) => {
                 write!(f, "Assert failed: {:?} doesn't accept {:?}", types.0, types.1)
@@ -802,7 +806,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                     )
                     .finish()
             }
-            TypeError::UnboundVariable(id) => {
+            TypeError::UnboundContextVariable(id) => {
                 ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
                     .with_message(format!("Unbound variable: id = {}", id))
                     .with_label(
@@ -811,7 +815,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                     )
                     .finish()
             }
-            TypeError::UndefinedPatternVariable(id) => {
+            TypeError::UnboundEnvironmentVariable(id) => {
                 ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
                     .with_message(format!("Undefined pattern variable: id = {}", id))
                     .with_label(
@@ -870,9 +874,9 @@ macro_rules! type_dispatch {
             Type::Char(v) => v.$method($($args),*),
             Type::CharValue(v) => v.$method($($args),*),
             Type::Namespace(v) => v.$method($($args),*),
+            Type::Constraint(v) => v.$method($($args),*),
             Type::Pattern(v) => v.$method($($args),*),
             Type::Lazy(v) => v.$method($($args),*),
-            Type::Rot(v) => v.$method($($args),*),
             Type::OrderedType(v) => v.$method($($args),*),
             Type::EqOf(v) => v.$method($($args),*),
             Type::SubOf(v) => v.$method($($args),*),
@@ -1066,9 +1070,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Closure(v) => TypeRef::Closure(v),
             Type::Opcode(v) => TypeRef::Opcode(v),
             Type::Namespace(v) => TypeRef::Namespace(v),
+            Type::Constraint(v) => TypeRef::Constraint(v),
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
-            Type::Rot(v) => TypeRef::Rot(v),
             Type::OrderedType(v) => TypeRef::OrderedType(v),
             Type::EqOf(v) => TypeRef::EqOf(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
@@ -1103,9 +1107,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Closure(v) => TypeRef::Closure(v),
             Type::Opcode(v) => TypeRef::Opcode(v),
             Type::Namespace(v) => TypeRef::Namespace(v),
+            Type::Constraint(v) => TypeRef::Constraint(v),
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
-            Type::Rot(v) => TypeRef::Rot(v),
             Type::OrderedType(v) => TypeRef::OrderedType(v),
             Type::EqOf(v) => TypeRef::EqOf(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
@@ -1160,26 +1164,29 @@ impl<T> TaggedPtr<T> {
 /// 类型检查上下文，用于 `check` 方法
 pub struct TypeCheckContext<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-    pub closure_env: (&'a ClosureEnv<U, V>, &'a ClosureEnv<U, V>),
-    pub pattern_env: &'a mut Collector<(usize, U)>,
-    pub rhs: bool,
+    pub pattern_collector: &'a mut Collector<(Arc<str>, U)>,
+    pub lhs_env: EnvironmentView<'a, U, V>,
+    pub rhs_env: EnvironmentView<'a, U, V>,
+    pub collected: &'a mut EnvironmentStack<U, V>,
+    _marker: PhantomData<V>,
 }
 
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, V> {
     pub fn new(
         assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        closure_env: (&'a ClosureEnv<U, V>, &'a ClosureEnv<U, V>),
-        pattern_env: &'a mut Collector<(usize, U)>,
-        rhs: bool,
+        pattern_collector: &'a mut Collector<(Arc<str>, U)>,
+        lhs_env: EnvironmentView<'a, U, V>,
+        rhs_env: EnvironmentView<'a, U, V>,
+        collected: &'a mut EnvironmentStack<U, V>,
     ) -> Self {
-        Self { assumptions, closure_env, pattern_env, rhs }
+        Self { assumptions, pattern_collector, lhs_env, rhs_env, collected, _marker: PhantomData }
     }
 }
 
 /// 归约上下文，用于 `reduce` 方法
 pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    pub closure_env: &'a ClosureEnv<U, V>,
-    pub param_env: &'a ParamEnv<U, V>,
+    pub pattern_environment: EnvironmentView<'a, U, V>,
+    pub context_environment: EnvironmentView<'a, U, V>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
@@ -1187,21 +1194,20 @@ pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObje
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext<'a, 'roots, U, V> {
     pub fn new(
-        closure_env: &'a ClosureEnv<U, V>,
-        param_env: &'a ParamEnv<U, V>,
+        pattern_environment: EnvironmentView<'a, U, V>,
+        context_environment: EnvironmentView<'a, U, V>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
     ) -> Self {
-        Self { closure_env, param_env, rec_assumptions, gc, roots }
+        Self { pattern_environment, context_environment, rec_assumptions, gc, roots }
     }
 }
 
 /// 类型应用上下文，用于 `invoke` 方法
 pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub arg: U,
-    pub closure_env: &'a ClosureEnv<U, V>,
-    pub param_env: &'a ParamEnv<U, V>,
+    pub environment: EnvironmentView<'a, U, V>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
@@ -1211,14 +1217,13 @@ pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a, 'roots, U, V> {
     pub fn new(
         arg: U,
-        closure_env: &'a ClosureEnv<U, V>,
-        param_env: &'a ParamEnv<U, V>,
+        environment: EnvironmentView<'a, U, V>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
         source_info: Option<&'a Arc<SourceLocation>>,
     ) -> Self {
-        Self { arg, closure_env, param_env, rec_assumptions, gc, roots, source_info }
+        Self { arg, environment, rec_assumptions, gc, roots, source_info }
     }
 }
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
@@ -1242,33 +1247,30 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     fn equals<'a>(
         &'a self,
         other: Self::RefDispatcher<'a>,
-        ctx: &mut TypeCheckContext<U, V>,
+        lhs_env: EnvironmentView<'a, U, V>,
+        rhs_env: EnvironmentView<'a, U, V>,
     ) -> Result<ThreeValuedLogic, TypeError<U, V>> {
-        let mut rev_ctx = TypeCheckContext {
-            assumptions: ctx.assumptions,
-            closure_env: (ctx.closure_env.1, ctx.closure_env.0),
-            pattern_env: ctx.pattern_env,
-            rhs: !ctx.rhs,
-        };
-        let sub_ba = test_true!(other.subof(self.as_ref_dispatcher(), &mut rev_ctx)?);
-        let sub_ab = test_true!(self.subof(other, ctx)?);
-        Ok(sub_ab & sub_ba)
-    }
-
-    fn pure_equals<'a>(&'a self, other: Self::RefDispatcher<'a>) -> bool {
-        let closure_env = ClosureEnv::new(Vec::<U>::new());
-        match self.equals(
+        let sub_ba = test_true!(other.subof(
+            self.as_ref_dispatcher(),
+            &mut TypeCheckContext::new(
+                &mut SmallVec::new(),
+                &mut Collector::new(),
+                rhs_env,
+                lhs_env,
+                &mut EnvironmentStack::new()
+            )
+        )?);
+        let sub_ab = test_true!(self.subof(
             other,
-            &mut TypeCheckContext {
-                assumptions: &mut SmallVec::new(),
-                closure_env: (&closure_env, &closure_env),
-                pattern_env: &mut Collector::new(),
-                rhs: false,
-            },
-        ) {
-            Ok(result) => result == ThreeValuedLogic::True,
-            Err(_) => false,
-        }
+            &mut TypeCheckContext::new(
+                &mut SmallVec::new(),
+                &mut Collector::new(),
+                lhs_env,
+                rhs_env,
+                &mut EnvironmentStack::new()
+            )
+        )?);
+        Ok(sub_ab & sub_ba)
     }
 
     // 归约变换
@@ -1323,14 +1325,7 @@ pub trait CoinductiveTypeRef<
         other: W,
         ctx: &mut TypeCheckContext<U, V>,
     ) -> Result<ThreeValuedLogic, TypeError<U, V>> {
-        let mut rev_ctx = TypeCheckContext {
-            assumptions: ctx.assumptions,
-            closure_env: (ctx.closure_env.1, ctx.closure_env.0),
-            pattern_env: ctx.pattern_env,
-            rhs: !ctx.rhs,
-        };
-
-        let sub_ba = test_true!(other.subof(self.as_ref_dispatcher(), &mut rev_ctx)?);
+        let sub_ba = test_true!(other.subof(self.as_ref_dispatcher(), ctx)?);
         let sub_ab = test_true!(self.subof(other, ctx)?);
         Ok(sub_ab & sub_ba)
     }

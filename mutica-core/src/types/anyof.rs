@@ -70,9 +70,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -97,9 +102,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             match other {
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -170,9 +180,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             let mut matched = ThreeValuedLogic::False;
             for sub in self.types.iter() {
                 matched |= other.check(sub.as_ref_dispatcher(), &mut inner_ctx)?
@@ -187,9 +202,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             let mut matched = ThreeValuedLogic::False;
             for sub in self.types.iter() {
                 matched |= other.subof(sub.as_ref_dispatcher(), &mut inner_ctx)?

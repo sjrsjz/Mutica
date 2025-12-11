@@ -31,7 +31,8 @@ let {
 let {
     slice::(slice: any) &
     String::(String: any) &
-    println::(println: any)
+    println::(println: any) &
+    nat_to_string::(nat_to_string: any)
 } = string_pkg;
 
 let {
@@ -121,3 +122,5 @@ discard println![String == List(char)];
 discard println![$"op#lt".merge_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
 discard println![$"op#lt".quick_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
 discard println![$"op#lt".insert_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
+
+discard 1234567890.nat_to_string.println; // 输出: "1234567890"

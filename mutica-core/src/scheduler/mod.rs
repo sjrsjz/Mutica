@@ -10,13 +10,12 @@ use crate::{
         AsDispatcher, CoinductiveType, GcAllocObject, InvokeContext, Representable, Type,
         TypeError, TypeRef,
         character_value::CharacterValue,
-        closure::{ClosureEnv, ParamEnv},
         invoke::{Invoke, InvokeCountinuationStyle},
         sequence::Sequence,
+        unify::Environment,
     },
     util::{
         allocator::{Id, IdAllocator},
-        collector::Collector,
         cycle_detector::FastCycleDetector,
         rootstack::RootStack,
         source_info::SourceLocation,
@@ -348,9 +347,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     }
 
     pub async fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
-        let empty_v = ClosureEnv::new(Vec::<Type<T>>::new());
-        let empty_p = ParamEnv::from_collector(&mut Collector::new(), 0).unwrap().unwrap();
-
+        let empty_env = Environment::new(Vec::<Arc<str>>::new());
         // 在 await 之前完成所有需要 rec_assumptions 的工作
         let current_type = self.current_type.take().ok_or_else(|| {
             TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))
@@ -492,8 +489,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let mut rec_assumptions = smallvec::SmallVec::new();
                     let invoke_context = InvokeContext::new(
                         arg,
-                        &empty_v,
-                        &empty_p,
+                        empty_env.view(),
                         &mut rec_assumptions,
                         gc,
                         &mut self.roots,

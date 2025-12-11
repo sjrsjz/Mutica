@@ -7,7 +7,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeRef, unify::EnvironmentView,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -118,9 +118,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -468,9 +473,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             match other {
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -1212,7 +1222,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         }
     }
 
-    pub fn add(&self, other: &Sequence<T>) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
+    pub fn add<'a>(
+        &'a self,
+        other: &Sequence<T>,
+        env: EnvironmentView<'a, Type<T>, T>,
+    ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
         // 1. 检查 Self 是否为有限序列
         // 如果 Self 是无限的 (Repeat) 或未知的 (Cons)，则无法在物理层面上拼接后续内容
         match self.ty {
@@ -1242,7 +1256,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
             }
             match new_prefix.last_mut() {
                 // 类型相同 -> 合并计数
-                Some((last_ty, last_count)) if last_ty.pure_equals(ty.as_ref_dispatcher()) => {
+                Some((last_ty, last_count))
+                    if matches!(
+                        last_ty.equals(ty.as_ref_dispatcher(), env, env)?,
+                        ThreeValuedLogic::True
+                    ) =>
+                {
                     let current = last_count.get();
                     let new_count = current.checked_add(count).ok_or_else(|| {
                         TypeError::RuntimeError(Arc::new(std::io::Error::new(
@@ -1340,7 +1359,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
     // --- 核心原语：截断 (Truncate) ---
     // 创建一个新的 Sequence，包含 self 的前 target_len 个元素
     // 物理化视图：offset 会被归零
-    fn truncate_to(&self, target_len: usize) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
+    fn truncate_to<'a>(
+        &'a self,
+        target_len: usize,
+        env: EnvironmentView<'a, Type<T>, T>,
+    ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
         if target_len == 0 {
             // 返回 Unit
             return Ok(Sequence {
@@ -1354,15 +1377,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         let mut collected = 0;
 
         // 依然需要处理 RLE 逻辑
-        let mut push_rle = |ty: &Type<T>, count: usize| {
+        let mut push_rle = |ty: &Type<T>, count: usize| -> Result<(), TypeError<Type<T>, T>> {
             match new_prefix.last_mut() {
-                Some((last_ty, last_count)) if last_ty.pure_equals(ty.as_ref_dispatcher()) => {
+                Some((last_ty, last_count))
+                    if matches!(
+                        last_ty.equals(ty.as_ref_dispatcher(), env, env)?,
+                        ThreeValuedLogic::True
+                    ) =>
+                {
                     // 这里不用 check overflow，因为我们在截断，总量肯定小于等于原量
                     let new_c = last_count.get() + count;
                     *last_count = unsafe { NonZero::new_unchecked(new_c) };
+                    Ok(())
                 }
                 _ => {
                     new_prefix.push((ty.clone(), unsafe { NonZero::new_unchecked(count) }));
+                    Ok(())
                 }
             }
         };
@@ -1370,7 +1400,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         if let Some((start_idx, start_rem)) = self.seek_prefix() {
             // 1. 处理第一个块
             let take_first = std::cmp::min(start_rem, target_len);
-            push_rle(&self.physical_prefix()[start_idx].0, take_first);
+            push_rle(&self.physical_prefix()[start_idx].0, take_first)?;
             collected += take_first;
 
             if collected < target_len {
@@ -1380,7 +1410,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
                     let remaining_needed = target_len - collected;
 
                     let take = std::cmp::min(cnt, remaining_needed);
-                    push_rle(ty, take);
+                    push_rle(ty, take)?;
                     collected += take;
 
                     if collected == target_len {
@@ -1410,7 +1440,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
 
     // --- 算术运算 ---
 
-    pub fn sub(&self, other: &Sequence<T>) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
+    pub fn sub<'a>(
+        &'a self,
+        other: &Sequence<T>,
+        env: EnvironmentView<'a, Type<T>, T>,
+    ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
         let len_self = self.get_finite_len()?;
         let len_other = other.get_finite_len()?;
 
@@ -1422,20 +1456,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
             )))
         })?;
 
-        self.truncate_to(target_len)
+        self.truncate_to(target_len, env)
     }
 
-    pub fn mul(&self, other: &Sequence<T>) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
+    pub fn mul<'a>(
+        &'a self,
+        other: &Sequence<T>,
+        env: EnvironmentView<'a, Type<T>, T>,
+    ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
         // Self 必须是有限的
         let _ = self.get_finite_len()?;
         let factor = other.get_finite_len()?;
 
         if factor == 0 {
-            return self.truncate_to(0); // Return Unit
+            return self.truncate_to(0, env); // Return Unit
         }
         if factor == 1 {
             // 物理化 Self (去除 offset)
-            return self.truncate_to(self.get_finite_len()?);
+            return self.truncate_to(self.get_finite_len()?, env);
         }
 
         // 1. 先把 Self 的有效部分提取到一个临时 Vec 中，避免每次循环都去 seek
@@ -1448,7 +1486,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
             }
         } else {
             // Self 是空的
-            return self.truncate_to(0);
+            return self.truncate_to(0, env);
         }
 
         // 2. 构建结果
@@ -1458,7 +1496,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
 
         let mut push_rle = |ty: &Type<T>, count: usize| -> Result<(), TypeError<Type<T>, T>> {
             match new_prefix.last_mut() {
-                Some((last_ty, last_count)) if last_ty.pure_equals(ty.as_ref_dispatcher()) => {
+                Some((last_ty, last_count))
+                    if matches!(
+                        last_ty.equals(ty.as_ref_dispatcher(), env, env)?,
+                        ThreeValuedLogic::True
+                    ) =>
+                {
                     let current = last_count.get();
                     let new_count = current.checked_add(count).ok_or_else(|| {
                         TypeError::RuntimeError(Arc::new(std::io::Error::new(
@@ -1499,7 +1542,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         })
     }
 
-    pub fn div(&self, other: &Sequence<T>) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
+    pub fn div<'a>(
+        &'a self,
+        other: &Sequence<T>,
+        env: EnvironmentView<'a, Type<T>, T>,
+    ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
         let len_self = self.get_finite_len()?;
         let divisor = other.get_finite_len()?;
         if divisor == 0 {
@@ -1509,10 +1556,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         }
 
         let target_len = len_self / divisor;
-        self.truncate_to(target_len)
+        self.truncate_to(target_len, env)
     }
 
-    pub fn mod_(&self, other: &Sequence<T>) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
+    pub fn mod_<'a>(
+        &'a self,
+        other: &Sequence<T>,
+        env: EnvironmentView<'a, Type<T>, T>,
+    ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
         let len_self = self.get_finite_len()?;
         let divisor = other.get_finite_len()?;
 
@@ -1523,7 +1574,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         }
 
         let target_len = len_self % divisor;
-        self.truncate_to(target_len)
+        self.truncate_to(target_len, env)
     }
 
     pub fn is_tuple(&self) -> bool {

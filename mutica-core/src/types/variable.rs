@@ -12,17 +12,36 @@ use crate::{
 };
 use arc_gc::traceable::GCTraceable;
 
-pub struct Variable<T: GcAllocObject<T, Inner = Type<T>>> {
-    debruijn_index: isize,
-    source_info: Option<Arc<SourceLocation>>,
-    _phantom: std::marker::PhantomData<T>,
+pub enum Variable<T: GcAllocObject<T, Inner = Type<T>>> {
+    ContextVariable {
+        bind_name: Arc<str>,
+        source_info: Option<Arc<SourceLocation>>,
+        _phantom: std::marker::PhantomData<T>,
+    },
+    PatternVariable {
+        bind_name: Arc<str>,
+        source_info: Option<Arc<SourceLocation>>,
+        _phantom: std::marker::PhantomData<T>,
+    },
 }
+
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Variable<T> {
     fn clone(&self) -> Self {
-        Self {
-            debruijn_index: self.debruijn_index,
-            source_info: self.source_info.clone(),
-            _phantom: std::marker::PhantomData,
+        match self {
+            Variable::ContextVariable { bind_name, source_info, _phantom } => {
+                Variable::ContextVariable {
+                    bind_name: bind_name.clone(),
+                    source_info: source_info.clone(),
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+            Variable::PatternVariable { bind_name, source_info, _phantom } => {
+                Variable::PatternVariable {
+                    bind_name: bind_name.clone(),
+                    source_info: source_info.clone(),
+                    _phantom: std::marker::PhantomData,
+                }
+            }
         }
     }
 }
@@ -54,9 +73,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -64,32 +88,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-
-                TypeRef::Variable(v) => {
-                    let self_idx = self.debruijn_index;
-                    let v_idx = v.debruijn_index;
-                    if self_idx >= 0 || v_idx >= 0 {
-                        return Ok(ThreeValuedLogic::Unknown);
-                    }
-                    // 如果都是负数,说明都是闭包内的变量
-                    // 需要从闭包环境中取出对应的类型进行比较
-                    let l = (-1 - self_idx) as usize;
-                    let r = (-1 - v_idx) as usize;
-
-                    let value_l = ctx.closure_env.0.get(l)?;
-                    let value_r = ctx.closure_env.1.get(r)?;
-                    value_l.check(value_r.as_ref_dispatcher(), &mut inner_ctx)
+                TypeRef::Bound(v)
+                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
+                {
+                    Ok(ThreeValuedLogic::True)
                 }
-                _ => {
-                    if self.debruijn_index >= 0 {
-                        // 如果是正数,说明是参数变量,无法确定
-                        // 实际上新模型允许通过上下文推导出参数变量的类型，进而使用Eq来判断
-                        return Ok(ThreeValuedLogic::Unknown);
+                _ => match self {
+                    Variable::PatternVariable { .. } => Ok(ThreeValuedLogic::Unknown),
+                    Variable::ContextVariable { bind_name, .. } => {
+                        if let Some(ty) = ctx.lhs_env.lookup(bind_name) {
+                            ty.check(other, &mut inner_ctx)
+                        } else {
+                            Ok(ThreeValuedLogic::Unknown)
+                        }
                     }
-                    let r = (-1 - self.debruijn_index) as usize;
-                    let value = ctx.closure_env.1.get(r)?;
-                    value.check(other, &mut inner_ctx)
-                }
+                },
             }
         })
     }
@@ -99,9 +112,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             match other {
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -110,31 +128,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 {
                     Ok(ThreeValuedLogic::True)
                 }
-                TypeRef::Variable(v) => {
-                    let self_idx = self.debruijn_index;
-                    let v_idx = v.debruijn_index;
-                    if self_idx >= 0 || v_idx >= 0 {
-                        return Ok(ThreeValuedLogic::Unknown);
-                    }
-                    // 如果都是负数,说明都是闭包内的变量
-                    // 需要从闭包环境中取出对应的类型进行比较
-                    let l = (-1 - self_idx) as usize;
-                    let r = (-1 - v_idx) as usize;
-
-                    let value_l = ctx.closure_env.0.get(l)?;
-                    let value_r = ctx.closure_env.1.get(r)?;
-                    value_l.subof(value_r.as_ref_dispatcher(), &mut inner_ctx)
-                }
-                _ => {
-                    if self.debruijn_index >= 0 {
-                        // 如果是正数,说明是参数变量,无法确定
-                        // 实际上新模型允许通过上下文推导出参数变量的类型，进而使用Eq来判断
-                        return Ok(ThreeValuedLogic::Unknown);
-                    }
-                    let r = (-1 - self.debruijn_index) as usize;
-                    let value = ctx.closure_env.1.get(r)?;
-                    value.subof(other, &mut inner_ctx)
-                }
+                _ => Ok(ThreeValuedLogic::Unknown),
             }
         })
     }
@@ -143,11 +137,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        let idx = self.debruijn_index;
-        if idx >= 0 {
-            ctx.param_env.get(idx as usize).cloned()
-        } else {
-            ctx.closure_env.get((-1 - idx) as usize).cloned()
+        match self {
+            Variable::PatternVariable { bind_name, .. } => {
+                if let Some(ty) = ctx.pattern_environment.lookup(&bind_name) {
+                    Ok(ty.clone())
+                } else {
+                    Err(TypeError::UnboundEnvironmentVariable(
+                        bind_name.to_string().into_boxed_str(),
+                    ))
+                }
+            }
+            Variable::ContextVariable { bind_name, .. } => {
+                if let Some(ty) = ctx.context_environment.lookup(&bind_name) {
+                    Ok(ty.clone())
+                } else {
+                    Err(TypeError::UnboundContextVariable(bind_name.to_string().into_boxed_str()))
+                }
+            }
         }
     }
 
@@ -156,11 +162,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        self.source_info.as_ref()
+        match self {
+            Variable::ContextVariable { source_info, .. } => source_info.as_ref(),
+            Variable::PatternVariable { source_info, .. } => source_info.as_ref(),
+        }
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
-        if let Some(loc) = &self.source_info {
+        if let Some(loc) = &self.source_info() {
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
@@ -189,17 +198,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            if self.debruijn_index >= 0 {
-                Ok(ThreeValuedLogic::Unknown)
-            } else {
-                let r = (-1 - self.debruijn_index) as usize;
-                let value = ctx.closure_env.1.get(r)?;
-                let mut inner_ctx =
-                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                other.check(value.as_ref_dispatcher(), &mut inner_ctx)
-            }
-        })
+        other.check(
+            (match self {
+                Variable::PatternVariable { .. } => return Ok(ThreeValuedLogic::Unknown),
+                Variable::ContextVariable { bind_name, .. } => {
+                    match ctx.rhs_env.lookup(bind_name) {
+                        Some(ty) => ty.clone(),
+                        None => return Ok(ThreeValuedLogic::Unknown),
+                    }
+                }
+            })
+            .as_ref_dispatcher(),
+            ctx,
+        )
     }
 
     #[stacksafe::stacksafe]
@@ -208,17 +219,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            if self.debruijn_index >= 0 {
-                Ok(ThreeValuedLogic::Unknown)
-            } else {
-                let r = (-1 - self.debruijn_index) as usize;
-                let value = ctx.closure_env.1.get(r)?;
-                let mut inner_ctx =
-                    TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
-                other.subof(value.as_ref_dispatcher(), &mut inner_ctx)
-            }
-        })
+        other.subof(
+            (match self {
+                Variable::PatternVariable { .. } => return Ok(ThreeValuedLogic::Unknown),
+                Variable::ContextVariable { bind_name, .. } => {
+                    match ctx.rhs_env.lookup(bind_name) {
+                        Some(ty) => ty.clone(),
+                        None => return Ok(ThreeValuedLogic::Unknown),
+                    }
+                }
+            })
+            .as_ref_dispatcher(),
+            ctx,
+        )
     }
 }
 
@@ -229,17 +242,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
         _depth: usize,
         _max_depth: usize,
     ) -> String {
-        format!("λ.{}", self.debruijn_index)
+        match self {
+            Variable::ContextVariable { bind_name, .. } => format!("c.{}", bind_name),
+            Variable::PatternVariable { bind_name, .. } => format!("λ.{}", bind_name),
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(debruijn_index: isize, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Variable { debruijn_index, source_info, _phantom: std::marker::PhantomData }.dispatch()
+    pub fn new_context(bind_name: Arc<str>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        Variable::ContextVariable { bind_name, source_info, _phantom: std::marker::PhantomData }
+            .dispatch()
     }
 
-    pub fn debruijn_index(&self) -> isize {
-        self.debruijn_index
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new_pattern(bind_name: Arc<str>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        Variable::PatternVariable { bind_name, source_info, _phantom: std::marker::PhantomData }
+            .dispatch()
+    }
+
+    pub fn bind_name(&self) -> &Arc<str> {
+        match self {
+            Variable::ContextVariable { bind_name, .. } => bind_name,
+            Variable::PatternVariable { bind_name, .. } => bind_name,
+        }
     }
 }

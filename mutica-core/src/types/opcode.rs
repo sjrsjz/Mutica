@@ -6,15 +6,9 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
-        closure::{Closure, ClosureEnv},
-        fixpoint::FixPoint,
-        float_value::FloatValue,
-        invoke::Invoke,
-        pattern::Pattern,
-        sequence::Sequence,
-        type_bound::TypeBound,
-        variable::Variable,
+        TypeRef, closure::Closure, constraint::Constraint, fixpoint::FixPoint,
+        float_value::FloatValue, invoke::Invoke, pattern::Pattern, sequence::Sequence,
+        type_bound::TypeBound, unify::EnvironmentStack, variable::Variable,
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -106,9 +100,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -151,9 +150,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
         other: Self::RefDispatcher<'_>,
         ctx: &mut super::TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        ctx.pattern_env.collect(|pattern_env| {
-            let mut inner_ctx =
-                TypeCheckContext::new(ctx.assumptions, ctx.closure_env, pattern_env, ctx.rhs);
+        ctx.pattern_collector.collect(|pattern_env| {
+            let mut inner_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                pattern_env,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -226,14 +230,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 }
                 OpcodeKind::BuildFixPoint => {
                     let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
-                    let call_back: Type<T> = Closure::new(
-                        vec![(Pattern::new(0, TypeBound::<T>::top(ctx.source_info.cloned()), self.source_info.clone()), Invoke::new(
-                            Self { kind: OpcodeKind::Set, source_info: ctx.source_info.cloned(), _phantom: std::marker::PhantomData }.dispatch(),
-                            Sequence::new_tuple(vec![place_holder.clone(), Variable::new(0, ctx.source_info.cloned())], ctx.source_info.cloned()),
+                    let source_info = ctx.source_info.cloned();
+                    let invoke = Invoke::new(
+                            Self { kind: OpcodeKind::Set, source_info: source_info.clone(), _phantom: std::marker::PhantomData }.dispatch(),
+                            Sequence::new_tuple(vec![place_holder.clone(), Variable::new_pattern("var#fixpoint".into(), source_info.clone())], source_info.clone()),
                             None::<Type<T>>,
-                            None::<Type<T>>, ctx.source_info.cloned()), 0, 1)],
-                        vec![ClosureEnv::new(Vec::<Type<T>>::new())],
-                        ctx.source_info.cloned(),
+                            None::<Type<T>>, source_info.clone());
+
+                    let call_back: Type<T> = Closure::new(
+                        vec![(Vec::<&'static str>::new(), Constraint::new_constraint(Pattern::new(Arc::from("var#fixpoint"), source_info.clone()), vec![("var#fixpoint".into(), TypeBound::top(None))], None),invoke)],
+                        source_info.clone(),
                     );
                     Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>, ctx.source_info.cloned()))
                 }
@@ -258,14 +264,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             let right = tuple.get_prefix_value(1).unwrap();
                             let true_branch = tuple.get_prefix_value(2).unwrap();
                             let false_branch = tuple.get_prefix_value(3).unwrap();
-                            let empty_closure = ClosureEnv::new(Vec::<Type<T>>::new());
                             let mut assumptions = smallvec::SmallVec::new();
                             let mut pattern_env = Collector::new_disabled();
+                            let mut env_stack = EnvironmentStack::new();
                             let mut type_check_ctx = TypeCheckContext::new(
                                 &mut assumptions,
-                                (&empty_closure, &empty_closure),
                                 &mut pattern_env,
-                                false,
+                                ctx.environment,
+                                ctx.environment,
+                                &mut env_stack
                             );
                             match left.check(right.as_ref_dispatcher(), &mut type_check_ctx) {
                                 Ok(res) => Ok(if let ThreeValuedLogic::True = res { true_branch.clone() } else { false_branch.clone() }),
@@ -297,11 +304,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             let right = tuple.get_prefix_value(1).unwrap();
                                     match (left, right) {
                             (Type::Sequence(l), Type::Sequence(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(l.add(r)?.dispatch()),
-                                OpcodeKind::Sub => Ok(l.sub(r)?.dispatch()),
-                                OpcodeKind::Mul => Ok(l.mul(r)?.dispatch()),
-                                OpcodeKind::Div => Ok(l.div(r)?.dispatch()),
-                                OpcodeKind::Mod => Ok(l.mod_(r)?.dispatch()),
+                                OpcodeKind::Add => Ok(l.add(r, ctx.environment)?.dispatch()),
+                                OpcodeKind::Sub => Ok(l.sub(r, ctx.environment)?.dispatch()),
+                                OpcodeKind::Mul => Ok(l.mul(r, ctx.environment)?.dispatch()),
+                                OpcodeKind::Div => Ok(l.div(r, ctx.environment)?.dispatch()),
+                                OpcodeKind::Mod => Ok(l.mod_(r, ctx.environment)?.dispatch()),
                                 _ => unreachable!(),
                             },
                             (Type::FloatValue(l), Type::FloatValue(r)) => match &self.kind {
