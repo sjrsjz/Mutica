@@ -3,7 +3,10 @@ pub mod lexer;
 pub use ast::TypeAst;
 use logos::Logos;
 use mutica_core::{
-    types::{GcAllocObject, Type},
+    types::{
+        CoinductiveType, GcAllocObject, Type, pattern::Pattern, unify::EnvironmentVarState,
+        variable::Variable,
+    },
     util::{
         cycle_detector::FastCycleDetector,
         source_info::{
@@ -320,8 +323,14 @@ pub fn report_error_recovery<'a>(
     )
 }
 
+pub enum Scope {
+    Function(HashMap<String, (usize, WithLocation<()>)>),
+    Generic(HashMap<String, (usize, WithLocation<()>)>),
+    FixPoint(String, usize, WithLocation<()>),
+}
+
 pub struct ParseContext {
-    pub declared_variables: Vec<HashMap<String, (usize, WithLocation<()>)>>,
+    pub declared_variables: Vec<Scope>,
 }
 pub enum ContextError {
     NotUsed(Vec<WithLocation<String>>),
@@ -338,15 +347,24 @@ impl ParseContext {
     const NOT_USED: usize = 0usize;
 
     pub fn new() -> Self {
-        Self { declared_variables: vec![HashMap::new()] }
+        Self { declared_variables: vec![Scope::Function(HashMap::new())] }
     }
 
     pub fn capture(&self) -> Vec<WithLocation<String>> {
         let mut captured = Vec::new();
         for scope in &self.declared_variables {
-            for (name, (count, loc)) in scope {
-                if *count > Self::NOT_USED {
-                    captured.push(loc.clone().map(|_| name.clone()));
+            match scope {
+                Scope::Function(map) | Scope::Generic(map) => {
+                    for (name, (count, loc)) in map {
+                        if *count > Self::NOT_USED {
+                            captured.push(loc.clone().map(|_| name.clone()));
+                        }
+                    }
+                }
+                Scope::FixPoint(name, count, loc) => {
+                    if *count > Self::NOT_USED {
+                        captured.push(loc.clone().map(|_| name.clone()));
+                    }
                 }
             }
         }
@@ -354,21 +372,43 @@ impl ParseContext {
     }
 
     pub fn enter_scope(&mut self) {
-        self.declared_variables.push(HashMap::new());
+        self.declared_variables.push(Scope::Function(HashMap::new()));
+    }
+
+    pub fn enter_generic_scope(&mut self) {
+        self.declared_variables.push(Scope::Generic(HashMap::new()));
+    }
+
+    pub fn enter_fixpoint_scope(&mut self, name: String, loc: Option<&SourceLocation>) {
+        self.declared_variables.push(Scope::FixPoint(
+            name,
+            Self::NOT_USED,
+            WithLocation::new((), loc),
+        ));
     }
 
     pub fn exit_scope(&mut self) -> Result<(), ContextError> {
         if let Some(current_scope) = self.declared_variables.last() {
-            let unused_vars: Vec<WithLocation<String>> = current_scope
-                .iter()
-                .filter_map(|(name, (count, loc))| {
+            let unused_vars: Vec<WithLocation<String>> = match current_scope {
+                Scope::Function(map) | Scope::Generic(map) => map
+                    .iter()
+                    .filter_map(|(name, (count, loc))| {
+                        if *count == Self::NOT_USED && !name.starts_with("_") && !name.contains("#")
+                        {
+                            Some(loc.clone().map(|_| name.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                Scope::FixPoint(name, count, loc) => {
                     if *count == Self::NOT_USED && !name.starts_with("_") && !name.contains("#") {
-                        Some(loc.clone().map(|_| name.clone()))
+                        vec![loc.clone().map(|_| name.clone())]
                     } else {
-                        None
+                        Vec::new()
                     }
-                })
-                .collect();
+                }
+            };
             if !unused_vars.is_empty() {
                 self.declared_variables.pop();
                 return Err(ContextError::NotUsed(unused_vars));
@@ -386,130 +426,71 @@ impl ParseContext {
         loc: Option<&SourceLocation>,
     ) -> Result<(), ContextError> {
         if let Some(current_scope) = self.declared_variables.last_mut() {
-            if current_scope.contains_key(&name)
-                && current_scope[&name].0 == Self::NOT_USED
-                && !name.starts_with("_")
-                && !name.contains("#")
-            // 允许以 _ 开头的变量不被使用
-            {
-                let unused_vars = vec![current_scope[&name].1.clone().map(|_| name.clone())];
-                current_scope.insert(name, (Self::NOT_USED, WithLocation::new((), loc)));
-                return Err(ContextError::NotUsed(unused_vars));
+            match current_scope {
+                Scope::Function(map) | Scope::Generic(map) => {
+                    if map.contains_key(&name)
+                        && map[&name].0 == Self::NOT_USED
+                        && !name.starts_with("_")
+                        && !name.contains("#")
+                    // 允许以 _ 开头的变量不被使用
+                    {
+                        let unused_vars = vec![map[&name].1.clone().map(|_| name.clone())];
+                        map.insert(name, (Self::NOT_USED, WithLocation::new((), loc)));
+                        return Err(ContextError::NotUsed(unused_vars));
+                    }
+                    map.insert(name, (Self::NOT_USED, WithLocation::new((), loc)));
+                    return Ok(());
+                }
+                Scope::FixPoint(_, _, _) => return Err(ContextError::EmptyContext),
             }
-            current_scope.insert(name, (Self::NOT_USED, WithLocation::new((), loc)));
-            return Ok(());
         }
         Err(ContextError::EmptyContext)
     }
 
     pub fn use_variable(&mut self, name: &str) -> Result<&WithLocation<()>, ContextError> {
         for scope in self.declared_variables.iter_mut().rev() {
-            if let Some((count, loc)) = scope.get_mut(name) {
-                *count += 1;
-                return Ok(loc);
+            match scope {
+                Scope::Function(map) | Scope::Generic(map) => {
+                    if let Some((count, loc)) = map.get_mut(name) {
+                        *count += 1;
+                        return Ok(loc);
+                    }
+                }
+                Scope::FixPoint(n, count, loc) => {
+                    if n == name {
+                        *count += 1;
+                        return Ok(loc);
+                    }
+                }
             }
         }
         Err(ContextError::NotDeclared(name.to_string()))
     }
 }
 
-pub struct BuildContextLayer<T: GcAllocObject<T, Inner = Type<T>>> {
-    fixpoint_mapping: Vec<(String, Type<T>)>,
-    pattern_index_mapping: HashMap<String, isize>,
-    captured_index_mapping: HashMap<String, isize>,
+pub enum BuildContextLayer<T: GcAllocObject<T, Inner = Type<T>>> {
+    Function {
+        patterns: HashMap<String, WithLocation<()>>,
+        captures: HashMap<String, WithLocation<()>>,
+    },
+    GenericBinding(HashMap<String, WithLocation<()>>),
+    FixPoint(String, Type<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContextLayer<T> {
-    pub fn new() -> Self {
-        Self {
-            fixpoint_mapping: Vec::new(),
-            pattern_index_mapping: HashMap::new(),
-            captured_index_mapping: HashMap::new(),
-        }
+    pub fn new_function_layer(
+        patterns: HashMap<String, WithLocation<()>>,
+        captures: HashMap<String, WithLocation<()>>,
+    ) -> Self {
+        Self::Function { patterns, captures }
     }
 
-    pub fn enter_fixpoint(&mut self, name: String, t: Type<T>) {
-        self.fixpoint_mapping.push((name, t));
+    pub fn new_generic_binding_layer(patterns: HashMap<String, WithLocation<()>>) -> Self {
+        Self::GenericBinding(patterns)
     }
 
-    pub fn exit_fixpoint(&mut self) {
-        self.fixpoint_mapping.pop();
-    }
-
-    pub fn get(&self, name: &str) -> Option<Result<&Type<T>, isize>> {
-        for (n, t) in self.fixpoint_mapping.iter().rev() {
-            if n == name {
-                return Some(Ok(t));
-            }
-        }
-        if let Some(&index) = self.pattern_index_mapping.get(name) {
-            return Some(Err(index));
-        }
-        if let Some(&index) = self.captured_index_mapping.get(name) {
-            return Some(Err(index));
-        }
-        None
-    }
-
-    pub fn push_pattern(&mut self, name: String) -> Option<usize> {
-        if self.pattern_index_mapping.contains_key(&name) {
-            return None;
-        }
-        let index = self.pattern_index_mapping.len();
-        self.pattern_index_mapping.insert(name, index as isize);
-        Some(index)
-    }
-
-    pub fn push_captured(&mut self, name: String) -> Option<usize> {
-        if self.captured_index_mapping.contains_key(&name) {
-            return None;
-        }
-        let index = self.captured_index_mapping.len();
-        self.captured_index_mapping.insert(name, -1 - index as isize);
-        Some(index)
-    }
-
-    pub fn captured_count(&self) -> usize {
-        self.captured_index_mapping.len()
-    }
-}
-
-impl<T: GcAllocObject<T, Inner = Type<T>>> Default for BuildContextLayer<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct PatternCounter {
-    index_mapping: HashMap<String, usize>,
-}
-
-impl Default for PatternCounter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PatternCounter {
-    pub fn new() -> Self {
-        Self { index_mapping: HashMap::new() }
-    }
-
-    pub fn alloc(&mut self, name: String) -> usize {
-        if let Some(&index) = self.index_mapping.get(&name) {
-            return index;
-        }
-        let index = self.index_mapping.len();
-        self.index_mapping.insert(name, index);
-        index
-    }
-
-    pub fn len(&self) -> usize {
-        self.index_mapping.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.index_mapping.is_empty()
+    pub fn new_fixpoint_layer(name: String, ty: Type<T>) -> Self {
+        Self::FixPoint(name, ty)
     }
 }
 
@@ -525,23 +506,90 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Default for BuildContext<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
     pub fn new() -> Self {
-        Self { layers: vec![BuildContextLayer::new()] }
+        Self { layers: vec![] }
     }
 
-    pub fn enter_layer(&mut self) {
-        self.layers.push(BuildContextLayer::new());
+    pub fn enter_layer(&mut self, layer: BuildContextLayer<T>) {
+        self.layers.push(layer)
     }
 
-    pub fn exit_layer(&mut self) -> BuildContextLayer<T> {
-        self.layers.pop().expect("There should always be at least one layer")
+    pub fn exit_layer(&mut self) -> Option<BuildContextLayer<T>> {
+        self.layers.pop()
     }
 
-    pub fn current_layer_mut(&mut self) -> &mut BuildContextLayer<T> {
-        self.layers.last_mut().expect("There should always be at least one layer")
+    pub fn lookup<S: AsRef<str>>(&self, var: S) -> Option<Type<T>> {
+        for (i, layer) in self.layers.iter().rev().enumerate() {
+            match layer {
+                BuildContextLayer::Function { patterns, captures } => {
+                    match (patterns.get(var.as_ref()), captures.get(var.as_ref())) {
+                        (Some(v), _) => {
+                            return Some(Variable::new_pattern(
+                                Arc::from(var.as_ref()),
+                                v.location().cloned().map(Arc::new),
+                            ));
+                        }
+                        (None, Some(v)) => {
+                            return Some(Variable::new_context(
+                                Arc::from(var.as_ref()),
+                                v.location().cloned().map(Arc::new),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                BuildContextLayer::GenericBinding(patterns) => {
+                    let mut layer = 0;
+                    // 向栈底搜索，计数GenericBinding层数，碰到Function的时候停止
+                    for rev_layer in self.layers.iter().rev().skip(i + 1) {
+                        match rev_layer {
+                            BuildContextLayer::GenericBinding(_) => {
+                                layer += 1;
+                            }
+                            BuildContextLayer::Function { .. } => break,
+                            BuildContextLayer::FixPoint(_, _) => continue,
+                        }
+                    }
+
+                    if let Some(v) = patterns.get(var.as_ref()) {
+                        return Some(
+                            Pattern::new(
+                                Arc::from(var.as_ref()),
+                                layer,
+                                v.location().cloned().map(Arc::new),
+                            )
+                            .dispatch(),
+                        );
+                    }
+                }
+                BuildContextLayer::FixPoint(name, v) => {
+                    if var.as_ref().eq(name) {
+                        return Some(v.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
-    pub fn current_layer(&self) -> &BuildContextLayer<T> {
-        self.layers.last().expect("There should always be at least one layer")
+    pub fn lookup_function_env<S: AsRef<str>>(
+        &self,
+        var: S,
+    ) -> Option<EnvironmentVarState<Type<T>, T>> {
+        for layer in self.layers.iter().rev() {
+            match layer {
+                BuildContextLayer::Function { patterns, captures } => {
+                    if patterns.contains_key(var.as_ref()) {
+                        return Some(EnvironmentVarState::FromPattern);
+                    }
+                    if captures.contains_key(var.as_ref()) {
+                        return Some(EnvironmentVarState::FromCapture);
+                    }
+                    return None;
+                }
+                BuildContextLayer::FixPoint(_, _) | BuildContextLayer::GenericBinding(_) => {}
+            }
+        }
+        None
     }
 }
 
@@ -885,37 +933,37 @@ pub fn inject_std_library(
     errors: &mut Vec<WithLocation<MultiFileBuilderError>>,
 ) -> WithLocation<BasicTypeAst> {
     let std_lib_code = r##"
-    let $"op#true": any = True::();
-    let $"op#false": any = False::();
-    let $"op#and": any = match
-        | ($"op#true", $"op#true") => $"op#true"
-        | ($"op#true", $"op#false") => $"op#false"
-        | ($"op#false", $"op#true") => $"op#false"
-        | ($"op#false", $"op#false") => $"op#false"
-        | panic;
-    let $"op#or": any = match
-        | ($"op#true", $"op#true") => $"op#true"
-        | ($"op#true", $"op#false") => $"op#true"
-        | ($"op#false", $"op#true") => $"op#true"
-        | ($"op#false", $"op#false") => $"op#false"
-        | panic;
-    let $"op#not": any = match
-        | $"op#true" => $"op#false"
-        | $"op#false" => $"op#true"
-        | panic;
-    let $"op#add": any = (x: any, y: any) => __add!(x, y);
-    let $"op#sub": any = (x: any, y: any) => __sub!(x, y);
-    let $"op#mul": any = (x: any, y: any) => __mul!(x, y);
-    let $"op#div": any = (x: any, y: any) => __div!(x, y);
-    let $"op#mod": any = (x: any, y: any) => __mod!(x, y);
-    let $"op#gt": any = (x: any, y: any) => __greater!(x, y, true, false);
-    let $"op#lt": any = (x: any, y: any) => __less!(x, y, true, false);
-    let $"op#gte": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __greater!(x, y, true, false) | panic;
-    let $"op#lte": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __less!(x, y, true, false) | panic;
-    let $"op#neg": any = (x: any) => __neg!(x);
-    let $"op#is": any = (x: any, y: any) => __is!(x, y, true, false);
-    let $"op#set": any = (x: any, y: any) => __set!(x, y);
-    let $"op#build_fixpoint": any = (f: any) => __build_fixpoint!(f);
+    // let $"op#true": any = True::();
+    // let $"op#false": any = False::();
+    // let $"op#and": any = match
+    //     | ($"op#true", $"op#true") => $"op#true"
+    //     | ($"op#true", $"op#false") => $"op#false"
+    //     | ($"op#false", $"op#true") => $"op#false"
+    //     | ($"op#false", $"op#false") => $"op#false"
+    //     | panic;
+    // let $"op#or": any = match
+    //     | ($"op#true", $"op#true") => $"op#true"
+    //     | ($"op#true", $"op#false") => $"op#true"
+    //     | ($"op#false", $"op#true") => $"op#true"
+    //     | ($"op#false", $"op#false") => $"op#false"
+    //     | panic;
+    // let $"op#not": any = match
+    //     | $"op#true" => $"op#false"
+    //     | $"op#false" => $"op#true"
+    //     | panic;
+    // let $"op#add": any = (x: any, y: any) => __add!(x, y);
+    // let $"op#sub": any = (x: any, y: any) => __sub!(x, y);
+    // let $"op#mul": any = (x: any, y: any) => __mul!(x, y);
+    // let $"op#div": any = (x: any, y: any) => __div!(x, y);
+    // let $"op#mod": any = (x: any, y: any) => __mod!(x, y);
+    // let $"op#gt": any = (x: any, y: any) => __greater!(x, y, true, false);
+    // let $"op#lt": any = (x: any, y: any) => __less!(x, y, true, false);
+    // let $"op#gte": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __greater!(x, y, true, false) | panic;
+    // let $"op#lte": any = match | (_x: any, _x: any) => true | (x: any, y: any) => __less!(x, y, true, false) | panic;
+    // let $"op#neg": any = (x: any) => __neg!(x);
+    // let $"op#is": any = (x: any, y: any) => __is!(x, y, true, false);
+    // let $"op#set": any = (x: any, y: any) => __set!(x, y);
+    // let $"op#build_fixpoint": any = (f: any) => __build_fixpoint!(f);
     $"<placeholder>"
     "##;
     let mut import_ast = HashMap::new();
@@ -971,10 +1019,13 @@ pub fn inject_std_library(
                 BasicTypeAst::Match { branches } => BasicTypeAst::Match {
                     branches: branches
                         .into_iter()
-                        .map(|(pat, expr)| {
-                            let new_pat = replace_placeholder(pat, ast);
-                            let new_expr = replace_placeholder(expr, ast);
-                            (new_pat, new_expr)
+                        .map(|(vars, p, (f, g), body)| {
+                            (
+                                vars,
+                                replace_placeholder(p, ast),
+                                (replace_placeholder(f, ast), replace_placeholder(g, ast)),
+                                replace_placeholder(body, ast),
+                            )
                         })
                         .collect(),
                 },
@@ -987,14 +1038,16 @@ pub fn inject_std_library(
                 BasicTypeAst::Namespace { tag, expr } => {
                     BasicTypeAst::Namespace { tag, expr: replace_placeholder(*expr, ast).into() }
                 }
-                BasicTypeAst::Pattern { name, expr } => {
-                    BasicTypeAst::Pattern { name, expr: replace_placeholder(*expr, ast).into() }
-                }
+                BasicTypeAst::Generic { generic_vars, expr, constraint } => BasicTypeAst::Generic {
+                    generic_vars,
+                    expr: replace_placeholder(*expr, ast).into(),
+                    constraint: Box::new((
+                        replace_placeholder(constraint.0, ast),
+                        replace_placeholder(constraint.1, ast),
+                    )),
+                },
                 BasicTypeAst::Literal(v) => {
                     BasicTypeAst::Literal(replace_placeholder(*v, ast).into())
-                }
-                BasicTypeAst::Rot { value } => {
-                    BasicTypeAst::Rot { value: replace_placeholder(*value, ast).into() }
                 }
                 BasicTypeAst::EqOf { value } => {
                     BasicTypeAst::EqOf { value: replace_placeholder(*value, ast).into() }

@@ -6,9 +6,16 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, closure::Closure, constraint::Constraint, fixpoint::FixPoint,
-        float_value::FloatValue, invoke::Invoke, pattern::Pattern, sequence::Sequence,
-        type_bound::TypeBound, unify::EnvironmentStack, variable::Variable,
+        TypeRef,
+        closure::Closure,
+        constraint::Constraint,
+        fixpoint::FixPoint,
+        float_value::FloatValue,
+        invoke::Invoke,
+        pattern::Pattern,
+        sequence::Sequence,
+        unify::{EnvironmentStack, EnvironmentVarState},
+        variable::Variable,
     },
     util::{
         collector::Collector, cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -113,6 +120,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Constraint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -163,6 +171,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Constraint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Bound(v) => match &v.kind {
                     crate::types::type_bound::TypeBoundKind::Top => Ok(ThreeValuedLogic::True),
@@ -238,7 +247,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             None::<Type<T>>, source_info.clone());
 
                     let call_back: Type<T> = Closure::new(
-                        vec![(Vec::<&'static str>::new(), Constraint::new_constraint(Pattern::new(Arc::from("var#fixpoint"), source_info.clone()), vec![("var#fixpoint".into(), TypeBound::top(None))], None),invoke)],
+                        vec![(Vec::<(&'static str, EnvironmentVarState<Type<T>, T>)>::new(), Constraint::new_constraint(vec!["var#fixpoint".to_string()], 
+                            Pattern::new(Arc::from("var#fixpoint"), 0, source_info.clone()), 
+                            (Sequence::unit(None), Sequence::unit(None)), None),invoke)],
                         source_info.clone(),
                     );
                     Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>, ctx.source_info.cloned()))

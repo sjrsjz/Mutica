@@ -79,8 +79,10 @@ impl<'ast> SourceMapping<'ast> {
                 }
             }
             LinearTypeAst::Match { branches, .. } => {
-                for (pattern, expr) in branches {
+                for (_vars, pattern, (constraint_l, constraint_r), expr) in branches {
                     Self::build_mapping(pattern, mapping, source_file);
+                    Self::build_mapping(constraint_l, mapping, source_file);
+                    Self::build_mapping(constraint_r, mapping, source_file);
                     Self::build_mapping(expr, mapping, source_file);
                 }
             }
@@ -98,14 +100,14 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::Namespace { expr, .. } => {
                 Self::build_mapping(expr, mapping, source_file);
             }
-            LinearTypeAst::Pattern { expr, .. } => {
+            LinearTypeAst::Generic { expr, constraint, .. } => {
+                let (f, g) = constraint.as_ref();
+                Self::build_mapping(f, mapping, source_file);
+                Self::build_mapping(g, mapping, source_file);
                 Self::build_mapping(expr, mapping, source_file);
             }
             LinearTypeAst::Literal(expr) => {
                 Self::build_mapping(expr, mapping, source_file);
-            }
-            LinearTypeAst::Rot { value } => {
-                Self::build_mapping(value, mapping, source_file);
             }
             LinearTypeAst::EqOf { value } => {
                 Self::build_mapping(value, mapping, source_file);
@@ -260,12 +262,8 @@ mod test {
             basic.0.linearize(&mut LinearizeContext::new(), basic.0.location()).finalize();
 
         let mut flow_errors = Vec::new();
-        let flowed = linearized.flow(
-            &mut ParseContext::new(),
-            false,
-            linearized.location(),
-            &mut flow_errors,
-        );
+        let flowed =
+            linearized.flow(&mut ParseContext::new(), linearized.location(), &mut flow_errors);
 
         if !flow_errors.is_empty() {
             // 获取源文件信息用于错误报告

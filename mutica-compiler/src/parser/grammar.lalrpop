@@ -26,6 +26,9 @@ extern {
 
         "Let"           => LexerToken::Let,
         "With"          => LexerToken::With,
+        "Where"         => LexerToken::Where,
+        "Exist"         => LexerToken::Exist,
+        "Assert"        => LexerToken::Assert,
         "Match"         => LexerToken::Match,
         "Rec"           => LexerToken::Rec,
         "DynamicRec"    => LexerToken::DynamicRec,
@@ -90,7 +93,7 @@ extern {
         "RBrace"        => LexerToken::RBrace,
         "PipeGreaterThan" => LexerToken::PipeGreaterThan,
         "Range"         => LexerToken::Range,
-        "Dollar"       => LexerToken::Dollar,
+        "Dollar"        => LexerToken::Dollar,
     }
 }
 
@@ -143,6 +146,9 @@ NoneTok: () = <l:@L> "None" <r:@R> => { TokenColor::fill_colors(colors, l..r, To
 // Individual keyword tokens (keeps locations simple and centralizes coloring)
 LetTok: () = <l:@L> "Let" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 WithTok: () = <l:@L> "With" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+WhereTok: () = <l:@L> "Where" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+ExistTok: () = <l:@L> "Exist" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+AssertTok: () = <l:@L> "Assert" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 MatchTok: () = <l:@L> "Match" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 RecTok: () = <l:@L> "Rec" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 DynamicRecTok: () = <l:@L> "DynamicRec" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
@@ -272,7 +278,6 @@ Term: WithLocation<TypeAst> = {
     LBraceTok <t: Type> RBraceTok => {
         t
     },
-    <rot: Rot> => rot,
     <eq: EqOf> => eq,
     <sub: SubOf> => sub,
     <np: Namespace> => np,
@@ -285,14 +290,6 @@ Namespace: WithLocation<TypeAst> = {
         WithLocation::new(TypeAst::Namespace {
             tag: tag,
             expr: Box::new(t),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-}
-
-Rot: WithLocation<TypeAst> = {
-    <l:@L> RotTok <a: Term> <r:@R> => {
-        WithLocation::new(TypeAst::Rot {
-            value: Box::new(a),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
@@ -341,16 +338,48 @@ IfElse: WithLocation<TypeAst> = {
             Some(c) => WithLocation::new(TypeAst::Apply {
                 func: Box::new(WithLocation::new(TypeAst::Match {
                     branches: vec![
-                        (WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()), else_branch),
-                        (WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()), then_branch),
+                        (
+                            vec![],
+                            WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                            (
+                                WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                                WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                            ),
+                            else_branch
+                        ),
+                        (
+                            vec![],
+                            WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                            (
+                                WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                                WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                            ),
+                            then_branch
+                        ),
                     ],
                 }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
                 arg: Box::new(c),
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
             None => WithLocation::new(TypeAst::Match {
                 branches: vec![
-                    (WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()), else_branch),
-                    (WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()), then_branch),
+                    (
+                        vec![],
+                        WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        (
+                            WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                            WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                        ),
+                        else_branch
+                    ),
+                    (
+                        vec![],
+                        WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        (
+                            WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                            WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                        ),
+                        then_branch
+                    ),
                 ],
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),    
         }
@@ -375,22 +404,24 @@ Match: WithLocation<TypeAst> = {
 
 ForIn: WithLocation<TypeAst> = {
     <l:@L> ForTok <binding: Binding> InTok <expr: Primary> <r:@R> => {
+        let (generic, value) = binding;
+        let (vars, pattern, f, g) = generic;
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(binding.1),
+            func: Box::new(expr),
             arg: Box::new(WithLocation::new(TypeAst::Match {
-                branches: vec![(binding.0, expr)],
+                branches: vec![(vars, pattern, (f, g), value)],
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()))
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
 
-FnDef: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    <l:@L> <pattern: Calculate> DoubleArrowTok <t: Primary> <r:@R> => {
-        (pattern, t)
+FnDef: (Vec<WithLocation<String>>, WithLocation<TypeAst>, (WithLocation<TypeAst>, WithLocation<TypeAst>), WithLocation<TypeAst>) = {
+    <param: Generic> DoubleArrowTok <expr: Primary> => {
+        (param.0, param.1, (param.2, param.3), expr)
     },
 }
 
-MatchBranch: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
+MatchBranch: (Vec<WithLocation<String>>, WithLocation<TypeAst>, (WithLocation<TypeAst>, WithLocation<TypeAst>), WithLocation<TypeAst>) = {
     PipeTok <branch: FnDef> => branch,
 }
 
@@ -462,9 +493,55 @@ Literal: WithLocation<TypeAst> = {
     },
 }
 
+DictItems: Vec<WithLocation<String>> = {
+    <l:@L> <r:@R> => vec![],
+    <l:@L> <key: Ident> <r:@R> => {
+        vec![WithLocation::new(key, Some(SourceLocation::new(source.clone(), l..r)).as_ref())]
+    },
+    <mut items: DictItems> CommaTok <l:@L> <key: Ident> <r:@R> => {
+        items.push(WithLocation::new(key, Some(SourceLocation::new(source.clone(), l..r)).as_ref()));
+        items
+    },
+}
+
+GenericVariables: Vec<WithLocation<String>> = {
+    LBraceTok <items: DictItems> RBraceTok => items,
+    LBracketTok <items: DictItems> RBracketTok => items,
+    LParenTok <items: DictItems> RParenTok => items,
+    <l:@L> <key: Ident> <r:@R> => vec![WithLocation::new(key, Some(SourceLocation::new(source.clone(), l..r)).as_ref())],
+}
+
+// exist {x, ..} T where F: R
+Generic: (Vec<WithLocation<String>>, WithLocation<TypeAst>, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
+    ExistTok <vars: GenericVariables> InTok <expr: Primary> WhereTok <f: Calculate> ColonTok <g: Calculate> => (
+        vars,
+        expr,
+        f,
+        g,
+    ),
+    <l:@L> AssertTok <expr: Calculate> <r:@R> => (
+        vec![],
+        expr,
+        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    ),
+}
+
+Constraint: WithLocation<TypeAst> = {
+    <l:@L> <w: Generic> <r:@R> => {
+        WithLocation::new(TypeAst::Generic {
+            generic_vars: w.0,
+            expr: Box::new(w.1),
+            constraint: Box::new((w.2, w.3)),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
+
 Primary: WithLocation<TypeAst> = {
     <l: Literal> => l,
     <r: RecursiveGen> => r,
+    <c: Constraint> => c,
     <m: Match> => m,
     <c: Closure> => c,
     <f: ForIn> => f,
@@ -488,13 +565,6 @@ Factor: WithLocation<TypeAst> = {
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::Variable("op#neg".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(n),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-    <l:@L> <def_l:@L> <id: Ident> <def_r:@R> ColonTok <a: Factor> <r:@R> => {
-        TokenColor::fill_colors(colors, def_l..def_r, TokenColor::Declaration);
-        WithLocation::new(TypeAst::Pattern {
-            name: id,
-            expr: Box::new(a),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <a: Apply> => a,
@@ -665,14 +735,18 @@ MulDiv: WithLocation<TypeAst> = {
 }
 
 
-Binding: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    <id: Type> AssignTok <value: Type> => (id, value),
+Binding: (
+    (Vec<WithLocation<String>>, WithLocation<TypeAst>, WithLocation<TypeAst>, WithLocation<TypeAst>),
+    WithLocation<TypeAst>,
+) = {
+    <bind: Generic> AssignTok <value: Type> => (bind, value),
 };
 
-Let: (WithLocation<TypeAst>, WithLocation<TypeAst>) = {
-    <l:@L> LetTok <binding: Binding> SemicolonTok <r:@R> => {
-        binding
-    },
+Let: (
+    (Vec<WithLocation<String>>, WithLocation<TypeAst>, WithLocation<TypeAst>, WithLocation<TypeAst>),
+    WithLocation<TypeAst>,
+) = {
+    LetTok <binding: Binding> SemicolonTok => binding,
 }
 
 ExtendDef: (String, WithLocation<TypeAst>, usize, usize) = {
@@ -688,17 +762,18 @@ Discard: WithLocation<TypeAst> = {
     },
 }
 
-Recursive: (String, WithLocation<TypeAst>, WithLocation<TypeAst>) = {
+Recursive: (String, (Vec<WithLocation<String>>, WithLocation<TypeAst>, WithLocation<TypeAst>, WithLocation<TypeAst>), WithLocation<TypeAst>) = {
     // loop label: pattern = initialize_value;
     <l:@L> LoopTok <id: Ident> ColonTok <binding: Binding> SemicolonTok <r:@R> => {
-        (id, binding.0, binding.1)
+        let (generic, value) = binding;
+        (id, generic, value)
     },
 }
 
 Expression: WithLocation<TypeAst> = {
-    <l:@L> LetTok <arg: Type> SemicolonTok <expr: Type> <r:@R> => {
+    <l:@L> LetTok <arg: Generic> SemicolonTok <expr: Type> <r:@R> => {
         WithLocation::new(TypeAst::Match {
-            branches: vec![(arg, expr)],
+            branches: vec![(arg.0, arg.1, (arg.2, arg.3), expr)],
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
@@ -710,7 +785,8 @@ Expression: WithLocation<TypeAst> = {
             } => {
                 let mut new_patterns = binding_patterns.clone();
                 let mut new_types = binding_types.clone();
-                new_patterns.insert(0, let_expr.0);
+                let (vars, pat, f, g) = let_expr.0;
+                new_patterns.insert(0, (vars, pat, (f, g)));
                 new_types.insert(0, let_expr.1);
                 WithLocation::new(TypeAst::Expression {
                     binding_patterns: new_patterns,
@@ -718,11 +794,14 @@ Expression: WithLocation<TypeAst> = {
                     body: body.clone(),
                 }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
             }
-            _ => WithLocation::new(TypeAst::Expression {
-                binding_patterns: vec![let_expr.0],
-                binding_types: vec![let_expr.1],
-                body: Box::new(e),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            _ => {
+                let (vars, pat, f, g) = let_expr.0;
+                WithLocation::new(TypeAst::Expression {
+                    binding_patterns: vec![(vars, pat, (f, g))],
+                    binding_types: vec![let_expr.1],
+                    body: Box::new(e),
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+            },
         }
     },
     <l:@L> <extend_expr: ExtendDef> <e: Type> <r:@R> => {
@@ -734,12 +813,21 @@ Expression: WithLocation<TypeAst> = {
             } => {
                 let mut new_patterns = binding_patterns.clone();
                 let mut new_types = binding_types.clone();
-                new_patterns.insert(0, WithLocation::new(
-                    TypeAst::Pattern {
-                        name: extend_expr.0.clone(),
-                        expr: Box::new(WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())),
-                    },
-                    Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+                new_patterns.insert(0, (
+                    vec![
+                        WithLocation::new(extend_expr.0.clone(), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
+                    ],
+                    WithLocation::new(
+                        TypeAst::Variable(extend_expr.0.clone()),
+                        Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+                    ),
+                    (
+                        WithLocation::new(TypeAst::Variable(extend_expr.0.clone()), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
+                        WithLocation::new(
+                            TypeAst::Top,
+                            Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+                        )
+                    )
                 ));
                 new_types.insert(0, WithLocation::new(
                     TypeAst::Apply {
@@ -764,12 +852,21 @@ Expression: WithLocation<TypeAst> = {
                 }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
             }
             _ => WithLocation::new(TypeAst::Expression {
-                binding_patterns: vec![WithLocation::new(
-                    TypeAst::Pattern {
-                        name: extend_expr.0.clone(),
-                        expr: Box::new(WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())),
-                    },
-                    Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+                binding_patterns: vec![(
+                    vec![
+                        WithLocation::new(extend_expr.0.clone(), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
+                    ],
+                    WithLocation::new(
+                        TypeAst::Variable(extend_expr.0.clone()),
+                        Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+                    ),
+                    (
+                        WithLocation::new(TypeAst::Variable(extend_expr.0.clone()), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
+                        WithLocation::new(
+                            TypeAst::Top,
+                            Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+                        )
+                    )
                 )],
                 binding_types: vec![WithLocation::new(
                     TypeAst::Apply {
@@ -800,7 +897,14 @@ Expression: WithLocation<TypeAst> = {
             } => {
                 let mut new_patterns = binding_patterns.clone();
                 let mut new_types = binding_types.clone();
-                new_patterns.insert(0, WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()));
+                new_patterns.insert(0, (
+                    vec![],
+                    WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                    (
+                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                    )
+                ));
                 new_types.insert(0, discard_expr);
                 WithLocation::new(TypeAst::Expression {
                     binding_patterns: new_patterns,
@@ -809,7 +913,14 @@ Expression: WithLocation<TypeAst> = {
                 }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
             }
             _ => WithLocation::new(TypeAst::Expression {
-                binding_patterns: vec![WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref())],
+                binding_patterns: vec![(
+                    vec![],
+                    WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                    (
+                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                    )
+                )],
                 binding_types: vec![discard_expr],
                 body: Box::new(e),
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
@@ -819,24 +930,28 @@ Expression: WithLocation<TypeAst> = {
 
 Loop: WithLocation<TypeAst> = {
     <l:@L> <rec_expr: Recursive> <e: Type> <r:@R> => {
+        let (id, generic, init) = rec_expr;
+        let (vars, pat, f, g) = generic;
         WithLocation::new(TypeAst::Apply {
             func: Box::new(WithLocation::new(TypeAst::FixPoint {
-                param_name: rec_expr.0,
+                param_name: id,
                 expr: Box::new(WithLocation::new(TypeAst::Match {
-                    branches: vec![(rec_expr.1, e)],
+                    branches: vec![(vars, pat, (f, g), e)],
                 }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(rec_expr.2),
+            arg: Box::new(init),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
 
 HandleWith: WithLocation<TypeAst> = {
     <l:@L> HandleTok <binding: Binding> WithTok <handler: Type> SemicolonTok <expr: Type> <r:@R> => {
-        let (binding_pattern, binding_value) = binding;
+        let (generic, binding_value) = binding;
+        let (binding_pattern, binding_where_l, binding_where_r) = (generic.1, generic.2, generic.3);
+        let binding_vars = generic.0;
         WithLocation::new(TypeAst::HandleWith {
             closure: Box::new(WithLocation::new(TypeAst::Match {
-                branches: vec![(binding_pattern, expr)],
+                branches: vec![(binding_vars, binding_pattern, (binding_where_l, binding_where_r), expr)],
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             init_val: Box::new(binding_value),
             handler: Box::new(handler),
@@ -846,7 +961,13 @@ HandleWith: WithLocation<TypeAst> = {
         WithLocation::new(TypeAst::HandleWith {
             closure: Box::new(WithLocation::new(TypeAst::Match {
                 branches: vec![(
-                    WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), expr
+                    vec![],
+                    WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                    (
+                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                    ),
+                    expr
                 )],
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             init_val: Box::new(

@@ -1,6 +1,6 @@
-let fib: any = rec f: match
-    | eq 0 => 0
-    | eq 1 => 1
-    | n: nat => f(n - 1) + f(n - 2)
+let exist fib in fib where fib: any = rec f: match
+    | assert 0 => 0
+    | assert 1 => 1
+    | exist n in n where n: nat => __add!(f(__sub!(n, 1)), f(__sub!(n, 2)))
     | panic;
-fib(28)
+fib(5)

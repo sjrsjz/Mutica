@@ -7,31 +7,54 @@ use crate::{
     util::three_valued_logic::ThreeValuedLogic,
 };
 
+pub enum EnvironmentVarState<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    FromPattern,
+    FromCapture,
+    Bound(U),
+    #[doc(hidden)]
+    Phantom(std::marker::PhantomData<V>),
+}
+
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentVarState<U, V> {
+    fn clone(&self) -> Self {
+        match self {
+            EnvironmentVarState::FromPattern => EnvironmentVarState::FromPattern,
+            EnvironmentVarState::FromCapture => EnvironmentVarState::FromCapture,
+            EnvironmentVarState::Bound(ty) => EnvironmentVarState::Bound(ty.clone()),
+            EnvironmentVarState::Phantom(_) => {
+                EnvironmentVarState::Phantom(std::marker::PhantomData)
+            }
+        }
+    }
+}
+
 pub struct Environment<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    type_vars: Vec<(Arc<str>, Option<U>)>,
+    type_vars: Vec<(Arc<str>, EnvironmentVarState<U, V>)>,
     _phantom: std::marker::PhantomData<V>,
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Environment<U, V> {
     fn clone(&self) -> Self {
-        Self {
-            type_vars: self.type_vars.iter().map(|(name, ty)| (name.clone(), ty.clone())).collect(),
-            _phantom: std::marker::PhantomData,
-        }
+        Self { type_vars: self.type_vars.clone(), _phantom: std::marker::PhantomData }
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
-    pub fn new<I: IntoIterator<Item = S>, S: Into<Arc<str>>>(type_vars: I) -> Self {
+    pub fn new<I: IntoIterator<Item = (S, EnvironmentVarState<U, V>)>, S: Into<Arc<str>>>(
+        type_vars: I,
+    ) -> Self {
         Self {
-            type_vars: type_vars.into_iter().map(|s| (s.into(), None)).collect(),
+            type_vars: type_vars.into_iter().map(|(s, state)| (s.into(), state)).collect(),
             _phantom: std::marker::PhantomData,
         }
     }
 
-    pub fn new_exact<I: IntoIterator<Item = (S, U)>, S: Into<Arc<str>>>(type_vars: I) -> Self {
+    pub fn new_bound<I: IntoIterator<Item = (S, U)>, S: Into<Arc<str>>>(type_vars: I) -> Self {
         Self {
-            type_vars: type_vars.into_iter().map(|(s, ty)| (s.into(), Some(ty))).collect(),
+            type_vars: type_vars
+                .into_iter()
+                .map(|(s, ty)| (s.into(), EnvironmentVarState::Bound(ty)))
+                .collect(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -47,7 +70,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         for (var_name, var_ty) in self.type_vars.iter_mut() {
             if var_name.as_ref() == name.as_ref() {
                 match var_ty {
-                    Some(v) => {
+                    EnvironmentVarState::Bound(v) => {
                         if let ThreeValuedLogic::True =
                             ty.equals(v.as_ref_dispatcher(), lhs_env, rhs_env)?
                         {
@@ -56,10 +79,11 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
                             return Err(TypeError::AssertFailed((v.clone(), ty).into()));
                         }
                     }
-                    None => {
-                        *var_ty = Some(ty.into_dispatcher());
+                    EnvironmentVarState::FromPattern | EnvironmentVarState::FromCapture => {
+                        *var_ty = EnvironmentVarState::Bound(ty.into_dispatcher());
                         return Ok(());
                     }
+                    EnvironmentVarState::Phantom(_) => unreachable!(),
                 }
             }
         }
@@ -77,28 +101,50 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         for (var_name, var_ty) in self.type_vars.iter_mut() {
             if var_name.as_ref() == name.as_ref() {
                 return Ok(match var_ty {
-                    Some(v) => {
+                    EnvironmentVarState::Bound(v) => {
                         matches!(
                             ty.equals(v.as_ref_dispatcher(), lhs_env, rhs_env)?,
                             ThreeValuedLogic::True
                         )
                     }
-                    None => {
-                        *var_ty = Some(ty.into_dispatcher());
+                    EnvironmentVarState::FromPattern | EnvironmentVarState::FromCapture => {
+                        *var_ty = EnvironmentVarState::Bound(ty.into_dispatcher());
                         true
                     }
+                    EnvironmentVarState::Phantom(_) => unreachable!(),
                 });
             }
         }
         Ok(false)
     }
 
-    pub fn capture_from(mut self, other: EnvironmentView<U, V>) -> Result<Self, TypeError<U, V>> {
+    pub fn capture_from(
+        mut self,
+        pattern_env: EnvironmentView<U, V>,
+        capture_env: EnvironmentView<U, V>,
+    ) -> Result<Self, TypeError<U, V>> {
         for (var_name, var_ty) in self.type_vars.iter_mut() {
-            if let Some(other_ty) = other.lookup(var_name.as_ref()) {
-                *var_ty = Some(other_ty.clone());
-            } else {
-                return Err(TypeError::UnboundEnvironmentVariable(var_name.as_ref().into()));
+            match var_ty {
+                EnvironmentVarState::FromPattern => {
+                    if let Some(other_ty) = pattern_env.lookup(var_name.as_ref()) {
+                        *var_ty = EnvironmentVarState::Bound(other_ty.clone());
+                    } else {
+                        return Err(TypeError::UnboundEnvironmentVariable(
+                            var_name.as_ref().into(),
+                        ));
+                    }
+                }
+                EnvironmentVarState::FromCapture => {
+                    if let Some(other_ty) = capture_env.lookup(var_name.as_ref()) {
+                        *var_ty = EnvironmentVarState::Bound(other_ty.clone());
+                    } else {
+                        return Err(TypeError::UnboundEnvironmentVariable(
+                            var_name.as_ref().into(),
+                        ));
+                    }
+                }
+                EnvironmentVarState::Bound(_) => {}
+                EnvironmentVarState::Phantom(_) => unreachable!(),
             }
         }
         Ok(self)
@@ -107,7 +153,11 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
     pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
         for (var_name, var_ty) in self.type_vars.iter() {
             if var_name.as_ref() == name.as_ref() {
-                return var_ty.as_ref();
+                if let EnvironmentVarState::Bound(ty) = var_ty {
+                    return Some(ty);
+                } else {
+                    return None;
+                }
             }
         }
         None
@@ -117,14 +167,13 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         EnvironmentView::new(&self.type_vars)
     }
 
-    pub fn type_vars(&self) -> &[(Arc<str>, Option<U>)] {
+    pub fn type_vars(&self) -> &[(Arc<str>, EnvironmentVarState<U, V>)] {
         &self.type_vars
     }
 }
 
 pub struct EnvironmentView<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    type_vars: &'a [(Arc<str>, Option<U>)],
-    _phantom: std::marker::PhantomData<V>,
+    type_vars: &'a [(Arc<str>, EnvironmentVarState<U, V>)],
 }
 
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentView<'a, U, V> {
@@ -136,14 +185,18 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentVie
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> Copy for EnvironmentView<'a, U, V> {}
 
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentView<'a, U, V> {
-    pub fn new(type_vars: &'a [(Arc<str>, Option<U>)]) -> Self {
-        Self { type_vars, _phantom: std::marker::PhantomData }
+    pub fn new(type_vars: &'a [(Arc<str>, EnvironmentVarState<U, V>)]) -> Self {
+        Self { type_vars }
     }
 
     pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
         for (var_name, var_ty) in self.type_vars.iter() {
             if var_name.as_ref() == name.as_ref() {
-                return var_ty.as_ref();
+                if let EnvironmentVarState::Bound(ty) = var_ty {
+                    return Some(ty);
+                } else {
+                    return None;
+                }
             }
         }
         None
@@ -174,6 +227,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentStack<U, V> {
             }
         }
         None
+    }
+
+    pub fn layers(&self) -> usize {
+        self.stack.len()
     }
 }
 

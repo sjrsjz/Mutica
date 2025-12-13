@@ -171,6 +171,12 @@ pub enum LexerToken {
     Let,
     #[token("with")]
     With,
+    #[token("where")]
+    Where,
+    #[token("exist")]
+    Exist,
+    #[token("assert")]
+    Assert,
     #[token("match")]
     Match,
     #[token("rec")]

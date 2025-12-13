@@ -86,6 +86,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Constraint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Bound(v)
@@ -123,6 +124,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
             match other {
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Constraint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Bound(v)
                     if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
                 {
@@ -148,7 +150,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 }
             }
             Variable::ContextVariable { bind_name, .. } => {
-                if let Some(ty) = ctx.context_environment.lookup(&bind_name) {
+                if let Some(ty) = ctx.capture_environment.lookup(&bind_name) {
                     Ok(ty.clone())
                 } else {
                     Err(TypeError::UnboundContextVariable(bind_name.to_string().into_boxed_str()))

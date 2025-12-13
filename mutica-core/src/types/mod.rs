@@ -408,7 +408,9 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     TypeMismatch(Box<(U, String)>),
     UnboundContextVariable(Box<str>),
     UnboundEnvironmentVariable(Box<str>),
+    GenericLayerOverflow(Box<U>),
     AssertFailed(Box<(U, U)>),
+    EmptyMatchArm(Box<U>),
     MissingContinuation(Box<U>),
     MissingPerformHandler(Box<U>),
     RuntimeError(Arc<dyn Error + Send + Sync>),
@@ -442,6 +444,12 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             }
             TypeError::UnboundEnvironmentVariable(id) => {
                 write!(f, "Unbound environment variable: id = {}", id)
+            }
+            TypeError::GenericLayerOverflow(ty) => {
+                write!(f, "Generic layer overflow for type: {:?}", ty)
+            }
+            TypeError::EmptyMatchArm(ty) => {
+                write!(f, "Empty match arm for type: {:?}", ty)
             }
             TypeError::AssertFailed(types) => {
                 write!(f, "Assert failed: {:?} doesn't accept {:?}", types.0, types.1)
@@ -503,6 +511,32 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Type cannot be applied"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::EmptyMatchArm(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
+                if let Some(loc) = ty.source_info() {
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
+                    let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message(format!("Empty match arm for type: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("This match arm is empty"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message(format!("Empty match arm for type: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Empty match arm"),
                         )
                         .finish()
                 }
@@ -823,6 +857,32 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                             .with_message(format!("Pattern variable {} not defined", id)),
                     )
                     .finish()
+            }
+            TypeError::GenericLayerOverflow(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
+                if let Some(loc) = ty.source_info() {
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
+                    let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message(format!("Generic layer overflow for type: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("Generic layer limit exceeded here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message(format!("Generic layer overflow for type: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Layer overflow"),
+                        )
+                        .finish()
+                }
             }
             TypeError::RuntimeError(err) => {
                 ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
@@ -1186,7 +1246,7 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, 
 /// 归约上下文，用于 `reduce` 方法
 pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub pattern_environment: EnvironmentView<'a, U, V>,
-    pub context_environment: EnvironmentView<'a, U, V>,
+    pub capture_environment: EnvironmentView<'a, U, V>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
@@ -1200,7 +1260,7 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
     ) -> Self {
-        Self { pattern_environment, context_environment, rec_assumptions, gc, roots }
+        Self { pattern_environment, capture_environment: context_environment, rec_assumptions, gc, roots }
     }
 }
 

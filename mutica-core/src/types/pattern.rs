@@ -11,10 +11,9 @@ use crate::{
     util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
-// 理论上来说应当把 debruijn_index 直接和 Type 绑定起来（因为Pattern只是一个附加信息）
-// 但是为了实现的简洁性，这里就先分开了
 pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
     bind_name: Arc<str>,
+    bind_layer: usize, // 从栈底开始数的，相当于嵌套了第几层
     source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<T>,
 }
@@ -23,6 +22,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Pattern<T> {
     fn clone(&self) -> Self {
         Self {
             bind_name: self.bind_name.clone(),
+            bind_layer: self.bind_layer,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
@@ -44,7 +44,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
         _depth: usize,
         _max_depth: usize,
     ) -> String {
-        format!("λ.{}", self.bind_name)
+        format!("T_{}.{}", self.bind_layer, self.bind_name)
     }
 }
 
@@ -188,12 +188,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         other.check(
-            (match ctx.collected.lookup(&self.bind_name) {
-                Some(existing) => existing.clone(),
-                None => {
-                    ctx.pattern_collector.push((self.bind_name.clone(), other.clone_data()));
-                    return Ok(ThreeValuedLogic::True);
+            (if self.bind_layer < ctx.collected.layers() {
+                match ctx.collected.lookup(&self.bind_name) {
+                    Some(existing) => existing.clone(),
+                    None => {
+                        return Ok(ThreeValuedLogic::Unknown); // 未绑定
+                    }
                 }
+            } else if self.bind_layer == ctx.collected.layers() {
+                // 绑定当前层
+                ctx.pattern_collector.push((self.bind_name.clone(), other.clone_data()));
+                return Ok(ThreeValuedLogic::True);
+            } else {
+                return Err(TypeError::GenericLayerOverflow(other.clone_data().into()));
             })
             .as_ref_dispatcher(),
             ctx,
@@ -207,12 +214,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         other.subof(
-            (match ctx.collected.lookup(&self.bind_name) {
-                Some(existing) => existing.clone(),
-                None => {
-                    ctx.pattern_collector.push((self.bind_name.clone(), other.clone_data()));
-                    return Ok(ThreeValuedLogic::True);
+            (if self.bind_layer < ctx.collected.layers() {
+                match ctx.collected.lookup(&self.bind_name) {
+                    Some(existing) => existing.clone(),
+                    None => {
+                        return Ok(ThreeValuedLogic::Unknown); // 未绑定
+                    }
                 }
+            } else if self.bind_layer == ctx.collected.layers() {
+                // 绑定当前层
+                ctx.pattern_collector.push((self.bind_name.clone(), other.clone_data()));
+                return Ok(ThreeValuedLogic::True);
+            } else {
+                return Err(TypeError::GenericLayerOverflow(other.clone_data().into()));
             })
             .as_ref_dispatcher(),
             ctx,
@@ -222,11 +236,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<S: Into<Arc<str>>>(bind_name: S, source_info: Option<Arc<SourceLocation>>) -> Self {
-        Self { bind_name: bind_name.into(), source_info, _phantom: std::marker::PhantomData }
+    pub fn new<S: Into<Arc<str>>>(
+        bind_name: S,
+        bind_layer: usize,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Self {
+        Self {
+            bind_name: bind_name.into(),
+            bind_layer,
+            source_info,
+            _phantom: std::marker::PhantomData,
+        }
     }
 
     pub fn bind_name(&self) -> &Arc<str> {
         &self.bind_name
+    }
+
+    pub fn bind_layer(&self) -> usize {
+        self.bind_layer
     }
 }

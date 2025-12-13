@@ -131,6 +131,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Constraint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -486,6 +487,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+                TypeRef::Constraint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Bound(v)
                     if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
@@ -512,7 +514,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         }
                         (SequenceType::NonEmptyTuple(_), SequenceType::NonEmptyTuple(_)) => {
                             let (all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
+                                self.subof_prefix(v, &mut inner_ctx)?;
                             if let (None, None) = (self_seek, other_seek) {
                                 Ok(all)
                             } else {
@@ -521,7 +523,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         }
                         (SequenceType::NonEmptyTuple(_), SequenceType::Repeat(_, r_repeat)) => {
                             let (mut all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
+                                self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
                             match (self_seek, other_seek) {
                                 (None, None) => Ok(all),
@@ -543,7 +545,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         }
                         (SequenceType::NonEmptyTuple(_), SequenceType::Cons(_, cons)) => {
                             let (mut all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
+                                self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
                             match (self_seek, other_seek) {
                                 (None, None) => {
@@ -571,7 +573,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
 
                         (SequenceType::Repeat(_, l_repeat), SequenceType::Repeat(_, r_repeat)) => {
                             let (mut all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
+                                self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
                             all &= test_true!(
                                 l_repeat.subof(r_repeat.as_ref_dispatcher(), &mut inner_ctx)?
@@ -608,7 +610,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
 
                         (SequenceType::Repeat(_, l_repeat), SequenceType::Cons(_, r_cons)) => {
                             let (mut all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
+                                self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
                             match (self_seek, other_seek) {
                                 (None, None) => {
@@ -682,7 +684,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
 
                         (SequenceType::Cons(_, cons), SequenceType::NonEmptyTuple(_)) => {
                             let (mut all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
+                                self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
                             match (self_seek, other_seek) {
                                 (None, None) => {
@@ -710,7 +712,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
 
                         (SequenceType::Cons(_, cons), SequenceType::Repeat(_, r_repeat)) => {
                             let (mut all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
+                                self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
                             match (self_seek, other_seek) {
                                 (None, None) => {
@@ -776,7 +778,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
 
                         (SequenceType::Cons(_, l_cons), SequenceType::Cons(_, r_cons)) => {
                             let (mut all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
+                                self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
                             match (self_seek, other_seek) {
                                 (None, None) => {
@@ -1071,6 +1073,46 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
             let ty_self = &self.physical_prefix()[cursor_self].0;
             let ty_other = &other.physical_prefix()[cursor_other].0;
             all &= ty_self.check(ty_other.as_ref_dispatcher(), ctx)?;
+            if let ThreeValuedLogic::False = all {
+                return Ok((ThreeValuedLogic::False, self_seek, other_seek));
+            }
+
+            if self_rem == other_rem {
+                self_seek = self.next_block(cursor_self);
+                other_seek = other.next_block(cursor_other);
+            } else if self_rem < other_rem {
+                // self块用完，other块未用完
+                other_seek = Some((cursor_other, other_rem - self_rem));
+                self_seek = self.next_block(cursor_self);
+            } else {
+                // other块用完，self块未用完
+                self_seek = Some((cursor_self, self_rem - other_rem));
+                other_seek = other.next_block(cursor_other);
+            }
+        }
+
+        Ok((all, self_seek, other_seek))
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn subof_prefix(
+        &self,
+        other: &Sequence<T>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
+    ) -> Result<
+        (ThreeValuedLogic, Option<(usize, usize)>, Option<(usize, usize)>),
+        TypeError<Type<T>, T>,
+    > {
+        let mut self_seek = self.seek_prefix();
+        let mut other_seek = other.seek_prefix();
+        let mut all = ThreeValuedLogic::True;
+
+        while let (Some((cursor_self, self_rem)), Some((cursor_other, other_rem))) =
+            (self_seek, other_seek)
+        {
+            let ty_self = &self.physical_prefix()[cursor_self].0;
+            let ty_other = &other.physical_prefix()[cursor_other].0;
+            all &= ty_self.subof(ty_other.as_ref_dispatcher(), ctx)?;
             if let ThreeValuedLogic::False = all {
                 return Ok((ThreeValuedLogic::False, self_seek, other_seek));
             }

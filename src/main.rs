@@ -4,8 +4,8 @@ use std::{collections::HashMap, fs, path::PathBuf, process, sync::OnceLock};
 use mutica_compiler::{
     ariadne,
     parser::{
-        BuildContext, MultiFileBuilder, MultiFileBuilderError, ParseContext, PatternCounter,
-        SyntaxError, ast::LinearizeContext, inject_std_library,
+        BuildContext, MultiFileBuilder, MultiFileBuilderError, ParseContext, SyntaxError,
+        ast::LinearizeContext, inject_std_library,
     },
 };
 use mutica_core::{
@@ -172,8 +172,8 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
     let linearized = basic.0.linearize(&mut LinearizeContext::new(), basic.0.location()).finalize();
     // println!("Linearized AST: {:#?}", linearized);
     let mut flow_errors = Vec::new();
-    let flowed =
-        linearized.flow(&mut ParseContext::new(), false, linearized.location(), &mut flow_errors);
+    let flowed = linearized.flow(&mut ParseContext::new(), linearized.location(), &mut flow_errors);
+    // println!("Flowed AST: {:#?}", flowed.ty());
 
     if !flow_errors.is_empty() {
         // 获取源文件信息用于错误报告
@@ -202,29 +202,23 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
 
     let mut gc = GC::new();
     let mut roots = RootStack::new();
-    let built_type = match flowed.to_type(
-        &mut BuildContext::new(),
-        &mut PatternCounter::new(),
-        false,
-        &mut gc,
-        &mut roots,
-        flowed.location(),
-    ) {
-        Ok(result) => result,
-        Err(Ok(type_error)) => {
-            println!("Type building error: {:?}", type_error);
-            return;
-        }
-        Err(Err(parse_error)) => {
-            // 获取源文件信息用于错误报告
-            let filepath = source.filepath();
-            let source_content = source.content().to_string();
-            parse_error.report().eprint((filepath, ariadne::Source::from(source_content))).ok();
-            return;
-        }
-    };
+    let built_type =
+        match flowed.to_type(&mut BuildContext::new(), &mut gc, &mut roots, flowed.location()) {
+            Ok(result) => result,
+            Err(Ok(type_error)) => {
+                println!("Type building error: {:?}", type_error);
+                return;
+            }
+            Err(Err(parse_error)) => {
+                // 获取源文件信息用于错误报告
+                let filepath = source.filepath();
+                let source_content = source.content().to_string();
+                parse_error.report().eprint((filepath, ariadne::Source::from(source_content))).ok();
+                return;
+            }
+        };
     #[cfg(debug_assertions)]
-    println!("Built type: {}\n", built_type.ty().display(&mut FastCycleDetector::new(), 0, 2));
+    println!("Built type: {}\n", built_type.ty().display(&mut FastCycleDetector::new(), 0, 4));
 
     let mut linear_scheduler =
         roots.context(|_| scheduler::LinearScheduler::new(built_type.ty().clone(), None)); // 确保 roots 直到 linear_scheduler 被创建完成才丢弃
