@@ -252,14 +252,93 @@ mod test {
                         MultiFileBuilderError::IOError(e) => {
                             eprintln!("IO Error: {}", e);
                         }
+                        MultiFileBuilderError::TopLevelBindError(v) => {
+                            let range = v.location().map(|r| r.span().clone()).unwrap_or(0..0);
+                            ariadne::Report::build(
+                                ariadne::ReportKind::Error,
+                                filepath.as_str(),
+                                range.start,
+                            )
+                            .with_label(
+                                ariadne::Label::new((filepath.as_str(), range)).with_message(
+                                    format!(
+                                        "Unexpected bind for variable '{}' at top level",
+                                        v.value()
+                                    ),
+                                ),
+                            )
+                            .with_message("Invalid bind pattern")
+                            .finish()
+                            .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                            .ok();
+                        }
                     }
                 }
                 return;
             }
         };
 
+        // 执行 auto_bind 转换，将 AutoBind 模式转换为 Standard 模式
+        let (desugared, leftover_binds) = basic.0.auto_bind();
+
+        // 检查是否有未处理的绑定（这通常表示顶层有 Bind 节点，这是不应该出现的）
+        if !leftover_binds.is_empty() {
+            for (var, _) in leftover_binds {
+                builder_errors.push(WithLocation::new(
+                    MultiFileBuilderError::TopLevelBindError(var),
+                    None::<&SourceLocation>,
+                ));
+            }
+            // 报告错误
+            for error_with_loc in &builder_errors {
+                let (filepath, source_content) = if let Some(location) = error_with_loc.location() {
+                    let source = location.source();
+                    (source.filepath(), source.content().to_string())
+                } else {
+                    (path.to_string_lossy().to_string(), expr.to_string())
+                };
+
+                match error_with_loc.value() {
+                    MultiFileBuilderError::SyntaxError(e) => {
+                        let syntax_error = SyntaxError::new(e.clone());
+                        let report = syntax_error.report(filepath.clone(), &source_content, None);
+                        report.eprint((filepath, ariadne::Source::from(source_content))).ok();
+                    }
+                    MultiFileBuilderError::RecoveryError(e) => {
+                        let report = mutica_compiler::parser::report_error_recovery(
+                            e,
+                            filepath.clone(),
+                            &source_content,
+                        );
+                        report
+                            .eprint((filepath.clone(), ariadne::Source::from(source_content)))
+                            .ok();
+                    }
+                    MultiFileBuilderError::IOError(e) => {
+                        eprintln!("IO Error: {}", e);
+                    }
+                    MultiFileBuilderError::TopLevelBindError(var) => {
+                        let range = var.location().map(|r| r.span().clone()).unwrap_or(0..0);
+                        ariadne::Report::build(
+                            ariadne::ReportKind::Error,
+                            filepath.as_str(),
+                            range.start,
+                        )
+                        .with_label(ariadne::Label::new((filepath.as_str(), range)).with_message(
+                            format!("Unexpected bind for variable '{}' at top level", var.value()),
+                        ))
+                        .with_message("Invalid bind pattern")
+                        .finish()
+                        .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                        .ok();
+                    }
+                }
+            }
+            return;
+        }
+
         let linearized =
-            basic.0.linearize(&mut LinearizeContext::new(), basic.0.location()).finalize();
+            desugared.linearize(&mut LinearizeContext::new(), desugared.location()).finalize();
 
         let mut flow_errors = Vec::new();
         let flowed =
@@ -374,6 +453,26 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
                         }
                         MultiFileBuilderError::IOError(e) => {
                             eprintln!("IO Error: {}", e);
+                        }
+                        MultiFileBuilderError::TopLevelBindError(v) => {
+                            let range = v.location().map(|r| r.span().clone()).unwrap_or(0..0);
+                            ariadne::Report::build(
+                                ariadne::ReportKind::Error,
+                                filepath.as_str(),
+                                range.start,
+                            )
+                            .with_label(
+                                ariadne::Label::new((filepath.as_str(), range)).with_message(
+                                    format!(
+                                        "Unexpected bind for variable '{}' at top level",
+                                        v.value()
+                                    ),
+                                ),
+                            )
+                            .with_message("Invalid bind pattern")
+                            .finish()
+                            .eprint((filepath.as_str(), ariadne::Source::from(source_content)))
+                            .ok();
                         }
                     }
                 }

@@ -201,6 +201,10 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentView<'a, U, V
         }
         None
     }
+
+    pub fn type_vars(&self) -> &'a [(Arc<str>, EnvironmentVarState<U, V>)] {
+        self.type_vars
+    }
 }
 
 pub struct EnvironmentStack<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {

@@ -50,6 +50,19 @@ pub enum AtomicOpcode {
     IO(String),
 }
 
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone)]
+pub enum GenericPattern {
+    Standard {
+        vars: Vec<WithLocation<String>>,
+        pattern: WithLocation<TypeAst>,
+        constraint: (WithLocation<TypeAst>, WithLocation<TypeAst>),
+    },
+    AutoBind {
+        pattern: WithLocation<TypeAst>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub enum TypeAst {
     ParseError(ErrorRecovery<usize, LexerToken, LexicalError>),
@@ -92,22 +105,17 @@ pub enum TypeAst {
     },
     #[allow(clippy::type_complexity)]
     Expression {
-        binding_patterns: Vec<(
-            Vec<WithLocation<String>>,
-            WithLocation<TypeAst>,
-            (WithLocation<TypeAst>, WithLocation<TypeAst>),
-        )>,
+        binding_patterns: Vec<GenericPattern>,
         binding_types: Vec<WithLocation<TypeAst>>,
         body: Box<WithLocation<TypeAst>>,
     },
     #[allow(clippy::type_complexity)]
     Match {
-        branches: Vec<(
-            Vec<WithLocation<String>>,
-            WithLocation<TypeAst>,
-            (WithLocation<TypeAst>, WithLocation<TypeAst>),
-            WithLocation<TypeAst>,
-        )>, // pattern, expr
+        branches: Vec<(GenericPattern, WithLocation<TypeAst>)>, // pattern, expr
+    },
+    Bind {
+        var: WithLocation<String>,
+        expr: Box<WithLocation<TypeAst>>,
     },
     Apply {
         func: Box<WithLocation<TypeAst>>,
@@ -137,17 +145,25 @@ pub enum TypeAst {
         tag: String,
         expr: Box<WithLocation<TypeAst>>,
     },
-    Generic {
-        generic_vars: Vec<WithLocation<String>>,
-        expr: Box<WithLocation<TypeAst>>,
-        constraint: Box<(WithLocation<TypeAst>, WithLocation<TypeAst>)>,
-    },
+    Generic(Box<GenericPattern>),
     Literal(Box<WithLocation<TypeAst>>),
     EqOf {
         value: Box<WithLocation<TypeAst>>,
     },
     SubOf {
         value: Box<WithLocation<TypeAst>>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum BasicGenericPattern {
+    Standard {
+        vars: Vec<WithLocation<String>>,
+        pattern: WithLocation<BasicTypeAst>,
+        constraint: (WithLocation<BasicTypeAst>, WithLocation<BasicTypeAst>),
+    },
+    AutoBind {
+        pattern: WithLocation<BasicTypeAst>,
     },
 }
 
@@ -183,14 +199,12 @@ pub enum BasicTypeAst {
         continuation: Option<Box<WithLocation<BasicTypeAst>>>,
         perform_handler: Option<Box<WithLocation<BasicTypeAst>>>,
     },
-    #[allow(clippy::type_complexity)]
     Match {
-        branches: Vec<(
-            Vec<WithLocation<String>>,
-            WithLocation<BasicTypeAst>,
-            (WithLocation<BasicTypeAst>, WithLocation<BasicTypeAst>),
-            WithLocation<BasicTypeAst>,
-        )>, // pattern, expr
+        branches: Vec<(BasicGenericPattern, WithLocation<BasicTypeAst>)>,
+    },
+    Bind {
+        var: WithLocation<String>,
+        expr: Box<WithLocation<BasicTypeAst>>,
     },
     Apply {
         func: Box<WithLocation<BasicTypeAst>>,
@@ -202,11 +216,7 @@ pub enum BasicTypeAst {
         tag: String,
         expr: Box<WithLocation<BasicTypeAst>>,
     },
-    Generic {
-        generic_vars: Vec<WithLocation<String>>,
-        expr: Box<WithLocation<BasicTypeAst>>,
-        constraint: Box<(WithLocation<BasicTypeAst>, WithLocation<BasicTypeAst>)>,
-    },
+    Generic(Box<BasicGenericPattern>),
     Literal(Box<WithLocation<BasicTypeAst>>),
     EqOf {
         value: Box<WithLocation<BasicTypeAst>>,
@@ -351,6 +361,249 @@ impl<'ast> LinearizeResult<'ast> {
 }
 
 impl BasicTypeAst {
+    /// 将 AutoBind 模式转换为 Standard 模式
+    /// 返回转换后的 Standard 模式
+    fn convert_auto_bind_to_standard(pattern: WithLocation<BasicTypeAst>) -> BasicGenericPattern {
+        let (new_pattern, binds) = pattern.auto_bind();
+        let (vars, constraints): (Vec<_>, Vec<_>) = binds.into_iter().unzip();
+
+        let left_constraint = if vars.is_empty() {
+            WithLocation::new(BasicTypeAst::Tuple(vec![]), new_pattern.location())
+        } else if vars.len() == 1 {
+            let v = &vars[0];
+            WithLocation::new(BasicTypeAst::Variable(v.value().clone()), v.location())
+        } else {
+            let elems = vars
+                .iter()
+                .map(|v| {
+                    (
+                        WithLocation::new(BasicTypeAst::Variable(v.value().clone()), v.location()),
+                        NonZero::new(1).unwrap(),
+                    )
+                })
+                .collect();
+            WithLocation::new(BasicTypeAst::Tuple(elems), new_pattern.location())
+        };
+
+        let right_constraint = if constraints.is_empty() {
+            WithLocation::new(BasicTypeAst::Tuple(vec![]), new_pattern.location())
+        } else if constraints.len() == 1 {
+            constraints[0].clone()
+        } else {
+            let elems = constraints.into_iter().map(|c| (c, NonZero::new(1).unwrap())).collect();
+            WithLocation::new(BasicTypeAst::Tuple(elems), new_pattern.location())
+        };
+
+        BasicGenericPattern::Standard {
+            vars,
+            pattern: new_pattern,
+            constraint: (left_constraint, right_constraint),
+        }
+    }
+
+    #[stacksafe::stacksafe]
+    #[allow(clippy::type_complexity)]
+    pub fn auto_bind(
+        self,
+        loc: Option<&SourceLocation>,
+    ) -> (WithLocation<Self>, Vec<(WithLocation<String>, WithLocation<BasicTypeAst>)>) {
+        let result = match self {
+            BasicTypeAst::Bind { var, expr } => {
+                let (new_expr, mut binds) = expr.auto_bind();
+                binds.push((var.clone(), new_expr));
+                (BasicTypeAst::Variable(var.value().clone()), binds)
+            }
+            BasicTypeAst::Range { ty, min, delta } => {
+                let (new_ty, binds) = ty.auto_bind();
+                (BasicTypeAst::Range { ty: Box::new(new_ty), min, delta }, binds)
+            }
+            BasicTypeAst::Tuple(elements) => {
+                let mut new_elements = Vec::new();
+                let mut all_binds = Vec::new();
+                for (e, n) in elements {
+                    let (new_e, binds) = e.auto_bind();
+                    new_elements.push((new_e, n));
+                    all_binds.extend(binds);
+                }
+                (BasicTypeAst::Tuple(new_elements), all_binds)
+            }
+            BasicTypeAst::List { head, tail } => {
+                let mut new_head = Vec::new();
+                let mut all_binds = Vec::new();
+                for (e, n) in head {
+                    let (new_e, binds) = e.auto_bind();
+                    new_head.push((new_e, n));
+                    all_binds.extend(binds);
+                }
+                let (new_tail, tail_binds) = tail.auto_bind();
+                all_binds.extend(tail_binds);
+                (BasicTypeAst::List { head: new_head, tail: Box::new(new_tail) }, all_binds)
+            }
+            BasicTypeAst::Cons { head, tail } => {
+                let mut new_head = Vec::new();
+                let mut all_binds = Vec::new();
+                for (e, n) in head {
+                    let (new_e, binds) = e.auto_bind();
+                    new_head.push((new_e, n));
+                    all_binds.extend(binds);
+                }
+                let (new_tail, tail_binds) = tail.auto_bind();
+                all_binds.extend(tail_binds);
+                (BasicTypeAst::Cons { head: new_head, tail: Box::new(new_tail) }, all_binds)
+            }
+            BasicTypeAst::Generalize(elements) => {
+                let mut new_elements = Vec::new();
+                let mut all_binds = Vec::new();
+                for e in elements {
+                    let (new_e, binds) = e.auto_bind();
+                    new_elements.push(new_e);
+                    all_binds.extend(binds);
+                }
+                (BasicTypeAst::Generalize(new_elements), all_binds)
+            }
+            BasicTypeAst::Specialize(elements) => {
+                let mut new_elements = Vec::new();
+                let mut all_binds = Vec::new();
+                for e in elements {
+                    let (new_e, binds) = e.auto_bind();
+                    new_elements.push(new_e);
+                    all_binds.extend(binds);
+                }
+                (BasicTypeAst::Specialize(new_elements), all_binds)
+            }
+            BasicTypeAst::Invoke { func, arg, continuation, perform_handler } => {
+                let (new_func, mut binds) = func.auto_bind();
+                let (new_arg, arg_binds) = arg.auto_bind();
+                binds.extend(arg_binds);
+                let new_cont = if let Some(c) = continuation {
+                    let (nc, cb) = c.auto_bind();
+                    binds.extend(cb);
+                    Some(Box::new(nc))
+                } else {
+                    None
+                };
+                let new_ph = if let Some(ph) = perform_handler {
+                    let (nph, phb) = ph.auto_bind();
+                    binds.extend(phb);
+                    Some(Box::new(nph))
+                } else {
+                    None
+                };
+                (
+                    BasicTypeAst::Invoke {
+                        func: Box::new(new_func),
+                        arg: Box::new(new_arg),
+                        continuation: new_cont,
+                        perform_handler: new_ph,
+                    },
+                    binds,
+                )
+            }
+            BasicTypeAst::Match { branches } => {
+                let mut binds = Vec::new();
+                let new_branches = branches
+                    .into_iter()
+                    .map(|(b, expr)| match b {
+                        BasicGenericPattern::Standard { vars, pattern, constraint } => {
+                            let (new_pattern, a) = pattern.auto_bind();
+                            let (c1, b) = constraint.0.auto_bind();
+                            let (c2, c) = constraint.1.auto_bind();
+                            let (new_expr, d) = expr.auto_bind();
+                            binds.extend(a);
+                            binds.extend(b);
+                            binds.extend(c);
+                            binds.extend(d);
+                            (
+                                BasicGenericPattern::Standard {
+                                    vars,
+                                    pattern: new_pattern,
+                                    constraint: (c1, c2),
+                                },
+                                new_expr,
+                            )
+                        }
+                        BasicGenericPattern::AutoBind { pattern } => {
+                            let standard_pattern = Self::convert_auto_bind_to_standard(pattern);
+                            let (new_expr, a) = expr.auto_bind();
+                            binds.extend(a);
+                            (standard_pattern, new_expr)
+                        }
+                    })
+                    .collect();
+                (BasicTypeAst::Match { branches: new_branches }, binds)
+            }
+            BasicTypeAst::Apply { func, arg, handler } => {
+                let (new_func, mut binds) = func.auto_bind();
+                let (new_arg, arg_binds) = arg.auto_bind();
+                binds.extend(arg_binds);
+                let new_handler = if let Some(h) = handler {
+                    let (nh, hb) = h.auto_bind();
+                    binds.extend(hb);
+                    Some(Box::new(nh))
+                } else {
+                    None
+                };
+                (
+                    BasicTypeAst::Apply {
+                        func: Box::new(new_func),
+                        arg: Box::new(new_arg),
+                        handler: new_handler,
+                    },
+                    binds,
+                )
+            }
+            BasicTypeAst::Namespace { tag, expr } => {
+                let (new_expr, binds) = expr.auto_bind();
+                (BasicTypeAst::Namespace { tag, expr: Box::new(new_expr) }, binds)
+            }
+            BasicTypeAst::Generic(inner) => match *inner {
+                BasicGenericPattern::Standard { vars, pattern, constraint } => {
+                    let (new_pattern, _) = pattern.auto_bind();
+                    let (c1, _) = constraint.0.auto_bind();
+                    let (c2, _) = constraint.1.auto_bind();
+                    (
+                        BasicTypeAst::Generic(Box::new(BasicGenericPattern::Standard {
+                            vars,
+                            pattern: new_pattern,
+                            constraint: (c1, c2),
+                        })),
+                        Vec::new(),
+                    )
+                }
+                BasicGenericPattern::AutoBind { pattern } => {
+                    let standard_pattern = Self::convert_auto_bind_to_standard(pattern);
+                    (BasicTypeAst::Generic(Box::new(standard_pattern)), Vec::new())
+                }
+            },
+            BasicTypeAst::Literal(inner) => {
+                let (new_inner, binds) = inner.auto_bind();
+                (BasicTypeAst::Literal(Box::new(new_inner)), binds)
+            }
+            BasicTypeAst::EqOf { value } => {
+                let (new_value, binds) = value.auto_bind();
+                (BasicTypeAst::EqOf { value: Box::new(new_value) }, binds)
+            }
+            BasicTypeAst::SubOf { value } => {
+                let (new_value, binds) = value.auto_bind();
+                (BasicTypeAst::SubOf { value: Box::new(new_value) }, binds)
+            }
+            BasicTypeAst::StaticFixPoint { param_name, expr } => {
+                let (new_expr, binds) = expr.auto_bind();
+                (BasicTypeAst::StaticFixPoint { param_name, expr: Box::new(new_expr) }, binds)
+            }
+            BasicTypeAst::Float
+            | BasicTypeAst::Char
+            | BasicTypeAst::Top
+            | BasicTypeAst::Bottom
+            | BasicTypeAst::FloatLiteral(_)
+            | BasicTypeAst::CharLiteral(_)
+            | BasicTypeAst::OrderedType(_)
+            | BasicTypeAst::Variable(_)
+            | BasicTypeAst::AtomicOpcode(_) => (self, Vec::new()),
+        };
+        (WithLocation::new(result.0, loc), result.1)
+    }
+
     #[stacksafe::stacksafe]
     pub fn linearize<'a>(
         &'a self,
@@ -496,7 +749,14 @@ impl BasicTypeAst {
             BasicTypeAst::Match { branches } => {
                 let mut linearized_branches = Vec::new();
                 let mut bindings = Vec::new();
-                for (vars, p, (f, g), expr) in branches {
+                for branch in branches {
+                    let (
+                        BasicGenericPattern::Standard { vars, pattern: p, constraint: (f, g) },
+                        expr,
+                    ) = branch
+                    else {
+                        panic!("Only BasicGenericPattern::Standard should appear in linearization.")
+                    };
                     let pat = p.linearize(ctx, p.location());
                     let f = f.linearize(ctx, f.location());
                     let g = g.linearize(ctx, g.location());
@@ -548,22 +808,23 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Generic { generic_vars, expr, constraint } => {
-                let expr = expr.linearize(ctx, expr.location());
-                let mut bindings = expr.bindings.clone();
-                let constraint_f = constraint.0.linearize(ctx, constraint.0.location());
-                let constraint_g = constraint.1.linearize(ctx, constraint.1.location());
-                bindings.extend(constraint_f.bindings.clone());
-                bindings.extend(constraint_g.bindings.clone());
-
-                let ty = LinearTypeAst::Generic {
-                    generic_vars: generic_vars.clone(),
-                    expr: Box::new(expr.tail_type().clone()),
-                    constraint: Box::new((
-                        constraint_f.tail_type().clone(),
-                        constraint_g.tail_type().clone(),
-                    )),
+            BasicTypeAst::Generic(inner) => {
+                let BasicGenericPattern::Standard { vars, pattern: p, constraint: (f, g) } =
+                    &**inner
+                else {
+                    panic!("Only BasicGenericPattern::Standard should appear in linearization.")
                 };
+                let pat = p.linearize(ctx, p.location());
+                let f = f.linearize(ctx, f.location());
+                let g = g.linearize(ctx, g.location());
+                let ty = LinearTypeAst::Generic {
+                    generic_vars: vars.clone(),
+                    expr: Box::new(pat.tail_type().clone()),
+                    constraint: Box::new((f.tail_type().clone(), g.tail_type().clone())),
+                };
+                let mut bindings = pat.bindings;
+                bindings.extend(f.bindings);
+                bindings.extend(g.bindings);
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::Literal(inner) => LinearizeResult::new_simple(WithLocation::new(
@@ -588,7 +849,21 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
+            BasicTypeAst::Bind { .. } => {
+                panic!(
+                    "BasicTypeAst::Bind should have been eliminated in auto_bind before linearization."
+                )
+            }
         }
+    }
+}
+
+impl WithLocation<BasicTypeAst> {
+    #[stacksafe::stacksafe]
+    #[allow(clippy::type_complexity)]
+    pub fn auto_bind(self) -> (Self, Vec<(WithLocation<String>, WithLocation<BasicTypeAst>)>) {
+        let loc = self.location().cloned();
+        self.value.auto_bind(loc.as_ref())
     }
 }
 
@@ -789,27 +1064,37 @@ impl TypeAst {
                 },
                 loc,
             ),
+            TypeAst::Bind { var, expr } => WithLocation::new(
+                BasicTypeAst::Bind {
+                    var: var.clone(),
+                    expr: Box::new(expr.into_basic(multifile_builder, expr.location())),
+                },
+                loc,
+            ),
             TypeAst::Expression { binding_patterns, binding_types, body } => {
                 // 转换为嵌套的闭包和应用
                 let mut expr = body.into_basic(multifile_builder, body.location());
-                for ((vars, p, (f, g)), ty) in
-                    binding_patterns.iter().rev().zip(binding_types.iter().rev())
-                {
+                for (branch, ty) in binding_patterns.iter().rev().zip(binding_types.iter().rev()) {
+                    let branch_basic = match branch {
+                        GenericPattern::Standard { vars, pattern, constraint: (f, g) } => {
+                            BasicGenericPattern::Standard {
+                                vars: vars.clone(),
+                                pattern: pattern.into_basic(multifile_builder, pattern.location()),
+                                constraint: (
+                                    f.into_basic(multifile_builder, f.location()),
+                                    g.into_basic(multifile_builder, g.location()),
+                                ),
+                            }
+                        }
+                        GenericPattern::AutoBind { pattern } => BasicGenericPattern::AutoBind {
+                            pattern: pattern.into_basic(multifile_builder, pattern.location()),
+                        },
+                    };
                     expr = WithLocation::new(
                         BasicTypeAst::Apply {
                             func: Box::new(WithLocation::new(
-                                BasicTypeAst::Match {
-                                    branches: vec![(
-                                        vars.clone(),
-                                        p.into_basic(multifile_builder, p.location()),
-                                        (
-                                            f.into_basic(multifile_builder, f.location()),
-                                            g.into_basic(multifile_builder, g.location()),
-                                        ),
-                                        expr,
-                                    )],
-                                },
-                                p.location(),
+                                BasicTypeAst::Match { branches: vec![(branch_basic, expr)] },
+                                ty.location(),
                             )),
                             arg: Box::new(ty.into_basic(multifile_builder, ty.location())),
                             handler: None,
@@ -823,14 +1108,29 @@ impl TypeAst {
                 BasicTypeAst::Match {
                     branches: branches
                         .iter()
-                        .map(|(vars, p, (f, g), expr)| {
+                        .map(|(branch, expr)| {
                             (
-                                vars.clone(),
-                                p.into_basic(multifile_builder, p.location()),
-                                (
-                                    f.into_basic(multifile_builder, f.location()),
-                                    g.into_basic(multifile_builder, g.location()),
-                                ),
+                                match branch {
+                                    GenericPattern::Standard {
+                                        vars,
+                                        pattern,
+                                        constraint: (f, g),
+                                    } => BasicGenericPattern::Standard {
+                                        vars: vars.clone(),
+                                        pattern: pattern
+                                            .into_basic(multifile_builder, pattern.location()),
+                                        constraint: (
+                                            f.into_basic(multifile_builder, f.location()),
+                                            g.into_basic(multifile_builder, g.location()),
+                                        ),
+                                    },
+                                    GenericPattern::AutoBind { pattern } => {
+                                        BasicGenericPattern::AutoBind {
+                                            pattern: pattern
+                                                .into_basic(multifile_builder, pattern.location()),
+                                        }
+                                    }
+                                },
                                 expr.into_basic(multifile_builder, expr.location()),
                             )
                         })
@@ -852,42 +1152,46 @@ impl TypeAst {
                         BasicTypeAst::Match {
                             branches: vec![
                                 (
-                                    vec![WithLocation::new("_eq#x".into(), loc)],
-                                    WithLocation::new(
-                                        BasicTypeAst::Tuple(vec![
-                                            (
-                                                WithLocation::new(
-                                                    BasicTypeAst::Variable("_eq#x".into()),
-                                                    loc,
+                                    BasicGenericPattern::Standard {
+                                        vars: vec![WithLocation::new("_eq#x".into(), loc)],
+                                        pattern: WithLocation::new(
+                                            BasicTypeAst::Tuple(vec![
+                                                (
+                                                    WithLocation::new(
+                                                        BasicTypeAst::Variable("_eq#x".into()),
+                                                        loc,
+                                                    ),
+                                                    NonZero::new(1).unwrap(),
                                                 ),
-                                                NonZero::new(1).unwrap(),
-                                            ),
-                                            (
-                                                WithLocation::new(
-                                                    BasicTypeAst::Variable("_eq#x".into()),
-                                                    loc,
+                                                (
+                                                    WithLocation::new(
+                                                        BasicTypeAst::Variable("_eq#x".into()),
+                                                        loc,
+                                                    ),
+                                                    NonZero::new(1).unwrap(),
                                                 ),
-                                                NonZero::new(1).unwrap(),
-                                            ),
-                                        ]),
-                                        loc,
-                                    ),
-                                    (
-                                        WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
-                                        WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
-                                    ),
+                                            ]),
+                                            loc,
+                                        ),
+                                        constraint: (
+                                            WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
+                                            WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
+                                        ),
+                                    },
                                     WithLocation::new(
                                         BasicTypeAst::Variable("op#true".into()),
                                         loc,
                                     ),
                                 ),
                                 (
-                                    vec![],
-                                    WithLocation::new(BasicTypeAst::Top, loc),
-                                    (
-                                        WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
-                                        WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
-                                    ),
+                                    BasicGenericPattern::Standard {
+                                        vars: vec![],
+                                        pattern: WithLocation::new(BasicTypeAst::Top, loc),
+                                        constraint: (
+                                            WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
+                                            WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
+                                        ),
+                                    },
                                     WithLocation::new(
                                         BasicTypeAst::Variable("op#false".into()),
                                         loc,
@@ -920,42 +1224,46 @@ impl TypeAst {
                         BasicTypeAst::Match {
                             branches: vec![
                                 (
-                                    vec![WithLocation::new("_neq#x".into(), loc)],
-                                    WithLocation::new(
-                                        BasicTypeAst::Tuple(vec![
-                                            (
-                                                WithLocation::new(
-                                                    BasicTypeAst::Variable("_neq#x".into()),
-                                                    loc,
+                                    BasicGenericPattern::Standard {
+                                        vars: vec![WithLocation::new("_neq#x".into(), loc)],
+                                        pattern: WithLocation::new(
+                                            BasicTypeAst::Tuple(vec![
+                                                (
+                                                    WithLocation::new(
+                                                        BasicTypeAst::Variable("_neq#x".into()),
+                                                        loc,
+                                                    ),
+                                                    NonZero::new(1).unwrap(),
                                                 ),
-                                                NonZero::new(1).unwrap(),
-                                            ),
-                                            (
-                                                WithLocation::new(
-                                                    BasicTypeAst::Variable("_neq#x".into()),
-                                                    loc,
+                                                (
+                                                    WithLocation::new(
+                                                        BasicTypeAst::Variable("_neq#x".into()),
+                                                        loc,
+                                                    ),
+                                                    NonZero::new(1).unwrap(),
                                                 ),
-                                                NonZero::new(1).unwrap(),
-                                            ),
-                                        ]),
-                                        loc,
-                                    ),
-                                    (
-                                        WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
-                                        WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
-                                    ),
+                                            ]),
+                                            loc,
+                                        ),
+                                        constraint: (
+                                            WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
+                                            WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
+                                        ),
+                                    },
                                     WithLocation::new(
                                         BasicTypeAst::Variable("op#false".into()),
                                         loc,
                                     ),
                                 ),
                                 (
-                                    vec![],
-                                    WithLocation::new(BasicTypeAst::Top, loc),
-                                    (
-                                        WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
-                                        WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
-                                    ),
+                                    BasicGenericPattern::Standard {
+                                        vars: vec![],
+                                        pattern: WithLocation::new(BasicTypeAst::Top, loc),
+                                        constraint: (
+                                            WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
+                                            WithLocation::new(BasicTypeAst::Tuple(vec![]), loc),
+                                        ),
+                                    },
                                     WithLocation::new(
                                         BasicTypeAst::Variable("op#true".into()),
                                         loc,
@@ -998,12 +1306,20 @@ impl TypeAst {
                 let inner_lambda = WithLocation::new(
                     BasicTypeAst::Match {
                         branches: vec![(
-                            vec![WithLocation::new(param_name.clone(), loc)],
-                            WithLocation::new(BasicTypeAst::Variable(param_name.clone()), loc),
-                            (
-                                WithLocation::new(BasicTypeAst::Variable(param_name.clone()), loc),
-                                WithLocation::new(BasicTypeAst::Top, loc),
-                            ),
+                            BasicGenericPattern::Standard {
+                                vars: vec![WithLocation::new(param_name.clone(), loc)],
+                                pattern: WithLocation::new(
+                                    BasicTypeAst::Variable(param_name.clone()),
+                                    loc,
+                                ),
+                                constraint: (
+                                    WithLocation::new(
+                                        BasicTypeAst::Variable(param_name.clone()),
+                                        loc,
+                                    ),
+                                    WithLocation::new(BasicTypeAst::Top, loc),
+                                ),
+                            },
                             expr.into_basic(multifile_builder, expr.location()),
                         )],
                     },
@@ -1028,17 +1344,25 @@ impl TypeAst {
                 },
                 loc,
             ),
-            TypeAst::Generic { generic_vars, expr, constraint } => WithLocation::new(
-                BasicTypeAst::Generic {
-                    generic_vars: generic_vars.clone(),
-                    expr: Box::new(expr.into_basic(multifile_builder, expr.location())),
-                    constraint: Box::new((
-                        constraint.0.into_basic(multifile_builder, constraint.0.location()),
-                        constraint.1.into_basic(multifile_builder, constraint.1.location()),
-                    )),
-                },
-                loc,
-            ),
+            TypeAst::Generic(bind) => match &**bind {
+                GenericPattern::Standard { vars, pattern, constraint } => WithLocation::new(
+                    BasicTypeAst::Generic(Box::new(BasicGenericPattern::Standard {
+                        vars: vars.clone(),
+                        pattern: pattern.into_basic(multifile_builder, pattern.location()),
+                        constraint: (
+                            constraint.0.into_basic(multifile_builder, constraint.0.location()),
+                            constraint.1.into_basic(multifile_builder, constraint.1.location()),
+                        ),
+                    })),
+                    loc,
+                ),
+                GenericPattern::AutoBind { pattern } => WithLocation::new(
+                    BasicTypeAst::Generic(Box::new(BasicGenericPattern::AutoBind {
+                        pattern: pattern.into_basic(multifile_builder, pattern.location()),
+                    })),
+                    loc,
+                ),
+            },
             TypeAst::Literal(inner) => WithLocation::new(
                 BasicTypeAst::Literal(Box::new(
                     inner.into_basic(multifile_builder, inner.location()),
@@ -1104,6 +1428,9 @@ impl TypeAst {
             TypeAst::Range { ty, .. } => {
                 ty.collect_errors(errors);
             }
+            TypeAst::Bind { expr, .. } => {
+                expr.collect_errors(errors);
+            }
             TypeAst::Tuple(elements) => {
                 for (elem, _) in elements {
                     elem.collect_errors(errors);
@@ -1130,10 +1457,17 @@ impl TypeAst {
                 catch.collect_errors(errors);
             }
             TypeAst::Expression { binding_patterns, binding_types, body } => {
-                for (_, p, (f, g)) in binding_patterns {
-                    p.collect_errors(errors);
-                    f.collect_errors(errors);
-                    g.collect_errors(errors);
+                for branch in binding_patterns {
+                    match branch {
+                        GenericPattern::Standard { pattern, constraint: (f, g), .. } => {
+                            pattern.collect_errors(errors);
+                            f.collect_errors(errors);
+                            g.collect_errors(errors);
+                        }
+                        GenericPattern::AutoBind { pattern, .. } => {
+                            pattern.collect_errors(errors);
+                        }
+                    }
                 }
                 for ty in binding_types {
                     ty.collect_errors(errors);
@@ -1141,11 +1475,19 @@ impl TypeAst {
                 body.collect_errors(errors);
             }
             TypeAst::Match { branches } => {
-                for (_, p, (f, g), e) in branches {
-                    p.collect_errors(errors);
-                    f.collect_errors(errors);
-                    g.collect_errors(errors);
-                    e.collect_errors(errors);
+                for (branch, expr) in branches {
+                    match branch {
+                        GenericPattern::Standard { pattern, constraint: (f, g), .. } => {
+                            pattern.collect_errors(errors);
+                            f.collect_errors(errors);
+                            g.collect_errors(errors);
+                            expr.collect_errors(errors);
+                        }
+                        GenericPattern::AutoBind { pattern } => {
+                            pattern.collect_errors(errors);
+                            expr.collect_errors(errors);
+                        }
+                    }
                 }
             }
             TypeAst::Apply { func, arg } => {
@@ -1166,9 +1508,16 @@ impl TypeAst {
             TypeAst::Namespace { expr, .. } => {
                 expr.collect_errors(errors);
             }
-            TypeAst::Generic { expr, .. } => {
-                expr.collect_errors(errors);
-            }
+            TypeAst::Generic(branch) => match &**branch {
+                GenericPattern::Standard { pattern, constraint, .. } => {
+                    pattern.collect_errors(errors);
+                    constraint.0.collect_errors(errors);
+                    constraint.1.collect_errors(errors);
+                }
+                GenericPattern::AutoBind { pattern } => {
+                    pattern.collect_errors(errors);
+                }
+            },
             TypeAst::Literal(inner) => {
                 inner.collect_errors(errors);
             }
@@ -1212,6 +1561,9 @@ impl TypeAst {
             TypeAst::Range { ty, min, delta } => {
                 TypeAst::Range { ty: Box::new(Self::sanitize(*ty)), min, delta }
             }
+            TypeAst::Bind { var, expr } => {
+                TypeAst::Bind { var, expr: Box::new(Self::sanitize(*expr)) }
+            }
             TypeAst::Tuple(elements) => TypeAst::Tuple(
                 elements.into_iter().map(|(e, count)| (Self::sanitize(e), count)).collect(),
             ),
@@ -1243,8 +1595,17 @@ impl TypeAst {
             TypeAst::Expression { binding_patterns, binding_types, body } => TypeAst::Expression {
                 binding_patterns: binding_patterns
                     .into_iter()
-                    .map(|(vars, p, (f, g))| {
-                        (vars, Self::sanitize(p), (Self::sanitize(f), Self::sanitize(g)))
+                    .map(|branch| match branch {
+                        GenericPattern::Standard { vars, pattern, constraint: (f, g) } => {
+                            GenericPattern::Standard {
+                                vars,
+                                pattern: Self::sanitize(pattern),
+                                constraint: (Self::sanitize(f), Self::sanitize(g)),
+                            }
+                        }
+                        GenericPattern::AutoBind { pattern } => {
+                            GenericPattern::AutoBind { pattern: Self::sanitize(pattern) }
+                        }
                     })
                     .collect(),
                 binding_types: binding_types.into_iter().map(Self::sanitize).collect(),
@@ -1253,13 +1614,20 @@ impl TypeAst {
             TypeAst::Match { branches } => TypeAst::Match {
                 branches: branches
                     .into_iter()
-                    .map(|(vars, p, (f, g), e)| {
-                        (
-                            vars,
-                            Self::sanitize(p),
-                            (Self::sanitize(f), Self::sanitize(g)),
-                            Self::sanitize(e),
-                        )
+                    .map(|(branch, expr)| {
+                        let sanitized_branch = match branch {
+                            GenericPattern::Standard { vars, pattern, constraint: (f, g) } => {
+                                GenericPattern::Standard {
+                                    vars,
+                                    pattern: Self::sanitize(pattern),
+                                    constraint: (Self::sanitize(f), Self::sanitize(g)),
+                                }
+                            }
+                            GenericPattern::AutoBind { pattern } => {
+                                GenericPattern::AutoBind { pattern: Self::sanitize(pattern) }
+                            }
+                        };
+                        (sanitized_branch, Self::sanitize(expr))
                     })
                     .collect(),
             },
@@ -1283,11 +1651,21 @@ impl TypeAst {
             TypeAst::Namespace { tag, expr } => {
                 TypeAst::Namespace { tag, expr: Box::new(Self::sanitize(*expr)) }
             }
-            TypeAst::Generic { generic_vars, expr, constraint } => TypeAst::Generic {
-                generic_vars,
-                expr: Box::new(Self::sanitize(*expr)),
-                constraint: Box::new((Self::sanitize(constraint.0), Self::sanitize(constraint.1))),
-            },
+            TypeAst::Generic(bind) => TypeAst::Generic(match &*bind {
+                GenericPattern::Standard { vars, pattern, constraint } => {
+                    Box::new(GenericPattern::Standard {
+                        vars: vars.clone(),
+                        pattern: Self::sanitize(pattern.clone()),
+                        constraint: (
+                            Self::sanitize(constraint.0.clone()),
+                            Self::sanitize(constraint.1.clone()),
+                        ),
+                    })
+                }
+                GenericPattern::AutoBind { pattern } => {
+                    Box::new(GenericPattern::AutoBind { pattern: Self::sanitize(pattern.clone()) })
+                }
+            }),
             TypeAst::Literal(inner) => TypeAst::Literal(Box::new(Self::sanitize(*inner))),
             TypeAst::EqOf { value } => TypeAst::EqOf { value: Box::new(Self::sanitize(*value)) },
             TypeAst::SubOf { value } => TypeAst::SubOf { value: Box::new(Self::sanitize(*value)) },
@@ -1419,9 +1797,12 @@ impl<'ast> LinearTypeAst<'ast> {
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
             LinearTypeAst::Variable(name) => match ctx.use_variable(name) {
-                Ok(var_loc) => {
+                Ok((var_loc, is_real_var)) => {
                     let mut captures = HashMap::new();
-                    captures.insert(name.clone(), var_loc.clone());
+                    if is_real_var {
+                        // 只有真实变量才会被捕获
+                        captures.insert(name.clone(), var_loc.clone());
+                    }
                     FlowResult::complex(
                         WithLocation::new(LinearTypeAst::Variable(name.clone()), loc),
                         captures,

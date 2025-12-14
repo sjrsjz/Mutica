@@ -266,6 +266,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         mut self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        println!("Reducing Closure Type: {}", self.represent(&mut FastCycleDetector::new(), 0, 5));
         match self.inner.modify(|(branches, source_info)| {
             let reduced_branches = branches
                 .into_iter()
@@ -291,10 +292,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 let (branches, source_info) = self.inner.as_ref();
                 let mut reduced_branches = Vec::with_capacity(branches.len());
                 for inner in branches.iter() {
-                    let branch = inner
-                        .clone()
-                        .capture(ctx.pattern_environment, ctx.capture_environment)
-                        .map_err(|e| panic!("{:?}", e))?;
+                    let branch =
+                        inner.clone().capture(ctx.pattern_environment, ctx.capture_environment)?;
                     let reduced_pattern = match branch.pattern.reduce(ctx)? {
                         Type::Constraint(v) => v,
                         _ => panic!("Reduced pattern is not a Constraint type"),
@@ -338,7 +337,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     ctx.gc,
                     ctx.roots,
                 );
-                return branch.expr.clone().reduce(&mut reduce_ctx);
+                let result = branch.expr.clone().reduce(&mut reduce_ctx);
+                return result;
             }
         }
 
@@ -393,7 +393,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
         let (branches, _) = self.inner.as_ref();
         let mut repr = String::from("match");
         for inner in branches.iter() {
-            repr.push_str(" | ");
+            repr.push_str(" | capture { ");
+            let captured_vars: Vec<String> = inner
+                .captured_vars
+                .type_vars()
+                .iter()
+                .map(|(v, ty)| {
+                    let ty_str = match ty {
+                        EnvironmentVarState::Bound(ty) => ty.represent(path, depth + 1, max_depth),
+                        EnvironmentVarState::FromPattern => "FromPattern".to_string(),
+                        EnvironmentVarState::FromCapture => "FromCapture".to_string(),
+                        EnvironmentVarState::Phantom(_) => unreachable!(),
+                    };
+                    format!("{}: {}", v.as_ref(), ty_str)
+                })
+                .collect();
+            repr.push_str(&captured_vars.join(", "));
+            repr.push_str(" } ");
             repr.push_str(&inner.pattern.represent(path, depth + 1, max_depth));
             repr.push_str(" => ");
             repr.push_str(&inner.expr.represent(path, depth + 1, max_depth));
