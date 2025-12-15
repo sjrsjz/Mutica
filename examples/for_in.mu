@@ -1,12 +1,12 @@
-let list_pkg: any = import "lib/list.mu";
-let List::(List: any) = list_pkg;
+let constraint list_pkg: any = import "lib/list.mu";
+let constraint List::(List: any) = list_pkg;
 
-let List: any = List;
-let iter: any = lst: List(any) => f: any => {
-    loop go: t: any = lst;
+let constraint List: any = List;
+let constraint iter: any = constraint lst: List(any) => constraint f: any => {
+    loop go: constraint t: any = lst;
     match t
-        | () => ()
-        | (h: any ~ t: any) => {
+        | assert () => ()
+        | constraint (h: any ~ t: any) => {
             discard f(h);
             go(t)
         }
@@ -15,11 +15,12 @@ let iter: any = lst: List(any) => f: any => {
 
 // We can rewrite `f(v)(pattern => expr)` to `for pattern = f(v) in expr`
 
-// iter(1, 2, 3)(x: nat => {
+// iter(1,2,3)(constraint x: nat => {
 //     discard print!(x);
+//     discard print!' ';
 // })
 
-for x: nat = iter(1, 2, 3) in {
+for constraint x: nat = iter(1, 2, 3) in {
     discard print!(x);
     discard print!' ';
 }

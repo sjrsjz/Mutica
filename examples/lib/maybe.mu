@@ -1,24 +1,24 @@
-let Just: any = T: any => Just::T;
-let Nothing: any = Nothing::();
-let Maybe: any = T: any => (Just T | Nothing);
-let map: any = v: Maybe(any) => f: any => 
+let constraint Just: any = constraint T: any => Just::T;
+let constraint Nothing: any = Nothing::();
+let constraint Maybe: any = constraint T: any => (Just T | Nothing);
+let constraint map: any = constraint v: Maybe(any) => constraint f: any => 
     match v
-        | Just::(x: any) => Just(f(x))
-        | Nothing::() => Nothing
+        | constraint Just::(x: any) => Just(f(x))
+        | assert Nothing::() => Nothing
         | panic;
-let unwrap_or_else: any = v: Maybe(any) => f: any => 
+let constraint unwrap_or_else: any = constraint v: Maybe(any) => constraint f: any => 
     match v
-        | Just::(x: any) => x
-        | Nothing::() => f()
+        | constraint Just::(x: any) => x
+        | assert Nothing::() => f()
         | panic;
-let unwrap_or: any = v: Maybe(any) => default: any => 
+let constraint unwrap_or: any = constraint v: Maybe(any) => constraint default: any => 
     match v
-        | Just::(x: any) => x
-        | Nothing::() => default
+        | constraint Just::(x: any) => x
+        | assert Nothing::() => default
         | panic;
-let unwrap: any = v: Maybe(any) => 
+let constraint unwrap: any = constraint v: Maybe(any) => 
     match v
-        | Just::(x: any) => x
+        | constraint Just::(x: any) => x
         | panic;
 
 Just::Just &

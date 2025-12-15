@@ -1797,11 +1797,24 @@ impl<'ast> LinearTypeAst<'ast> {
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
             LinearTypeAst::Variable(name) => match ctx.use_variable(name) {
-                Ok((var_loc, is_real_var)) => {
+                Ok((var_loc, outgoing)) => {
                     let mut captures = HashMap::new();
-                    if is_real_var {
-                        // 只有真实变量才会被捕获
-                        captures.insert(name.clone(), var_loc.clone());
+                    match outgoing {
+                        None => {
+                            captures.insert(name.clone(), var_loc.clone());
+                        }
+                        Some(layer) => {
+                            if layer > 0 {
+                                errors.push(WithLocation::new(
+                                    ParseError::OutgoingFixPointReference(
+                                        WithLocation::new(self.clone(), loc),
+                                        name.clone(),
+                                        layer,
+                                    ),
+                                    loc,
+                                ));
+                            }
+                        }
                     }
                     FlowResult::complex(
                         WithLocation::new(LinearTypeAst::Variable(name.clone()), loc),

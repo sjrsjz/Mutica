@@ -410,10 +410,10 @@ ForIn: WithLocation<TypeAst> = {
     <l:@L> ForTok <binding: Binding> InTok <expr: Primary> <r:@R> => {
         let (branch, value) = binding;
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(expr),
+            func: Box::new(value),
             arg: Box::new(WithLocation::new(TypeAst::Match {
-                branches: vec![(branch, value)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()))
+                branches: vec![(branch, expr)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }

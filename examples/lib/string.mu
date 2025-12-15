@@ -1,53 +1,55 @@
-let list_pkg: any = import "list.mu";
-let maybe_pkg: any = import "maybe.mu";
-let List::(List: any) = list_pkg;
-let iter::(iter: any) = list_pkg;
-let len::(len: any) = list_pkg;
-let take::(take: any) = list_pkg;
-let drop::(drop: any) = list_pkg;
-let Just::(Just: any) = maybe_pkg;
-let Nothing::(Nothing: any) = maybe_pkg;
+let constraint list_pkg: any = import "list.mu";
+let constraint maybe_pkg: any = import "maybe.mu";
+let constraint {
+    List::(List: any) &
+    iter::(iter: any) &
+    len::(len: any) &
+    take::(take: any) &
+    drop::(drop: any)
+} = list_pkg;
+let constraint Just::(Just: any) = maybe_pkg;
+let constraint Nothing::(Nothing: any) = maybe_pkg;
 
-let String: any = List(char);
+let constraint String: any = List(char);
 
-let println: any = s: String => {
-    discard iter(s)(c: char => {
+let constraint println: any = constraint s: String => {
+    discard iter(s)(constraint c: char => {
         discard print!(c);
     });
     discard print!('\n');
 };
 
-let print: any = s: String => {
-    discard iter(s)(c: char => {
+let constraint print: any = constraint s: String => {
+    discard iter(s)(constraint c: char => {
         discard print!(c);
     });
 };
 
-let slice: any = (s: String, start: nat, end: nat) => {
-    let len: nat = len(s);
+let constraint slice: any = constraint (s: String, start: nat, end: nat) => {
+    let constraint len: nat = len(s);
     if (start >= 0 && start <= len && end >= start && end <= len)
         then Just(take(drop(s)(start))(end - start))
         else Nothing
 };
 
-let nat_to_string: any = 
+let constraint nat_to_string: any = 
     match
-        | 0 => "0"
-        | n: nat => {
-            loop go: (acc: String, n: nat) = ((), n);
+        | assert 0 => "0"
+        | constraint n: nat => {
+            loop go: constraint (acc: String, n: nat) = ((), n);
                 if n == 0 then acc
                 else {
-                    let digit: (char,) = match n % 10
-                        | 0 => "0"
-                        | 1 => "1"
-                        | 2 => "2"
-                        | 3 => "3"
-                        | 4 => "4"
-                        | 5 => "5"
-                        | 6 => "6"
-                        | 7 => "7"
-                        | 8 => "8"
-                        | 9 => "9"
+                    let constraint digit: (char,) = match n % 10
+                        | assert 0 => "0"
+                        | assert 1 => "1"
+                        | assert 2 => "2"
+                        | assert 3 => "3"
+                        | assert 4 => "4"
+                        | assert 5 => "5"
+                        | assert 6 => "6"
+                        | assert 7 => "7"
+                        | assert 8 => "8"
+                        | assert 9 => "9"
                         | panic;
                     go((digit + acc, n / 10))
                 }

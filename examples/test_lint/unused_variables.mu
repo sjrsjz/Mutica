@@ -1,4 +1,4 @@
-let (
+let constraint (
     x: any, any, any, w: any,
     tuple: (
         a: nat, nat, c: nat    

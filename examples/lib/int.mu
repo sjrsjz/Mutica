@@ -1,128 +1,128 @@
-let int: any = 0 | Positive::[(), ..()] | Negative::[(), ..()];
+let constraint int: any = 0 | Positive::[(), ..()] | Negative::[(), ..()];
 extend $"op#add": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => Positive::(x + y)
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => Negative::(x + y)
-    | (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => if x > y then Positive::(x - y) else if x == y then 0 else Negative::(y - x)
-    | (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => if y > x then Positive::(y - x) else if x == y then 0 else Negative::(x - y)
-    | (Positive::(x: [(), ..()]), 0) => Positive::x
-    | (Negative::(x: [(), ..()]), 0) => Negative::x
-    | (0, Positive::(y: [(), ..()])) => Positive::y
-    | (0, Negative::(y: [(), ..()])) => Negative::y
-    | (0, 0) => 0
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => Positive::(x + y)
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => Negative::(x + y)
+    | constraint (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => if x > y then Positive::(x - y) else if x == y then 0 else Negative::(y - x)
+    | constraint (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => if y > x then Positive::(y - x) else if x == y then 0 else Negative::(x - y)
+    | constraint (Positive::(x: [(), ..()]), 0) => Positive::x
+    | constraint (Negative::(x: [(), ..()]), 0) => Negative::x
+    | constraint (0, Positive::(y: [(), ..()])) => Positive::y
+    | constraint (0, Negative::(y: [(), ..()])) => Negative::y
+    | assert (0, 0) => 0
     | panic;
 extend $"op#sub": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => if x > y then Positive::(x - y) else if x == y then 0 else Negative::(y - x)
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => if x > y then Negative::(x - y) else if x == y then 0 else Positive::(y - x)
-    | (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => Positive::(x + y)
-    | (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => Negative::(x + y)
-    | (Positive::(x: [(), ..()]), 0) => Positive::x
-    | (Negative::(x: [(), ..()]), 0) => Negative::x
-    | (0, Positive::(y: [(), ..()])) => Negative::y
-    | (0, Negative::(y: [(), ..()])) => Positive::y
-    | (0, 0) => 0
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => if x > y then Positive::(x - y) else if x == y then 0 else Negative::(y - x)
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => if x > y then Negative::(x - y) else if x == y then 0 else Positive::(y - x)
+    | constraint (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => Positive::(x + y)
+    | constraint (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => Negative::(x + y)
+    | constraint (Positive::(x: [(), ..()]), 0) => Positive::x
+    | constraint (Negative::(x: [(), ..()]), 0) => Negative::x
+    | constraint (0, Positive::(y: [(), ..()])) => Negative::y
+    | constraint (0, Negative::(y: [(), ..()])) => Positive::y
+    | assert (0, 0) => 0
     | panic;
 extend $"op#mul": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => Positive::(x * y)
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => Positive::(x * y)
-    | (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => Negative::(x * y)
-    | (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => Negative::(x * y)
-    | (Positive::[(), ..()], 0) => 0
-    | (Negative::[(), ..()], 0) => 0
-    | (0, Positive::[(), ..()]) => 0
-    | (0, Negative::[(), ..()]) => 0
-    | (0, 0) => 0
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => Positive::(x * y)
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => Positive::(x * y)
+    | constraint (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => Negative::(x * y)
+    | constraint (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => Negative::(x * y)
+    | constraint (Positive::[(), ..()], 0) => 0
+    | constraint (Negative::[(), ..()], 0) => 0
+    | constraint (0, Positive::[(), ..()]) => 0
+    | constraint (0, Negative::[(), ..()]) => 0
+    | assert (0, 0) => 0
     | panic;
 extend $"op#div": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => {
-        let q: nat = x / y;
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => {
+        let constraint q: nat = x / y;
         if q == 0 then 0 else Positive::q
     }
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => {
-        let q: nat = x / y;
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => {
+        let constraint q: nat = x / y;
         if q == 0 then 0 else Positive::q
     }
-    | (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => {
-        let q: nat = x / y;
+    | constraint (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => {
+        let constraint q: nat = x / y;
         if q == 0 then 0 else Negative::q
     }
-    | (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => {
-        let q: nat = x / y;
+    | constraint (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => {
+        let constraint q: nat = x / y;
         if q == 0 then 0 else Negative::q
     }
-    | (0, Positive::[(), ..()]) => 0
-    | (0, Negative::[(), ..()]) => 0
+    | assert (0, Positive::[(), ..()]) => 0
+    | assert (0, Negative::[(), ..()]) => 0
     | panic;
 extend $"op#mod": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => {
-        let r: nat = x % y;
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => {
+        let constraint r: nat = x % y;
         if r == 0 then 0 else Positive::r
     }
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => {
-        let r: nat = x % y;
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => {
+        let constraint r: nat = x % y;
         if r == 0 then 0 else Negative::r
     }
-    | (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => {
-        let r: nat = x % y;
+    | constraint (Positive::(x: [(), ..()]), Negative::(y: [(), ..()])) => {
+        let constraint r: nat = x % y;
         if r == 0 then 0 else Positive::r
     }
-    | (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => {
-        let r: nat = x % y;
+    | constraint (Negative::(x: [(), ..()]), Positive::(y: [(), ..()])) => {
+        let constraint r: nat = x % y;
         if r == 0 then 0 else Negative::r
     }
-    | (0, Positive::[(), ..()]) => 0
-    | (0, Negative::[(), ..()]) => 0
+    | assert (0, Positive::[(), ..()]) => 0
+    | assert (0, Negative::[(), ..()]) => 0
     | panic;
 extend $"op#lt": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => x < y
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => x > y
-    | (Positive::[(), ..()], Negative::[(), ..()]) => false
-    | (Negative::[(), ..()], Positive::[(), ..()]) => true
-    | (Positive::[(), ..()], 0) => false
-    | (Negative::[(), ..()], 0) => true
-    | (0, Positive::[(), ..()]) => true
-    | (0, Negative::[(), ..()]) => false
-    | (0, 0) => false
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => x < y
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => x > y
+    | assert (Positive::[(), ..()], Negative::[(), ..()]) => false
+    | assert (Negative::[(), ..()], Positive::[(), ..()]) => true
+    | assert (Positive::[(), ..()], 0) => false
+    | assert (Negative::[(), ..()], 0) => true
+    | assert (0, Positive::[(), ..()]) => true
+    | assert (0, Negative::[(), ..()]) => false
+    | assert (0, 0) => false
     | panic;
 extend $"op#lte": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => x <= y
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => x >= y
-    | (Positive::[(), ..()], Negative::[(), ..()]) => false
-    | (Negative::[(), ..()], Positive::[(), ..()]) => true
-    | (Positive::[(), ..()], 0) => false
-    | (Negative::[(), ..()], 0) => true
-    | (0, Positive::[(), ..()]) => true
-    | (0, Negative::[(), ..()]) => false
-    | (0, 0) => true
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => x <= y
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => x >= y
+    | assert (Positive::[(), ..()], Negative::[(), ..()]) => false
+    | assert (Negative::[(), ..()], Positive::[(), ..()]) => true
+    | assert (Positive::[(), ..()], 0) => false
+    | assert (Negative::[(), ..()], 0) => true
+    | assert (0, Positive::[(), ..()]) => true
+    | assert (0, Negative::[(), ..()]) => false
+    | assert (0, 0) => true
     | panic;
 extend $"op#gt": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => x > y
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => x < y
-    | (Positive::[(), ..()], Negative::[(), ..()]) => true
-    | (Negative::[(), ..()], Positive::[(), ..()]) => false
-    | (Positive::[(), ..()], 0) => true
-    | (Negative::[(), ..()], 0) => false
-    | (0, Positive::[(), ..()]) => false
-    | (0, Negative::[(), ..()]) => true
-    | (0, 0) => false
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => x > y
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => x < y
+    | assert (Positive::[(), ..()], Negative::[(), ..()]) => true
+    | assert (Negative::[(), ..()], Positive::[(), ..()]) => false
+    | assert (Positive::[(), ..()], 0) => true
+    | assert (Negative::[(), ..()], 0) => false
+    | assert (0, Positive::[(), ..()]) => false
+    | assert (0, Negative::[(), ..()]) => true
+    | assert (0, 0) => false
     | panic;
 extend $"op#gte": match
-    | (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => x >= y
-    | (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => x <= y
-    | (Positive::[(), ..()], Negative::[(), ..()]) => true
-    | (Negative::[(), ..()], Positive::[(), ..()]) => false
-    | (Positive::[(), ..()], 0) => true
-    | (Negative::[(), ..()], 0) => false
-    | (0, Positive::[(), ..()]) => false
-    | (0, Negative::[(), ..()]) => true
-    | (0, 0) => true
+    | constraint (Positive::(x: [(), ..()]), Positive::(y: [(), ..()])) => x >= y
+    | constraint (Negative::(x: [(), ..()]), Negative::(y: [(), ..()])) => x <= y
+    | assert (Positive::[(), ..()], Negative::[(), ..()]) => true
+    | assert (Negative::[(), ..()], Positive::[(), ..()]) => false
+    | assert (Positive::[(), ..()], 0) => true
+    | assert (Negative::[(), ..()], 0) => false
+    | assert (0, Positive::[(), ..()]) => false
+    | assert (0, Negative::[(), ..()]) => true
+    | assert (0, 0) => true
     | panic;
-let Positive: any = (x: [(), ..()]) => Positive::x;
-let Negative: any = (x: [(), ..()]) => Negative::x;
-let Zero: any = 0;
+let constraint Positive: any = constraint (x: [(), ..()]) => Positive::x;
+let constraint Negative: any = constraint (x: [(), ..()]) => Negative::x;
+let constraint Zero: any = 0;
 extend $"op#neg": match
-    | Positive::(x: [(), ..()]) => Negative::x
-    | Negative::(x: [(), ..()]) => Positive::x
-    | 0 => 0
+    | constraint Positive::(x: [(), ..()]) => Negative::x
+    | constraint Negative::(x: [(), ..()]) => Positive::x
+    | assert 0 => 0
     | panic;
 
 int::int & Zero::Zero & Positive::Positive & Negative::Negative & 

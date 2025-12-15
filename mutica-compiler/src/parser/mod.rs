@@ -467,19 +467,30 @@ impl ParseContext {
     }
 
     /// 使用变量，返回变量的位置信息和是否为真正的变量还是递归点
-    pub fn use_variable(&mut self, name: &str) -> Result<(&WithLocation<()>, bool), ContextError> {
+    pub fn use_variable(
+        &mut self,
+        name: &str,
+    ) -> Result<(&WithLocation<()>, Option<usize>), ContextError> {
+        let mut outgoing_function_layer_count = 0;
         for scope in self.declared_variables.iter_mut().rev() {
             match scope {
-                Scope::Function(map) | Scope::Generic(map) => {
+                Scope::Function(map) => {
                     if let Some((count, loc)) = map.get_mut(name) {
                         *count += 1;
-                        return Ok((loc, true));
+                        return Ok((loc, None));
+                    }
+                    outgoing_function_layer_count += 1;
+                }
+                Scope::Generic(map) => {
+                    if let Some((count, loc)) = map.get_mut(name) {
+                        *count += 1;
+                        return Ok((loc, None));
                     }
                 }
                 Scope::FixPoint(n, count, loc) => {
                     if n == name {
                         *count += 1;
-                        return Ok((loc, false));
+                        return Ok((loc, Some(outgoing_function_layer_count)));
                     }
                 }
             }
