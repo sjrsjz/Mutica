@@ -202,7 +202,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
     // println!("Linearized AST: {:#?}", linearized);
     let mut flow_errors = Vec::new();
     let flowed = linearized.flow(&mut ParseContext::new(), linearized.location(), &mut flow_errors);
-     println!("Flowed AST: {:#?}", flowed.ty());
+    // println!("Flowed AST: {:#?}", flowed.ty());
 
     if !flow_errors.is_empty() {
         // 获取源文件信息用于错误报告

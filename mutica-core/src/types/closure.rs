@@ -266,7 +266,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         mut self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        println!("Reducing Closure Type: {}", self.represent(&mut FastCycleDetector::new(), 0, 5));
         match self.inner.modify(|(branches, source_info)| {
             let reduced_branches = branches
                 .into_iter()
