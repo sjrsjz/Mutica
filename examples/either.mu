@@ -1,35 +1,34 @@
 // Either 类型示例 (用于错误处理)
-let Left: any = value: any => Left::value;
-let Right: any = value: any => Right::value;
-let Either: any = (T: any, U: any) => (Left T | Right U);
+let constraint Left: any = constraint value: any => Left::value;
+let constraint Right: any = constraint value: any => Right::value;
+let constraint Either: any = constraint  (T: any, U: any) => (Left T | Right U);
 // map_right: 只对 Right 值进行映射
-let map_right: any = either: Either(any, any) => f: any =>
+let constraint map_right: any = constraint either: Either(any, any) => constraint f: any =>
     match either
-        | Left::(err: any) => Left(err)
-        | Right::(val: any) => Right(f(val))
+        | constraint Left::(err: any) => Left(err)
+        | constraint Right::(val: any) => Right(f(val))
         | panic;
 
 // 安全除法
-let safe_div: any = a: nat => match
-    | eq 0 => Left("Division by zero")
-    | b_val: nat => Right(a / b_val)
+let constraint safe_div: any = constraint a: nat => match
+    | assert 0 => Left("Division by zero")
+    | constraint b_val: nat => Right(a / b_val)
     | panic;
 
 // 链式操作
-let bind: any = either: Either(any, any) => f: any =>
+let constraint bind: any = constraint either: Either(any, any) => constraint f: any =>
     match either
-        | Left::(err: any) => Left(err)
-        | Right::(val: any) => f(val)
+        | constraint Left::(err: any) => Left(err)
+        | constraint Right::(val: any) => f(val)
         | panic;
 
 // 测试
-let result1: any = safe_div(10)(2);
-let result2: any = safe_div(10)(0);
+let constraint result1: any = safe_div(10)(2);
+let constraint result2: any = safe_div(10)(0);
 
 // 使用 map_right 映射成功值
-let mapped_result: any = map_right(result1)(x: nat => x * 2);
-
+let constraint mapped_result: any = map_right(result1)(constraint x: nat => x * 2);
 // 使用 bind 进行链式操作
-let chained_result: any = bind(result1)(x: nat => safe_div(x)(2));
+let constraint chained_result: any = bind(result1)(constraint x: nat => safe_div(x)(2));
 
 result1, result2, mapped_result, chained_result

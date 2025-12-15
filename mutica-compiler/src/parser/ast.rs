@@ -2293,7 +2293,16 @@ impl<'ast> LinearTypeAst<'ast> {
                 Ok(BuildResult::simple(CharacterValue::new(*v, loc.cloned().map(Arc::new))))
             }
             LinearTypeAst::Variable(var) => {
-                if let Some(ty) = ctx.lookup(var) {
+                if let Some((ty, outgoing)) = ctx.lookup(var) {
+                    if let Some(outgoing) = outgoing
+                        && outgoing != 0
+                    {
+                        return Err(Err(ParseError::OutgoingFixPointReference(
+                            WithLocation::new(self.clone(), loc),
+                            var.clone(),
+                            outgoing,
+                        )));
+                    }
                     Ok(BuildResult::simple(ty))
                 } else {
                     Err(Err(ParseError::UseBeforeDeclaration(

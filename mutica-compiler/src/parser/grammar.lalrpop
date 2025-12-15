@@ -274,7 +274,7 @@ AtomType: WithLocation<TypeAst> = {
 }
 
 AutoBind: WithLocation<TypeAst> = {
-    <l:@L> <v_l:@L> <var: Ident> <v_r:@R> ColonTok <t: Term> <r:@R> => {
+    <l:@L> <v_l:@L> <var: Ident> <v_r:@R> ColonTok <t: Factor> <r:@R> => {
         WithLocation::new(TypeAst::Bind {
             var: WithLocation::new(var, Some(SourceLocation::new(source.clone(), v_l..v_r)).as_ref()),
             expr: Box::new(t),
@@ -289,7 +289,6 @@ Term: WithLocation<TypeAst> = {
     <eq: EqOf> => eq,
     <sub: SubOf> => sub,
     <np: Namespace> => np,
-    <bind: AutoBind> => bind,
     <a: AtomType> => a,
 }
 
@@ -574,6 +573,7 @@ Factor: WithLocation<TypeAst> = {
             arg: Box::new(n),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
+    <bind: AutoBind> => bind,
     <a: Apply> => a,
 }
 

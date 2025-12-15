@@ -85,6 +85,7 @@ pub enum ParseError<'ast> {
     AmbiguousPattern(WithLocation<LinearTypeAst<'ast>>),
     PatternOutOfParameterDefinition(WithLocation<LinearTypeAst<'ast>>),
     MissingBranch(WithLocation<LinearTypeAst<'ast>>),
+    OutgoingFixPointReference(WithLocation<LinearTypeAst<'ast>>, String, usize),
     InternalError(String),
 }
 
@@ -122,6 +123,24 @@ impl<'ast> ParseError<'ast> {
                             .with_color(Color::Red),
                     )
                     .with_help("Make sure the variable is declared before use")
+                    .finish()
+            }
+            ParseError::OutgoingFixPointReference(ast, name, count) => {
+                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
+                    .with_message(format!(
+                        "Fix-point variable '{}' referenced from {} layer(s) outside function scope",
+                        name, count
+                    ))
+                    .with_label(
+                        Label::new((filepath, char_start..char_end))
+                            .with_message(format!(
+                                "Here, the fix-point variable '{}' is used outside its defining function's scope",
+                                name
+                            ))
+                            .with_color(Color::Red),
+                    )
+                    .with_help("Ensure that fix-point variables are only used within their defining function's scope, or use 'dyn_rec' for dynamic recursion")
                     .finish()
             }
             ParseError::RedeclaredCaptureValue(ast, name) => {
@@ -518,25 +537,33 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
         self.layers.pop()
     }
 
-    pub fn lookup<S: AsRef<str>>(&self, var: S) -> Option<Type<T>> {
+    pub fn lookup<S: AsRef<str>>(&self, var: S) -> Option<(Type<T>, Option<usize>)> {
+        let mut outgoing_function_layer_count = 0;
         for (i, layer) in self.layers.iter().rev().enumerate() {
             match layer {
                 BuildContextLayer::Function { patterns, captures } => {
                     match (patterns.get(var.as_ref()), captures.get(var.as_ref())) {
                         (Some(v), _) => {
-                            return Some(Variable::new_pattern(
-                                Arc::from(var.as_ref()),
-                                v.location().cloned().map(Arc::new),
+                            return Some((
+                                Variable::new_pattern(
+                                    Arc::from(var.as_ref()),
+                                    v.location().cloned().map(Arc::new),
+                                ),
+                                None,
                             ));
                         }
                         (None, Some(v)) => {
-                            return Some(Variable::new_context(
-                                Arc::from(var.as_ref()),
-                                v.location().cloned().map(Arc::new),
+                            return Some((
+                                Variable::new_context(
+                                    Arc::from(var.as_ref()),
+                                    v.location().cloned().map(Arc::new),
+                                ),
+                                None,
                             ));
                         }
                         _ => {}
                     }
+                    outgoing_function_layer_count += 1;
                 }
                 BuildContextLayer::GenericBinding(patterns) => {
                     let mut layer = 0;
@@ -552,19 +579,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     }
 
                     if let Some(v) = patterns.get(var.as_ref()) {
-                        return Some(
+                        return Some((
                             Pattern::new(
                                 Arc::from(var.as_ref()),
                                 layer,
                                 v.location().cloned().map(Arc::new),
                             )
                             .dispatch(),
-                        );
+                            None,
+                        ));
                     }
                 }
                 BuildContextLayer::FixPoint(name, v) => {
                     if var.as_ref().eq(name) {
-                        return Some(v.clone());
+                        return Some((v.clone(), Some(outgoing_function_layer_count)));
                     }
                 }
             }
@@ -935,43 +963,43 @@ pub fn inject_std_library(
     errors: &mut Vec<WithLocation<MultiFileBuilderError>>,
 ) -> WithLocation<BasicTypeAst> {
     let std_lib_code = r##"
-    // let constraint $"op#true": any = True::();
-    // let constraint $"op#false": any = False::();
-    // let constraint $"op#and": any = match
-    //     | constraint ($"op#true", $"op#true") => $"op#true"
-    //     | constraint ($"op#true", $"op#false") => $"op#false"
-    //     | constraint ($"op#false", $"op#true") => $"op#false"
-    //     | constraint ($"op#false", $"op#false") => $"op#false"
-    //     | panic;
-    // let constraint $"op#or": any = match
-    //     | constraint ($"op#true", $"op#true") => $"op#true"
-    //     | constraint ($"op#true", $"op#false") => $"op#true"
-    //     | constraint ($"op#false", $"op#true") => $"op#true"
-    //     | constraint ($"op#false", $"op#false") => $"op#false"
-    //     | panic;
-    // let constraint $"op#not": any = match
-    //     | constraint $"op#true" => $"op#false"
-    //     | constraint $"op#false" => $"op#true"
-    //     | panic;
-    // let constraint $"op#add": any = constraint (x: any, y: any) => __add!(x, y);
-    // let constraint $"op#sub": any = constraint (x: any, y: any) => __sub!(x, y);
-    // let constraint $"op#mul": any = constraint (x: any, y: any) => __mul!(x, y);
-    // let constraint $"op#div": any = constraint (x: any, y: any) => __div!(x, y);
-    // let constraint $"op#mod": any = constraint (x: any, y: any) => __mod!(x, y);
-    // let constraint $"op#gt": any = constraint (x: any, y: any) => __greater!(x, y, true, false);
-    // let constraint $"op#lt": any = constraint (x: any, y: any) => __less!(x, y, true, false);
-    // let constraint $"op#gte": any = match 
-    //     | exist _x in (_x, _x) where _x as any => true
-    //     | constraint (x: any, y: any) => __greater!(x, y, true, false)
-    //     | panic;
-    // let constraint $"op#lte": any = match
-    //     | exist _x in (_x, _x) where _x as any => true
-    //     | constraint (x: any, y: any) => __less!(x, y, true, false)
-    //     | panic;
-    // let constraint $"op#neg": any = constraint (x: any) => __neg!(x);
-    // let constraint $"op#is": any = constraint (x: any, y: any) => __is!(x, y, true, false);
-    // let constraint $"op#set": any = constraint (x: any, y: any) => __set!(x, y);
-    // let constraint $"op#build_fixpoint": any = constraint (f: any) => __build_fixpoint!(f);
+    let constraint $"op#true": any = True::();
+    let constraint $"op#false": any = False::();
+    let constraint $"op#and": any = match
+        | constraint ($"op#true", $"op#true") => $"op#true"
+        | constraint ($"op#true", $"op#false") => $"op#false"
+        | constraint ($"op#false", $"op#true") => $"op#false"
+        | constraint ($"op#false", $"op#false") => $"op#false"
+        | panic;
+    let constraint $"op#or": any = match
+        | constraint ($"op#true", $"op#true") => $"op#true"
+        | constraint ($"op#true", $"op#false") => $"op#true"
+        | constraint ($"op#false", $"op#true") => $"op#true"
+        | constraint ($"op#false", $"op#false") => $"op#false"
+        | panic;
+    let constraint $"op#not": any = match
+        | constraint $"op#true" => $"op#false"
+        | constraint $"op#false" => $"op#true"
+        | panic;
+    let constraint $"op#add": any = constraint (x: any, y: any) => __add!(x, y);
+    let constraint $"op#sub": any = constraint (x: any, y: any) => __sub!(x, y);
+    let constraint $"op#mul": any = constraint (x: any, y: any) => __mul!(x, y);
+    let constraint $"op#div": any = constraint (x: any, y: any) => __div!(x, y);
+    let constraint $"op#mod": any = constraint (x: any, y: any) => __mod!(x, y);
+    let constraint $"op#gt": any = constraint (x: any, y: any) => __greater!(x, y, true, false);
+    let constraint $"op#lt": any = constraint (x: any, y: any) => __less!(x, y, true, false);
+    let constraint $"op#gte": any = match 
+        | exist _x in (_x, _x) where _x as any => true
+        | constraint (x: any, y: any) => __greater!(x, y, true, false)
+        | panic;
+    let constraint $"op#lte": any = match
+        | exist _x in (_x, _x) where _x as any => true
+        | constraint (x: any, y: any) => __less!(x, y, true, false)
+        | panic;
+    let constraint $"op#neg": any = constraint (x: any) => __neg!(x);
+    let constraint $"op#is": any = constraint (x: any, y: any) => __is!(x, y, true, false);
+    let constraint $"op#set": any = constraint (x: any, y: any) => __set!(x, y);
+    let constraint $"op#build_fixpoint": any = constraint (f: any) => __build_fixpoint!(f);
     $"<placeholder>"
     "##;
     let mut import_ast = HashMap::new();
