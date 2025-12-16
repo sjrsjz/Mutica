@@ -274,7 +274,7 @@ AtomType: WithLocation<TypeAst> = {
 }
 
 AutoBind: WithLocation<TypeAst> = {
-    <l:@L> <v_l:@L> <var: Ident> <v_r:@R> ColonTok <t: Term> <r:@R> => {
+    <l:@L> <v_l:@L> <var: Ident> <v_r:@R> ColonTok <t: Factor> <r:@R> => {
         WithLocation::new(TypeAst::Bind {
             var: WithLocation::new(var, Some(SourceLocation::new(source.clone(), v_l..v_r)).as_ref()),
             expr: Box::new(t),
@@ -289,7 +289,6 @@ Term: WithLocation<TypeAst> = {
     <eq: EqOf> => eq,
     <sub: SubOf> => sub,
     <np: Namespace> => np,
-    <bind: AutoBind> => bind,
     <a: AtomType> => a,
 }
 
@@ -411,10 +410,10 @@ ForIn: WithLocation<TypeAst> = {
     <l:@L> ForTok <binding: Binding> InTok <expr: Primary> <r:@R> => {
         let (branch, value) = binding;
         WithLocation::new(TypeAst::Apply {
-            func: Box::new(expr),
+            func: Box::new(value),
             arg: Box::new(WithLocation::new(TypeAst::Match {
-                branches: vec![(branch, value)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()))
+                branches: vec![(branch, expr)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
@@ -468,6 +467,14 @@ Tuple: WithLocation<TypeAst> = {
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <prefix: TupleElement> TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
             head: vec![(prefix, NonZero::new(1).unwrap())],
+            tail: Box::new(repeat),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> BangTok RangeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::List {
+            head: vec![],
+            tail: Box::new(repeat),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> BangTok TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
+            head: vec![],
             tail: Box::new(repeat),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <item: TupleElement> => item,
@@ -574,6 +581,7 @@ Factor: WithLocation<TypeAst> = {
             arg: Box::new(n),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
+    <bind: AutoBind> => bind,
     <a: Apply> => a,
 }
 

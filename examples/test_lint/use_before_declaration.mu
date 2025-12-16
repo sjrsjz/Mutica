@@ -1,1 +1,1 @@
-let x: nat = y + 1;
+let constraint x: nat = y + 1;

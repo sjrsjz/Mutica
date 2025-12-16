@@ -1,1 +1,1 @@
-let (x: nat | y: nat, (z: nat, x: nat)) = (1, (2, 3));
+let constraint (x: nat | y: nat, (z: nat, x: nat)) = (1, (2, 3));
