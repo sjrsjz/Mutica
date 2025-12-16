@@ -1,7 +1,7 @@
 let constraint g: any = ();
 
 let constraint f: any = rec f: match
-    | assert _ => g f
+    | constraint _T: _ => g f
     | panic;
 f()
 

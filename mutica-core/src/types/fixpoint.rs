@@ -14,8 +14,7 @@ use crate::{
         TypeRef,
     },
     util::{
-        cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation,
-        three_valued_logic::ThreeValuedLogic,
+        collector::CollectorExt, cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
     },
 };
 
@@ -183,11 +182,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     v.accept(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
+
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {
@@ -239,11 +234,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     v.superof(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
+
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_value() {

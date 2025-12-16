@@ -9,8 +9,7 @@ use crate::{
         TypeRef,
     },
     util::{
-        cycle_detector::FastCycleDetector, source_info::SourceLocation,
-        three_valued_logic::ThreeValuedLogic,
+        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
     },
 };
 
@@ -73,11 +72,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
                 TypeRef::Float(_) => Ok(ThreeValuedLogic::True),
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -104,11 +98,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
                 TypeRef::FloatValue(v) => Ok((self.value == v.value).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }

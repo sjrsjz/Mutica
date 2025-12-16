@@ -7,7 +7,10 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
         Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
     },
-    util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
+    util::{
+        arc_opt::ArcOpt, collector::CollectorExt, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 use crate::types::CoinductiveTypeRef;
@@ -91,11 +94,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for EqOf<
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
                 // 我们实际上无法找到EqType所归属的任何类型类，因此只能简单地拒绝其他类型。
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -122,11 +120,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for EqOf<
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
                 TypeRef::EqOf(v) => {
                     let (self_value, _) = self.inner.as_ref();
                     let (v_value, _) = v.inner.as_ref();

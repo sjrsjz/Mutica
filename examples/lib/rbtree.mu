@@ -61,7 +61,7 @@ let constraint insert_helper: any = constraint cmp: any => constraint tree: any 
 let constraint insert: any = constraint cmp: any => constraint tree: any => constraint key: any => constraint value: any => {
     let constraint result: any = insert_helper(cmp)(tree)(key)(value);
     match result
-        | constraint Node::(_, k: any, v: any, left: any, right: any) => Node::(Black, k, v, left, right)
+        | constraint Node::(_T: _, k: any, v: any, left: any, right: any) => Node::(Black, k, v, left, right)
         | assert Empty::() => Empty::()  // 不应该发生
         | panic
 };
@@ -71,7 +71,7 @@ let constraint lookup: any = constraint cmp: any => constraint tree: any => cons
     loop go: constraint t: any = tree;
     match t
         | assert Empty::() => Nothing
-        | constraint Node::(_, k: any, v: any, left: any, right: any) => {
+        | constraint Node::(_T: _, k: any, v: any, left: any, right: any) => {
             let constraint cmp_result: int = cmp(key, k);
             if cmp_result < 0
                 then go(left)
@@ -85,7 +85,7 @@ let constraint lookup: any = constraint cmp: any => constraint tree: any => cons
 // 检查键是否存在
 let constraint contains: any = constraint cmp: any => constraint tree: any => constraint key: any => {
     match lookup(cmp)(tree)(key)
-        | assert Just::(_) => true
+        | constraint Just::(_T: _) => true
         | assert Nothing::() => false
         | panic
 };
@@ -95,7 +95,7 @@ let constraint size: any = constraint tree: any => {
     loop go: constraint t: any = tree;
     match t
         | assert Empty::() => 0
-        | constraint Node::(_, _, _, left: any, right: any) => 1 + go(left) + go(right)
+        | constraint Node::(_U: _, _V: _, _W: _, left: any, right: any) => 1 + go(left) + go(right)
         | panic
 };
 
@@ -104,7 +104,7 @@ let constraint inorder: any = constraint tree: any => constraint f: any => {
     loop go: constraint t: any = tree;
     match t
         | assert Empty::() => ()
-        | constraint Node::(_, k: any, v: any, left: any, right: any) => {
+        | constraint Node::(_T: _, k: any, v: any, left: any, right: any) => {
             discard go(left);
             discard f(k, v);
             go(right)

@@ -10,19 +10,24 @@ impl<T> Default for Collector<T> {
     }
 }
 
+pub trait CollectorExt<T> {
+    fn collect<F, E>(&mut self, f: F) -> Result<ThreeValuedLogic, E>
+    where
+        F: FnOnce(Option<&mut Collector<T>>) -> Result<ThreeValuedLogic, E>;
+}
+
+impl<T> CollectorExt<T> for Option<&mut Collector<T>> {
+    fn collect<F, E>(&mut self, f: F) -> Result<ThreeValuedLogic, E>
+    where
+        F: FnOnce(Option<&mut Collector<T>>) -> Result<ThreeValuedLogic, E>,
+    {
+        if let Some(collector) = self { collector.collect(|c| f(Some(c))) } else { f(None) }
+    }
+}
+
 impl<T> Collector<T> {
     pub fn new() -> Self {
         Self { items: Some(smallvec::SmallVec::new()) }
-    }
-
-    /// 声明一个禁用的 Collector，所有操作都将直接生效且不进行收集
-    /// 含义为禁用模式匹配环境
-    pub fn new_disabled() -> Self {
-        Self { items: None }
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.items.is_some()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -59,13 +64,15 @@ impl<T> Collector<T> {
     pub fn push(&mut self, item: T) {
         if let Some(items) = &mut self.items {
             items.push(item)
+        } else {
+            panic!("Collector's items have been taken")
         }
     }
 
     pub fn into_vec(self) -> Vec<T> {
         match self.items {
             Some(items) => items.into_vec(),
-            None => Vec::new(),
+            None => panic!("Collector's items have been taken"),
         }
     }
 

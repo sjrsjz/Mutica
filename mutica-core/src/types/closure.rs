@@ -13,8 +13,11 @@ use crate::{
         unify::{EnvironmentStack, EnvironmentVarState, EnvironmentView},
     },
     util::{
-        arc_opt::ArcOpt, collector::Collector, cycle_detector::FastCycleDetector,
-        source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
+        arc_opt::ArcOpt,
+        collector::{Collector, CollectorExt},
+        cycle_detector::FastCycleDetector,
+        source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -137,11 +140,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
                 TypeRef::Closure(v) => {
                     let (self_branches, _) = self.inner.as_ref();
                     let (v_branches, _) = v.inner.as_ref();
@@ -153,10 +151,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     let mut all = ThreeValuedLogic::True;
 
                     for (self_inner, other_inner) in self_branches.iter().zip(v_branches.iter()) {
-                        let mut pattern_env_disabled = Collector::new_disabled();
                         let mut pattern_ctx = TypeCheckContext::new(
                             ctx.assumptions,
-                            &mut pattern_env_disabled,
+                            None,
                             ctx.lhs_env,
                             ctx.rhs_env,
                             ctx.collected,
@@ -168,10 +165,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                                 .check(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
                         );
 
-                        let mut pattern_env_disabled = Collector::new_disabled();
                         let mut pattern_ctx = TypeCheckContext::new(
                             ctx.assumptions,
-                            &mut pattern_env_disabled,
+                            None,
                             ctx.rhs_env,
                             ctx.lhs_env,
                             ctx.collected,
@@ -209,11 +205,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
                 TypeRef::Closure(v) => {
                     let (self_branches, _) = self.inner.as_ref();
                     let (v_branches, _) = v.inner.as_ref();
@@ -225,10 +216,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     let mut all = ThreeValuedLogic::True;
 
                     for (self_inner, other_inner) in self_branches.iter().zip(v_branches.iter()) {
-                        let mut pattern_env_disabled = Collector::new_disabled();
                         let mut pattern_ctx = TypeCheckContext::new(
                             ctx.assumptions,
-                            &mut pattern_env_disabled,
+                            None,
                             ctx.lhs_env,
                             ctx.rhs_env,
                             ctx.collected,
@@ -240,10 +230,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                                 .subof(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
                         );
 
-                        let mut pattern_env_disabled = Collector::new_disabled();
                         let mut pattern_ctx = TypeCheckContext::new(
                             ctx.assumptions,
-                            &mut pattern_env_disabled,
+                            None,
                             ctx.rhs_env,
                             ctx.lhs_env,
                             ctx.collected,
@@ -317,7 +306,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             let mut env_stack = EnvironmentStack::new();
             let mut pattern_check_ctx = TypeCheckContext::new(
                 &mut assumptions,
-                &mut matched_pattern,
+                Some(&mut matched_pattern),
                 ctx.environment,
                 ctx.environment,
                 &mut env_stack,

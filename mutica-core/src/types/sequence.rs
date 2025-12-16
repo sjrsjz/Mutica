@@ -10,8 +10,7 @@ use crate::{
         TypeRef, unify::EnvironmentView,
     },
     util::{
-        cycle_detector::FastCycleDetector, source_info::SourceLocation,
-        three_valued_logic::ThreeValuedLogic,
+        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
     },
 };
 
@@ -136,11 +135,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
                 TypeRef::Sequence(v) => {
                     match (&self.ty, &v.ty) {
                         (SequenceType::Unit, SequenceType::Unit) => Ok(ThreeValuedLogic::True),
@@ -488,11 +482,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
 
                 TypeRef::Sequence(v) => {
                     match (&self.ty, &v.ty) {

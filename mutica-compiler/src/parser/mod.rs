@@ -86,6 +86,8 @@ pub enum ParseError<'ast> {
     PatternOutOfParameterDefinition(WithLocation<LinearTypeAst<'ast>>),
     MissingBranch(WithLocation<LinearTypeAst<'ast>>),
     OutgoingFixPointReference(WithLocation<LinearTypeAst<'ast>>, String, usize),
+    WildcardOutOfConstraint(WithLocation<BasicTypeAst>),
+    AstNotDesugared(WithLocation<BasicTypeAst>),
     InternalError(String),
 }
 
@@ -96,6 +98,21 @@ impl<'ast> ParseError<'ast> {
     /// 辅助函数：从 WithLocation 提取位置信息
     /// 返回 (char_start, char_end, filepath_owned)
     fn extract_location_info(ast: &WithLocation<LinearTypeAst<'ast>>) -> (usize, usize, String) {
+        if let Some(location) = ast.location() {
+            let source = location.source();
+            let span = location.span();
+            let content = source.content();
+            let char_start = byte_offset_to_char_offset(content, span.start);
+            let char_end = byte_offset_to_char_offset(content, span.end);
+            let filepath = source.filepath();
+            (char_start, char_end, filepath)
+        } else {
+            // 如果没有位置信息，使用默认值
+            (0, 1, "<unknown>".to_string())
+        }
+    }
+
+    fn extract_location_info_basic(ast: &WithLocation<BasicTypeAst>) -> (usize, usize, String) {
         if let Some(location) = ast.location() {
             let source = location.source();
             let span = location.span();
@@ -141,6 +158,32 @@ impl<'ast> ParseError<'ast> {
                             .with_color(Color::Red),
                     )
                     .with_help("Ensure that fix-point variables are only used within their defining function's scope, or use 'dyn_rec' for dynamic recursion")
+                    .finish()
+            }
+            ParseError::WildcardOutOfConstraint(ast) => {
+                let (char_start, char_end, filepath) = Self::extract_location_info_basic(ast);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
+                    .with_message("Wildcard type used outside of a constraint")
+                    .with_label(
+                        Label::new((filepath, char_start..char_end))
+                            .with_message("Wildcards ('_') can only be used within type constraints")
+                            .with_color(Color::Red),
+                    )
+                    .with_help("Use explicit types or type variables instead of Wildcards outside of constraints")
+                    .finish()
+            }
+            ParseError::AstNotDesugared(ast) => {
+                let (char_start, char_end, filepath) = Self::extract_location_info_basic(ast);
+                Report::build(ReportKind::Error, filepath.clone(), char_start)
+                    .with_message("CRITICAL: AST node not desugared before type processing")
+                    .with_label(
+                        Label::new((filepath, char_start..char_end))
+                            .with_message(
+                                "This AST node should have been desugared before type processing",
+                            )
+                            .with_color(Color::Red),
+                    )
+                    .with_help("This is likely a compiler bug; please report it to the maintainers")
                     .finish()
             }
             ParseError::RedeclaredCaptureValue(ast, name) => {
@@ -472,6 +515,7 @@ impl ParseContext {
         name: &str,
     ) -> Result<(&WithLocation<()>, Option<usize>), ContextError> {
         let mut outgoing_function_layer_count = 0;
+        let mut skip_generic = false;
         for scope in self.declared_variables.iter_mut().rev() {
             match scope {
                 Scope::Function(map) => {
@@ -482,10 +526,14 @@ impl ParseContext {
                     outgoing_function_layer_count += 1;
                 }
                 Scope::Generic(map) => {
+                    if skip_generic {
+                        continue;
+                    }
                     if let Some((count, loc)) = map.get_mut(name) {
                         *count += 1;
                         return Ok((loc, None));
                     }
+                    skip_generic = true; // 只允许跨越一层 Generic
                 }
                 Scope::FixPoint(n, count, loc) => {
                     if n == name {
@@ -550,7 +598,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
 
     pub fn lookup<S: AsRef<str>>(&self, var: S) -> Option<(Type<T>, Option<usize>)> {
         let mut outgoing_function_layer_count = 0;
-        for (i, layer) in self.layers.iter().rev().enumerate() {
+        let mut skip_generic = false;
+        for layer in self.layers.iter().rev() {
             match layer {
                 BuildContextLayer::Function { patterns, captures } => {
                     match (patterns.get(var.as_ref()), captures.get(var.as_ref())) {
@@ -577,29 +626,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     outgoing_function_layer_count += 1;
                 }
                 BuildContextLayer::GenericBinding(patterns) => {
-                    let mut layer = 0;
-                    // 向栈底搜索，计数GenericBinding层数，碰到Function的时候停止
-                    for rev_layer in self.layers.iter().rev().skip(i + 1) {
-                        match rev_layer {
-                            BuildContextLayer::GenericBinding(_) => {
-                                layer += 1;
-                            }
-                            BuildContextLayer::Function { .. } => break,
-                            BuildContextLayer::FixPoint(_, _) => continue,
-                        }
+                    if skip_generic {
+                        continue;
                     }
-
                     if let Some(v) = patterns.get(var.as_ref()) {
                         return Some((
                             Pattern::new(
                                 Arc::from(var.as_ref()),
-                                layer,
                                 v.location().cloned().map(Arc::new),
                             )
                             .dispatch(),
                             None,
                         ));
                     }
+                    skip_generic = true; // 只允许跨越一层 Generic
                 }
                 BuildContextLayer::FixPoint(name, v) => {
                     if var.as_ref().eq(name) {
@@ -1000,11 +1040,11 @@ pub fn inject_std_library(
     let constraint $"op#gt": any = constraint (x: any, y: any) => __greater!(x, y, true, false);
     let constraint $"op#lt": any = constraint (x: any, y: any) => __less!(x, y, true, false);
     let constraint $"op#gte": any = match 
-        | exist _x in (_x, _x) where _x as any => true
+        | exist _x in (_x, _x) where () as () => true
         | constraint (x: any, y: any) => __greater!(x, y, true, false)
         | panic;
     let constraint $"op#lte": any = match
-        | exist _x in (_x, _x) where _x as any => true
+        | exist _x in (_x, _x) where () as () => true
         | constraint (x: any, y: any) => __less!(x, y, true, false)
         | panic;
     let constraint $"op#neg": any = constraint (x: any) => __neg!(x);
@@ -1032,8 +1072,7 @@ pub fn inject_std_library(
                 }
                 BasicTypeAst::Float => std_ast,
                 BasicTypeAst::Char => std_ast,
-                BasicTypeAst::Top => std_ast,
-                BasicTypeAst::Bottom => std_ast,
+                BasicTypeAst::Wildcard => std_ast,
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
                 BasicTypeAst::OrderedType(_) => std_ast,

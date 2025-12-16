@@ -18,7 +18,7 @@ use crate::{
         variable::Variable,
     },
     util::{
-        collector::Collector, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -125,10 +125,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v) => match &v.kind {
-                    crate::types::type_bound::TypeBoundKind::Top => Ok(ThreeValuedLogic::True),
-                    _ => Ok(ThreeValuedLogic::False),
-                },
                 TypeRef::Opcode(v) => match (&self.kind, &v.kind) {
                     (OpcodeKind::Add, OpcodeKind::Opcode)
                     | (OpcodeKind::Sub, OpcodeKind::Opcode)
@@ -172,10 +168,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v) => match &v.kind {
-                    crate::types::type_bound::TypeBoundKind::Top => Ok(ThreeValuedLogic::True),
-                    _ => Ok(ThreeValuedLogic::False),
-                },
+
                 TypeRef::Opcode(v) => Ok(match (&self.kind, &v.kind) {
                     (OpcodeKind::Opcode, OpcodeKind::Opcode)
                     | (OpcodeKind::Add, OpcodeKind::Add)
@@ -247,7 +240,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
 
                     let call_back: Type<T> = Closure::new(
                         vec![(Vec::<(&'static str, EnvironmentVarState<Type<T>, T>)>::new(), Constraint::new_constraint(vec!["var#fixpoint".to_string()], 
-                            Pattern::new(Arc::from("var#fixpoint"), 0, source_info.clone()), 
+                            Pattern::new(Arc::from("var#fixpoint"), source_info.clone()), 
                             (Sequence::unit(None), Sequence::unit(None)), None),invoke)],
                         source_info.clone(),
                     );
@@ -275,11 +268,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             let true_branch = tuple.get_prefix_value(2).unwrap();
                             let false_branch = tuple.get_prefix_value(3).unwrap();
                             let mut assumptions = smallvec::SmallVec::new();
-                            let mut pattern_env = Collector::new_disabled();
                             let mut env_stack = EnvironmentStack::new();
                             let mut type_check_ctx = TypeCheckContext::new(
                                 &mut assumptions,
-                                &mut pattern_env,
+                                None,
                                 ctx.environment,
                                 ctx.environment,
                                 &mut env_stack

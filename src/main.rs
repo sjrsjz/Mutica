@@ -197,10 +197,11 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
         return;
     }
 
-    let linearized =
-        desugared.linearize(&mut LinearizeContext::new(), desugared.location()).finalize();
-    // println!("Linearized AST: {:#?}", linearized);
     let mut flow_errors = Vec::new();
+    let linearized = desugared
+        .linearize(&mut LinearizeContext::new(), &mut flow_errors, desugared.location())
+        .finalize();
+    // println!("Linearized AST: {:#?}", linearized);
     let flowed = linearized.flow(&mut ParseContext::new(), linearized.location(), &mut flow_errors);
     // println!("Flowed AST: {:#?}", flowed.ty());
 

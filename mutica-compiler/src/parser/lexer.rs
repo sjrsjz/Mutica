@@ -203,8 +203,6 @@ pub enum LexerToken {
     Any,
     #[token("import")]
     Import,
-    #[token("none")]
-    None,
     #[token("if")]
     If,
     #[token("then")]

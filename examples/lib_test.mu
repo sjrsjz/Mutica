@@ -43,7 +43,7 @@ let constraint {
 
 // 创建测试列表: [1, 2, 3, 4, 5]
 let constraint test_list: any = cons(1, cons(2, cons(3, cons(4, cons(5, Nil)))));
-let exist _x in (_x, _x) where _x as any = (test_list, (1, 2, 3, 4, 5)); // 类型检查
+let exist _x in (_x, _x) where () as () = (test_list, (1, 2, 3, 4, 5)); // 类型检查
 let constraint print_int_list: any = constraint lst: List(nat) => {
     discard for constraint x: nat = iter(lst) in {
         discard print!(x);

@@ -11,7 +11,9 @@ use crate::{
         unify::{Environment, EnvironmentVarState},
     },
     util::{
-        arc_opt::ArcOpt, collector::Collector, source_info::SourceLocation,
+        arc_opt::ArcOpt,
+        collector::{Collector, CollectorExt},
+        source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -105,11 +107,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
                 TypeRef::Constraint(_) => Ok(ThreeValuedLogic::Unknown), // 不可判定
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -135,11 +132,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Bound(v)
-                    if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                {
-                    Ok(ThreeValuedLogic::True)
-                }
+
                 TypeRef::Constraint(_) => Ok(ThreeValuedLogic::Unknown), // 不可判定
                 _ => Ok(ThreeValuedLogic::False),
             }
@@ -221,7 +214,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         let mut collector = Collector::new();
         let mut new_ctx = TypeCheckContext::new(
             ctx.assumptions,
-            &mut collector,
+            Some(&mut collector),
             ctx.lhs_env,
             ctx.rhs_env,
             ctx.collected,
@@ -245,7 +238,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         }
         ctx.collected.push(env);
         let (f, g) = self.constraint();
-        let check_result = f.subof(g.as_ref_dispatcher(), ctx);
+        let mut new_ctx =
+            TypeCheckContext::new(ctx.assumptions, None, ctx.lhs_env, ctx.rhs_env, ctx.collected);
+        let check_result = f.subof(g.as_ref_dispatcher(), &mut new_ctx);
         ctx.collected.pop();
         Ok(result & check_result?)
     }
@@ -261,7 +256,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         let mut collector = Collector::new();
         let mut new_ctx = TypeCheckContext::new(
             ctx.assumptions,
-            &mut collector,
+            Some(&mut collector),
             ctx.lhs_env,
             ctx.rhs_env,
             ctx.collected,
@@ -295,7 +290,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         // 先推入当前已绑定环境到 collected 栈
         ctx.collected.push(env);
         let (f, g) = self.constraint();
-        let check_result = f.check(g.as_ref_dispatcher(), ctx);
+        let mut new_ctx =
+            TypeCheckContext::new(ctx.assumptions, None, ctx.lhs_env, ctx.rhs_env, ctx.collected);
+        let check_result = f.check(g.as_ref_dispatcher(), &mut new_ctx);
         ctx.collected.pop();
         Ok((result & check_result?, bindings))
     }

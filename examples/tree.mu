@@ -1,3 +1,4 @@
+let constraint Any::(Any: any) = import "lib/any.mu";
 // 二叉树示例
 let constraint Leaf: any = constraint value: any => Leaf::value;
 let constraint Node: any = constraint (left: any, right: any, value: any) => Node::(left, right, value);
@@ -8,8 +9,8 @@ let constraint Tree: any = constraint T: any => rec tree: (Empty::() | Leaf::T |
 let constraint tree_size: any = 
     dyn_rec size: match
         | assert Empty => 0
-        | assert Leaf(any) => 1
-        | constraint Node::(left: any, right: any, any) => 
+        | assert Leaf(Any) => 1
+        | constraint Node::(left: any, right: any, _T: any) => 
             1 + size(left) + size(right)
         | panic;
 
@@ -17,8 +18,8 @@ let constraint tree_size: any =
 let constraint tree_height: any = 
     dyn_rec height: match
         | assert Empty => 0
-        | assert Leaf(any) => 1
-        | constraint Node::(left: any, right: any, any) => {
+        | assert Leaf(Any) => 1
+        | constraint Node::(left: any, right: any, _T: any) => {
             let constraint lh: nat = height(left);
             let constraint rh: nat = height(right);
             1 + (if lh > rh then lh else rh)
@@ -42,4 +43,4 @@ let constraint mytree: any =
         1
     );
 
-tree_size mytree, tree_height mytree, tree_sum mytree, mytree is Tree(nat), Tree(nat) is Tree(any)
+tree_size mytree, tree_height mytree, tree_sum mytree, mytree is Tree(nat), Tree(nat) is Tree(Any)

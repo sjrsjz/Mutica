@@ -1,9 +1,10 @@
+let constraint Any::(Any: any) = import "lib/any.mu";
 // Either 类型示例 (用于错误处理)
 let constraint Left: any = constraint value: any => Left::value;
 let constraint Right: any = constraint value: any => Right::value;
 let constraint Either: any = constraint  (T: any, U: any) => (Left T | Right U);
 // map_right: 只对 Right 值进行映射
-let constraint map_right: any = constraint either: Either(any, any) => constraint f: any =>
+let constraint map_right: any = constraint either: Either(Any, Any) => constraint f: any =>
     match either
         | constraint Left::(err: any) => Left(err)
         | constraint Right::(val: any) => Right(f(val))
@@ -16,7 +17,7 @@ let constraint safe_div: any = constraint a: nat => match
     | panic;
 
 // 链式操作
-let constraint bind: any = constraint either: Either(any, any) => constraint f: any =>
+let constraint bind: any = constraint either: Either(Any, Any) => constraint f: any =>
     match either
         | constraint Left::(err: any) => Left(err)
         | constraint Right::(val: any) => f(val)

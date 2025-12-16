@@ -42,7 +42,6 @@ extern {
         "True"          => LexerToken::True,
         "False"         => LexerToken::False,
         "Any"           => LexerToken::Any,
-        "None"          => LexerToken::None,
         "Import"        => LexerToken::Import,
         "If"            => LexerToken::If,
         "Then"          => LexerToken::Then,
@@ -144,7 +143,6 @@ TrueTok: () = <l:@L> "True" <r:@R> => { TokenColor::fill_colors(colors, l..r, To
 FalseTok: () = <l:@L> "False" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
 AnyTok: () = <l:@L> "Any" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
 WildcardTok: () = <l:@L> "Wildcard" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
-NoneTok: () = <l:@L> "None" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
 
 // Individual keyword tokens (keeps locations simple and centralizes coloring)
 LetTok: () = <l:@L> "Let" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
@@ -228,9 +226,8 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> CharTok <r:@R> => WithLocation::new(TypeAst::Char, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> TrueTok <r:@R> => WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> FalseTok <r:@R> => WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> AnyTok <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> WildcardTok <r:@R> => WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> NoneTok <r:@R> => WithLocation::new(TypeAst::Bottom, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> AnyTok <r:@R> => WithLocation::new(TypeAst::Wildcard, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> WildcardTok <r:@R> => WithLocation::new(TypeAst::Wildcard, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <f: Float> <r:@R> => WithLocation::new(TypeAst::FloatLiteral(f), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <l:@L> <n: Num> <r:@R> => {
         if n == 0 {
@@ -350,16 +347,16 @@ IfElse: WithLocation<TypeAst> = {
                             vars: vec![],
                             pattern: WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
                             constraint: (
-                                WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                                WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
                             ),
                         }, else_branch),
                         (GenericPattern::Standard {
                             vars: vec![],
                             pattern: WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
                             constraint: (
-                                WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                                WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
                             ),
                         }, then_branch),
                     ],
@@ -372,16 +369,16 @@ IfElse: WithLocation<TypeAst> = {
                         vars: vec![],
                         pattern: WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
                         constraint: (
-                            WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                            WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
                         ),
                     }, else_branch),
                     (GenericPattern::Standard {
                         vars: vec![],
                         pattern: WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
                         constraint: (
-                            WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                            WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
                         ),
                     }, then_branch),
                 ],
@@ -831,11 +828,8 @@ Expression: WithLocation<TypeAst> = {
                         Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
                     ),
                     constraint: (
-                        WithLocation::new(TypeAst::Variable(extend_expr.0.clone()), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
-                        WithLocation::new(
-                            TypeAst::Top,
-                            Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                        )
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
                     ),
                 });
                 new_types.insert(0, WithLocation::new(
@@ -870,11 +864,8 @@ Expression: WithLocation<TypeAst> = {
                         Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
                     ),
                     constraint: (
-                        WithLocation::new(TypeAst::Variable(extend_expr.0.clone()), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
-                        WithLocation::new(
-                            TypeAst::Top,
-                            Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                        )
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
                     ),
                 }],
                 binding_types: vec![WithLocation::new(
@@ -910,8 +901,8 @@ Expression: WithLocation<TypeAst> = {
                     vars: vec![],
                     pattern: WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
                     constraint: (
-                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
                     ),
                 });
                 new_types.insert(0, discard_expr);
@@ -926,8 +917,8 @@ Expression: WithLocation<TypeAst> = {
                     vars: vec![],
                     pattern: WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
                     constraint: (
-                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
                     ),
                 }],
                 binding_types: vec![discard_expr],
@@ -970,8 +961,8 @@ HandleWith: WithLocation<TypeAst> = {
                     vars: vec![],
                     pattern: WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
                     constraint: (
-                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                        WithLocation::new(TypeAst::Top, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
                     ),
                 }, expr)],
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),

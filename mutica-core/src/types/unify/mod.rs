@@ -224,13 +224,17 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentStack<U, V> {
         self.stack.pop()
     }
 
-    pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
-        for env in self.stack.iter().rev() {
-            if let Some(ty) = env.lookup(name.as_ref()) {
-                return Some(ty);
-            }
-        }
-        None
+    // pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
+    //     for env in self.stack.iter().rev() {
+    //         if let Some(ty) = env.lookup(name.as_ref()) {
+    //             return Some(ty);
+    //         }
+    //     }
+    //     None
+    // }
+
+    pub fn lookup_at_last_layer<S: AsRef<str>>(&self, name: S) -> Option<&U> {
+        if let Some(env) = self.stack.last() { env.lookup(name.as_ref()) } else { None }
     }
 
     pub fn layers(&self) -> usize {

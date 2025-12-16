@@ -8,12 +8,13 @@ use crate::{
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
         TypeCheckContext, TypeError, TypeRef,
     },
-    util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
+    util::{
+        collector::CollectorExt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
     bind_name: Arc<str>,
-    bind_layer: usize, // 从栈底开始数的，相当于嵌套了第几层
     source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<T>,
 }
@@ -22,7 +23,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Pattern<T> {
     fn clone(&self) -> Self {
         Self {
             bind_name: self.bind_name.clone(),
-            bind_layer: self.bind_layer,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
@@ -44,7 +44,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
         _depth: usize,
         _max_depth: usize,
     ) -> String {
-        format!("T_{}.{}", self.bind_layer, self.bind_name)
+        format!("T.{}", self.bind_name)
     }
 }
 
@@ -69,7 +69,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        (match ctx.collected.lookup(&self.bind_name) {
+        (match ctx.collected.lookup_at_last_layer(&self.bind_name) {
             Some(existing) => existing.clone(),
             None => {
                 return ctx.pattern_collector.collect(|pattern_env| {
@@ -89,11 +89,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                         TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                         TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                        TypeRef::Bound(v)
-                            if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                        {
-                            Ok(ThreeValuedLogic::True)
-                        }
                         // Pattern 无法直接匹配其他类型
                         _ => Ok(ThreeValuedLogic::False),
                     }
@@ -108,7 +103,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        (match ctx.collected.lookup(&self.bind_name) {
+        (match ctx.collected.lookup_at_last_layer(&self.bind_name) {
             Some(existing) => existing.clone(),
             None => {
                 return ctx.pattern_collector.collect(|pattern_env| {
@@ -126,11 +121,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                         TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                         TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                        TypeRef::Bound(v)
-                            if matches!(&v.kind, crate::types::type_bound::TypeBoundKind::Top) =>
-                        {
-                            Ok(ThreeValuedLogic::True)
-                        }
                         _ => Ok(ThreeValuedLogic::False),
                     }
                 });
@@ -187,73 +177,38 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        other.check(
-            (if self.bind_layer < ctx.collected.layers() {
-                match ctx.collected.lookup(&self.bind_name) {
+        if let Some(pattern_env) = &mut ctx.pattern_collector {
+            pattern_env.push((self.bind_name.clone(), other.clone_data()));
+            Ok(ThreeValuedLogic::True)
+        } else {
+            other.check(
+                match ctx.collected.lookup_at_last_layer(&self.bind_name) {
                     Some(existing) => existing.clone(),
-                    None => {
-                        return Ok(ThreeValuedLogic::Unknown); // 未绑定
-                    }
+                    None => return Ok(ThreeValuedLogic::Unknown),
                 }
-            } else if self.bind_layer == ctx.collected.layers() {
-                // 绑定当前层
-                ctx.pattern_collector.push((self.bind_name.clone(), other.clone_data()));
-                return Ok(ThreeValuedLogic::True);
-            } else {
-                return Err(TypeError::GenericLayerOverflow(other.clone_data().into()));
-            })
-            .as_ref_dispatcher(),
-            ctx,
-        )
+                .as_ref_dispatcher(),
+                ctx,
+            )
+        }
     }
 
     #[stacksafe::stacksafe]
     fn superof(
         &self,
-        other: Self::RefDispatcher<'_>,
-        ctx: &mut TypeCheckContext<Type<T>, T>,
+        _other: Self::RefDispatcher<'_>,
+        _ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        other.subof(
-            (if self.bind_layer < ctx.collected.layers() {
-                match ctx.collected.lookup(&self.bind_name) {
-                    Some(existing) => existing.clone(),
-                    None => {
-                        return Ok(ThreeValuedLogic::Unknown); // 未绑定
-                    }
-                }
-            } else if self.bind_layer == ctx.collected.layers() {
-                // 绑定当前层
-                ctx.pattern_collector.push((self.bind_name.clone(), other.clone_data()));
-                return Ok(ThreeValuedLogic::True);
-            } else {
-                return Err(TypeError::GenericLayerOverflow(other.clone_data().into()));
-            })
-            .as_ref_dispatcher(),
-            ctx,
-        )
+        Ok(ThreeValuedLogic::Unknown)
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<S: Into<Arc<str>>>(
-        bind_name: S,
-        bind_layer: usize,
-        source_info: Option<Arc<SourceLocation>>,
-    ) -> Self {
-        Self {
-            bind_name: bind_name.into(),
-            bind_layer,
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
+    pub fn new<S: Into<Arc<str>>>(bind_name: S, source_info: Option<Arc<SourceLocation>>) -> Self {
+        Self { bind_name: bind_name.into(), source_info, _phantom: std::marker::PhantomData }
     }
 
     pub fn bind_name(&self) -> &Arc<str> {
         &self.bind_name
-    }
-
-    pub fn bind_layer(&self) -> usize {
-        self.bind_layer
     }
 }

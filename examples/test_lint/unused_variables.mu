@@ -1,5 +1,5 @@
 let constraint (
-    x: any, any, any, w: any,
+    x: any, _x: any, _x: any, w: any,
     tuple: (
         a: nat, nat, c: nat    
     )

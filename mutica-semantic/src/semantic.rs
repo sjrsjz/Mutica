@@ -45,8 +45,6 @@ impl<'ast> SourceMapping<'ast> {
             }
             LinearTypeAst::Float => (),
             LinearTypeAst::Char => (),
-            LinearTypeAst::Top => (),
-            LinearTypeAst::Bottom => (),
             LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
             LinearTypeAst::OrderedType(_) => (),

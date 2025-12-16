@@ -18,7 +18,6 @@ pub mod ordered_type;
 pub mod pattern;
 pub mod sequence;
 pub mod subof;
-pub mod type_bound;
 pub mod unify;
 pub mod variable;
 
@@ -52,7 +51,6 @@ use crate::{
         pattern::Pattern,
         sequence::Sequence,
         subof::SubOf,
-        type_bound::TypeBound,
         unify::{Environment, EnvironmentStack, EnvironmentView},
         variable::Variable,
     },
@@ -70,7 +68,6 @@ pub type TypeReport = ariadne::Report<'static, (String, std::ops::Range<usize>)>
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
     fn clone(&self) -> Self {
         match self {
-            Type::Bound(v) => Type::<T>::Bound(v.clone()),
             Type::Sequence(v) => Type::<T>::Sequence(v.clone()),
             Type::Float(v) => Type::<T>::Float(v.clone()),
             Type::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
@@ -95,8 +92,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
 }
 
 pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
-    // 类型边界
-    Bound(TypeBound<T>),
     // 整数类型
     Sequence(Sequence<T>),
     // 浮点类型
@@ -138,7 +133,6 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
-    Bound(&'a TypeBound<T>),
     Sequence(&'a Sequence<T>),
     Float(&'a Float<T>),
     FloatValue(&'a FloatValue<T>),
@@ -191,7 +185,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         match self {
-            TypeRef::Bound(v) => v.check(other, ctx),
             TypeRef::Sequence(v) => v.check(other, ctx),
             TypeRef::Float(v) => v.check(other, ctx),
             TypeRef::FloatValue(v) => v.check(other, ctx),
@@ -220,7 +213,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         match self {
-            TypeRef::Bound(v) => v.subof(other, ctx),
             TypeRef::Sequence(v) => v.subof(other, ctx),
             TypeRef::Float(v) => v.subof(other, ctx),
             TypeRef::FloatValue(v) => v.subof(other, ctx),
@@ -245,7 +237,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
         match self {
-            TypeRef::Bound(v) => v.tagged_ptr(),
             TypeRef::Sequence(v) => v.tagged_ptr(),
             TypeRef::Float(v) => v.tagged_ptr(),
             TypeRef::FloatValue(v) => v.tagged_ptr(),
@@ -274,7 +265,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         match self {
-            TypeRef::Bound(v) => v.source_info(),
             TypeRef::Sequence(v) => v.source_info(),
             TypeRef::Float(v) => v.source_info(),
             TypeRef::FloatValue(v) => v.source_info(),
@@ -299,7 +289,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
 
     fn report_source_info(&self) -> TypeReport {
         match self {
-            TypeRef::Bound(v) => v.report_source_info(),
             TypeRef::Sequence(v) => v.report_source_info(),
             TypeRef::Float(v) => v.report_source_info(),
             TypeRef::FloatValue(v) => v.report_source_info(),
@@ -326,7 +315,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
     pub fn clone_data(self) -> Type<T> {
         match self {
-            TypeRef::Bound(v) => Type::<T>::Bound(v.clone()),
             TypeRef::Sequence(v) => Type::<T>::Sequence(v.clone()),
             TypeRef::Float(v) => Type::<T>::Float(v.clone()),
             TypeRef::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
@@ -920,7 +908,6 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
 macro_rules! type_dispatch {
     ($self:expr, $method:ident $(, $args:expr)*) => {
         match $self {
-            Type::Bound(v) => v.$method($($args),*),
             Type::Sequence(v) => v.$method($($args),*),
             Type::Float(v) => v.$method($($args),*),
             Type::FloatValue(v) => v.$method($($args),*),
@@ -1116,7 +1103,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
         Self: 'a;
     fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
         match self {
-            Type::Bound(v) => TypeRef::Bound(v),
             Type::Sequence(v) => TypeRef::Sequence(v),
             Type::Float(v) => TypeRef::Float(v),
             Type::FloatValue(v) => TypeRef::FloatValue(v),
@@ -1153,7 +1139,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
         Self: 'a;
     fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
         match self {
-            Type::Bound(v) => TypeRef::Bound(v),
             Type::Sequence(v) => TypeRef::Sequence(v),
             Type::Float(v) => TypeRef::Float(v),
             Type::FloatValue(v) => TypeRef::FloatValue(v),
@@ -1224,7 +1209,7 @@ impl<T> TaggedPtr<T> {
 /// 类型检查上下文，用于 `check` 方法
 pub struct TypeCheckContext<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-    pub pattern_collector: &'a mut Collector<(Arc<str>, U)>,
+    pub pattern_collector: Option<&'a mut Collector<(Arc<str>, U)>>,
     pub lhs_env: EnvironmentView<'a, U, V>,
     pub rhs_env: EnvironmentView<'a, U, V>,
     pub collected: &'a mut EnvironmentStack<U, V>,
@@ -1234,7 +1219,7 @@ pub struct TypeCheckContext<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, V> {
     pub fn new(
         assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        pattern_collector: &'a mut Collector<(Arc<str>, U)>,
+        pattern_collector: Option<&'a mut Collector<(Arc<str>, U)>>,
         lhs_env: EnvironmentView<'a, U, V>,
         rhs_env: EnvironmentView<'a, U, V>,
         collected: &'a mut EnvironmentStack<U, V>,
@@ -1260,7 +1245,13 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
     ) -> Self {
-        Self { pattern_environment, capture_environment: context_environment, rec_assumptions, gc, roots }
+        Self {
+            pattern_environment,
+            capture_environment: context_environment,
+            rec_assumptions,
+            gc,
+            roots,
+        }
     }
 }
 
@@ -1314,7 +1305,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
             self.as_ref_dispatcher(),
             &mut TypeCheckContext::new(
                 &mut SmallVec::new(),
-                &mut Collector::new(),
+                None,
                 rhs_env,
                 lhs_env,
                 &mut EnvironmentStack::new()
@@ -1324,7 +1315,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
             other,
             &mut TypeCheckContext::new(
                 &mut SmallVec::new(),
-                &mut Collector::new(),
+                None,
                 lhs_env,
                 rhs_env,
                 &mut EnvironmentStack::new()

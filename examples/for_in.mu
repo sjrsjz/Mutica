@@ -1,8 +1,9 @@
 let constraint list_pkg: any = import "lib/list.mu";
+let constraint Any::(Any: any) = import "lib/any.mu";
 let constraint List::(List: any) = list_pkg;
 
 let constraint List: any = List;
-let constraint iter: any = constraint lst: List(any) => constraint f: any => {
+let constraint iter: any = constraint lst: List(Any) => constraint f: any => {
     loop go: constraint t: any = lst;
     match t
         | assert () => ()

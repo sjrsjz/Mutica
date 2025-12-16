@@ -1,4 +1,6 @@
 let constraint maybe_pkg: any = import "maybe.mu";
+let constraint Any::(Any: any) = import "any.mu";
+let constraint throw_panic::(throw_panic: any) = import "panic.mu";
 
 let constraint List: any = constraint T: any => rec list: (() | (T ~ list));
 
@@ -8,9 +10,7 @@ let constraint Greater: any = constraint (T: any, n: nat) => {
         | constraint m: nat => {
             if m > 0
                 then (T ~ go(m - 1))
-                else {
-                    let assert none = "Cannot create Greater with negative length"; // panic
-                }
+                else throw_panic("Invalid Greater: n must be >= 0")
         }
         | panic;
     go(n)
@@ -22,21 +22,15 @@ let constraint Range: any = constraint (T: any, min: nat, max: nat) => {
         | constraint (0, m: nat) => {
             if m > 0
                 then (() | (T ~ go(0, m - 1)))
-                else {
-                    let assert none = "Invalid range: max must be >= 0"; // panic
-                }
+                else throw_panic("Invalid Range: max must be > 0 in this branch")
         }
         | constraint (n: nat, m: nat) => {
             if n > 0 then {
                 if m >= n
                     then (T ~ go(n - 1, m - 1))
-                    else {
-                        let assert none = "Invalid range: max must be >= min"; // panic
-                    }
+                    else throw_panic("Invalid Range: max must be >= min")
             }
-            else {
-                let assert none = "Invalid range: min must be > 0 in this branch"; // panic
-            }
+            else throw_panic("Invalid Range: min must be >= 0")
         }
         | panic;
     go(min, max)
@@ -48,9 +42,7 @@ let constraint Exact: any = constraint (T: any, n: nat) => {
         | constraint m: nat => {
             if m > 0
                 then (T,) + go(m - 1)
-                else {
-                    let assert none = "Cannot create Exact with negative length"; // panic
-                }
+                else throw_panic("Cannot create Exact with negative length")
         }
         | panic;
     go(n)
@@ -63,9 +55,7 @@ let constraint Modular: any = constraint (T: any, a: nat, b: nat) => {
             | constraint c: nat => {
                 if c > 0 
                     then (T ~ add_a((c - 1, tail_type)))
-                    else {
-                        let assert none = "Invalid Modular: a must be > 0"; // panic
-                    }
+                    else throw_panic("Invalid Modular: a must be > 0")
             }
             | panic;
         (() | add_a((a, cycle)))
@@ -76,9 +66,7 @@ let constraint Modular: any = constraint (T: any, a: nat, b: nat) => {
         | constraint c: nat => {
             if c >= 0 
                 then (T ~ add_b((c - 1, tail_type)))
-                else {
-                    let assert none = "Invalid Modular: b must be >= 0"; // panic
-                }
+                else throw_panic("Invalid Modular: b must be >= 0")
             }
         | panic;
     add_b((b, cycle))
@@ -87,16 +75,16 @@ let constraint Modular: any = constraint (T: any, a: nat, b: nat) => {
 let constraint Nil: any = ();
 let constraint cons: any = constraint (head: any, tail: any) => (head,) + tail;
 let constraint head: any = match
-    | constraint (h: any ~ _) => h
+    | constraint (h: any ~ _T: _) => h
     | panic;
 let constraint tail: any = match
-    | constraint (_ ~ t: any) => t
+    | constraint (_T: _ ~ t: any) => t
     | panic;
 let constraint is_nil: any = match
     | assert () => true
-    | assert _ => false
+    | constraint _T: _ => false
     | panic;
-let constraint iter: any = constraint lst: List(any) => constraint f: any => {
+let constraint iter: any = constraint lst: List(Any) => constraint f: any => {
     loop go: constraint t: any = lst;
     match t
         | assert () => ()
@@ -106,21 +94,21 @@ let constraint iter: any = constraint lst: List(any) => constraint f: any => {
         }
         | panic
 };
-let constraint map: any = constraint lst: List(any) => constraint f: any => {
+let constraint map: any = constraint lst: List(Any) => constraint f: any => {
     loop go: constraint t: any = lst;
     match t
         | assert () => ()
         | constraint (h: any ~ t: any) => cons(f(h), go(t))
         | panic
 };
-let constraint len: any = constraint lst: List(any) => {
+let constraint len: any = constraint lst: List(Any) => {
     loop go: constraint t: any = lst;
     match t
         | assert () => 0
-        | constraint (_ ~ t: any) => 1 + go(t)
+        | constraint (_T: _ ~ t: any) => 1 + go(t)
         | panic
 };
-let constraint filter: any = constraint lst: List(any) => constraint pred: any => {
+let constraint filter: any = constraint lst: List(Any) => constraint pred: any => {
     loop go: constraint t: any = lst;
     match t
         | assert () => ()
@@ -130,7 +118,7 @@ let constraint filter: any = constraint lst: List(any) => constraint pred: any =
         | panic
 };
 let constraint fold: any = 
-    constraint lst: List(any) => 
+    constraint lst: List(Any) => 
     constraint acc: any => 
     constraint f: any => {
     loop go: constraint (t: any, a: any) = (lst, acc);
@@ -140,7 +128,7 @@ let constraint fold: any =
         | panic
 };
 let constraint foldr: any = 
-    constraint lst: List(any) => 
+    constraint lst: List(Any) => 
     constraint acc: any => 
     constraint f: any => {
     loop go: constraint t: any = lst;
@@ -150,41 +138,41 @@ let constraint foldr: any =
         | panic
 };
 let constraint append: any = 
-    constraint lst1: List(any) => 
-    constraint lst2: List(any) => {
+    constraint lst1: List(Any) => 
+    constraint lst2: List(Any) => {
     lst1 + lst2
 };
-let constraint reverse: any = constraint lst: List(any) => {
+let constraint reverse: any = constraint lst: List(Any) => {
     loop go: constraint t: any = (lst, ());
     match t
         | constraint ((), acc: any) => acc
         | constraint ((h: any ~ t: any), acc: any) => go(t, cons(h, acc))
         | panic
 };
-let constraint nth: any = constraint lst: List(any) => constraint n: nat => {
+let constraint nth: any = constraint lst: List(Any) => constraint n: nat => {
     loop go: constraint (t: any, i: nat) = (lst, n);
     match (t, i)
-        | constraint ((h: any ~ _) , 0) => h
-        | constraint ((_ ~ t: any), i: nat) => go(t, i - 1)
+        | constraint ((h: any ~ _T: _) , 0) => h
+        | constraint ((_T: _ ~ t: any), i: nat) => go(t, i - 1)
         | panic
 };
-let constraint take: any = constraint lst: List(any) => constraint n: nat => {
+let constraint take: any = constraint lst: List(Any) => constraint n: nat => {
     loop go: constraint (t: any, i: nat) = (lst, n);
     match (t, i)
-        | assert ((), _) => ()
-        | assert (_, 0) => ()
+        | constraint ((), _T: _) => ()
+        | constraint (_T: _, 0) => ()
         | constraint ((h: any ~ t: any), i: nat) => cons(h, go(t, i - 1))
         | panic
 };
-let constraint drop: any = constraint lst: List(any) => constraint n: nat => {
+let constraint drop: any = constraint lst: List(Any) => constraint n: nat => {
     loop go: constraint (t: any, i: nat) = (lst, n);
     match (t, i)
-        | assert ((), _) => ()
+        | constraint ((), _T: _) => ()
         | constraint (l: any, 0) => l
-        | constraint ((_ ~ t: any), i: nat) => go(t, i - 1)
+        | constraint ((_T: _ ~ t: any), i: nat) => go(t, i - 1)
         | panic
 };
-let constraint find: any = constraint lst: List(any) => constraint pred: any => {
+let constraint find: any = constraint lst: List(Any) => constraint pred: any => {
     let constraint go: any = dyn_rec go: match
         | assert () => {
             let constraint Nothing::(v: any) = maybe_pkg;
@@ -199,7 +187,7 @@ let constraint find: any = constraint lst: List(any) => constraint pred: any => 
         | panic;
     go(lst)
 };
-let constraint list_all: any = constraint lst: List(any) => constraint pred: any => {
+let constraint list_all: any = constraint lst: List(Any) => constraint pred: any => {
     let constraint go: any = dyn_rec go: match
         | assert () => true
         | constraint (h: any ~ t: any) => if pred(h)
@@ -208,7 +196,7 @@ let constraint list_all: any = constraint lst: List(any) => constraint pred: any
         | panic;
     go(lst)
 };
-let constraint list_any: any = constraint lst: List(any) => constraint pred: any => {
+let constraint list_any: any = constraint lst: List(Any) => constraint pred: any => {
     let constraint go: any = dyn_rec go: match
         | assert () => false
         | constraint (h: any ~ t: any) => if pred(h)
