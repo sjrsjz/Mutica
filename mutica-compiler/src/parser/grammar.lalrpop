@@ -473,10 +473,11 @@ Tuple: WithLocation<TypeAst> = {
             head: vec![],
             tail: Box::new(repeat),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> BangTok TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
-            head: vec![],
-            tail: Box::new(repeat),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    // 允许空head的Cons可能导致约束检查不停机
+    // <l:@L> BangTok TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
+    //         head: vec![],
+    //         tail: Box::new(repeat),
+    //     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <item: TupleElement> => item,
 }
 
