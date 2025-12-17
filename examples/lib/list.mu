@@ -94,6 +94,16 @@ let constraint iter: any = constraint lst: List(Any) => constraint f: any => {
         }
         | panic
 };
+let constraint iteri: any = constraint lst: List(Any) => constraint f: any => {
+    loop go: constraint (t: any, index: nat) = (lst, 0);
+    match t
+        | assert () => ()
+        | constraint (h: any ~ t: any) => {
+            discard f(index, h);
+            go(t, index + 1)
+        }
+        | panic
+};
 let constraint map: any = constraint lst: List(Any) => constraint f: any => {
     loop go: constraint t: any = lst;
     match t
@@ -230,4 +240,5 @@ take::take &
 drop::drop &
 find::find &
 list_all::list_all &
-list_any::list_any
+list_any::list_any &
+iteri::iteri
