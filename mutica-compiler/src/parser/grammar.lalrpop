@@ -120,6 +120,17 @@ Ident: String = {
     }
 };
 
+IdentAsMarco: String = {
+    <l:@L> <s:"Ident"> <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Macro);
+        s
+    },
+    <l:@L> DollarTok <s:"StringLit"> <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Macro);
+        s
+    }
+};
+
 StringLiteral: String = {
     <l:@L> <s:"StringLit"> <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::String);
@@ -408,6 +419,22 @@ ForIn: WithLocation<TypeAst> = {
         let (branch, value) = binding;
         WithLocation::new(TypeAst::Apply {
             func: Box::new(value),
+            arg: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(branch, expr)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+    <l:@L> <f_l:@L> <func_var: IdentAsMarco> <f_r:@R> <binding: Binding> InTok <expr: Primary> <r:@R> => {
+        let (branch, value) = binding;
+        // func_var(value)(pattern=>expr)
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::Apply {
+                func: Box::new(WithLocation::new(
+                    TypeAst::Variable(func_var),
+                    Some(SourceLocation::new(source.clone(), f_l..f_r)).as_ref()
+                )),
+                arg: Box::new(value),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
             arg: Box::new(WithLocation::new(TypeAst::Match {
                 branches: vec![(branch, expr)],
             }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
@@ -756,6 +783,35 @@ Let: (GenericPattern, WithLocation<TypeAst>) = {
     LetTok <binding: Binding> SemicolonTok => binding,
 }
 
+CustomLet: (WithLocation<String>, GenericPattern, WithLocation<TypeAst>) = {
+    <l:@L> <func: IdentAsMarco> <r:@R> <binding: Binding> SemicolonTok => {
+        (WithLocation::new(func, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), binding.0, binding.1)
+    }
+}
+
+LetWithoutValue: WithLocation<TypeAst> = {
+    <l:@L> LetTok <branch: Generic> SemicolonTok <expr: Type> <r:@R> => {
+        WithLocation::new(TypeAst::Match {
+            branches: vec![(branch, expr)],
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
+CustomLetWithoutValue: WithLocation<TypeAst> = {
+    <l:@L> <f_l:@L> <custom_func: IdentAsMarco> <f_r:@R> <branch: Generic> SemicolonTok <expr: Type> <r:@R> => {
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(
+                TypeAst::Variable(custom_func),
+                Some(SourceLocation::new(source.clone(), f_l..f_r)).as_ref()
+            )),
+            arg: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(branch, expr)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+    },
+}
+
+
 ExtendDef: (String, WithLocation<TypeAst>, usize, usize) = {
     // extend label: extend_type;
     <l:@L> ExtendTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <expr: Type> SemicolonTok <r:@R> => {
@@ -777,154 +833,82 @@ Recursive: (String, GenericPattern, WithLocation<TypeAst>) = {
 }
 
 Expression: WithLocation<TypeAst> = {
-    <l:@L> LetTok <branch: Generic> SemicolonTok <expr: Type> <r:@R> => {
-        WithLocation::new(TypeAst::Match {
-            branches: vec![(branch, expr)],
+    <let_without_value: LetWithoutValue> => let_without_value,
+    <custom_let_without_value: CustomLetWithoutValue> => custom_let_without_value,
+    <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
+        let (branch, binding_value) = let_expr;
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(branch, e)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(binding_value),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
-        match e.value() {
-            TypeAst::Expression {
-                binding_patterns,
-                binding_types,
-                body,
-            } => {
-                let mut new_patterns = binding_patterns.clone();
-                let mut new_types = binding_types.clone();
-                let (branch, binding_value) = let_expr;
-                new_patterns.insert(0, branch);
-                new_types.insert(0, binding_value);
-                WithLocation::new(TypeAst::Expression {
-                    binding_patterns: new_patterns,
-                    binding_types: new_types,
-                    body: body.clone(),
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-            }
-            _ => {
-                let (branch, binding_value) = let_expr;
-                WithLocation::new(TypeAst::Expression {
-                    binding_patterns: vec![branch],
-                    binding_types: vec![binding_value],
-                    body: Box::new(e),
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-            },
-        }
+    <l:@L> <let_expr: CustomLet> <e: Type> <r:@R> => {
+        let (custom_func, branch, binding_value) = let_expr;
+        // custom_func_var(pattern=>expr)(value)
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::Apply {
+                func: Box::new(WithLocation::new(TypeAst::Variable(custom_func.value().clone()), custom_func.location())),
+                arg: Box::new(WithLocation::new(TypeAst::Match {
+                    branches: vec![(branch, e)],
+                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(binding_value),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <extend_expr: ExtendDef> <e: Type> <r:@R> => {
-        match e.value() {
-            TypeAst::Expression {
-                binding_patterns,
-                binding_types,
-                body,
-            } => {
-                let mut new_patterns = binding_patterns.clone();
-                let mut new_types = binding_types.clone();
-                new_patterns.insert(0, GenericPattern::Standard {
-                    vars: vec![
-                        WithLocation::new(extend_expr.0.clone(), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
-                    ],
-                    pattern: WithLocation::new(
-                        TypeAst::Variable(extend_expr.0.clone()),
+        let branch = GenericPattern::Standard {
+            vars: vec![
+                WithLocation::new(extend_expr.0.clone(), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
+            ],
+            pattern: WithLocation::new(
+                TypeAst::Variable(extend_expr.0.clone()),
+                Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+            ),
+            constraint: (
+                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
+                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
+            ),
+        };
+        let binding_value = WithLocation::new(
+            TypeAst::Apply {
+                func: Box::new(WithLocation::new(
+                    TypeAst::Variable("op#add".to_string()),
+                    Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+                )),
+                arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![
+                    (extend_expr.1, NonZero::new(1).unwrap()),
+                    (WithLocation::new(
+                        TypeAst::Variable(extend_expr.0),
                         Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                    ),
-                    constraint: (
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
-                    ),
-                });
-                new_types.insert(0, WithLocation::new(
-                    TypeAst::Apply {
-                        func: Box::new(WithLocation::new(
-                            TypeAst::Variable("op#add".to_string()),
-                            Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                        )),
-                        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![
-                            (extend_expr.1, NonZero::new(1).unwrap()),
-                            (WithLocation::new(
-                                TypeAst::Variable(extend_expr.0),
-                                Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                            ), NonZero::new(1).unwrap()),
-                        ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                    },
-                    Some(SourceLocation::new(source.clone(), l..r)).as_ref()
-                ));
-                WithLocation::new(TypeAst::Expression {
-                    binding_patterns: new_patterns,
-                    binding_types: new_types,
-                    body: body.clone(),
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-            }
-            _ => WithLocation::new(TypeAst::Expression {
-                binding_patterns: vec![GenericPattern::Standard {
-                    vars: vec![
-                        WithLocation::new(extend_expr.0.clone(), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
-                    ],
-                    pattern: WithLocation::new(
-                        TypeAst::Variable(extend_expr.0.clone()),
-                        Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                    ),
-                    constraint: (
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
-                    ),
-                }],
-                binding_types: vec![WithLocation::new(
-                    TypeAst::Apply {
-                        func: Box::new(WithLocation::new(
-                            TypeAst::Variable("op#add".to_string()),
-                            Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                        )),
-                        arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![
-                            (extend_expr.1, NonZero::new(1).unwrap()),
-                            (WithLocation::new(
-                                TypeAst::Variable(extend_expr.0),
-                                Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                            ), NonZero::new(1).unwrap()),
-                        ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-                    },
-                    Some(SourceLocation::new(source.clone(), l..r)).as_ref()
-                )],
-                body: Box::new(e),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-        }
+                    ), NonZero::new(1).unwrap()),
+                ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            },
+            Some(SourceLocation::new(source.clone(), l..r)).as_ref()
+        );
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(branch, e)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(binding_value),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
     <l:@L> <discard_expr: Discard> <e: Type> <r:@R> => {
-        match e.value() {
-            TypeAst::Expression {
-                binding_patterns,
-                binding_types,
-                body,
-            } => {
-                let mut new_patterns = binding_patterns.clone();
-                let mut new_types = binding_types.clone();
-                new_patterns.insert(0, GenericPattern::Standard {
-                    vars: vec![],
-                    pattern: WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                    constraint: (
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-                    ),
-                });
-                new_types.insert(0, discard_expr);
-                WithLocation::new(TypeAst::Expression {
-                    binding_patterns: new_patterns,
-                    binding_types: new_types,
-                    body: body.clone(),
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-            }
-            _ => WithLocation::new(TypeAst::Expression {
-                binding_patterns: vec![GenericPattern::Standard {
-                    vars: vec![],
-                    pattern: WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                    constraint: (
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-                    ),
-                }],
-                binding_types: vec![discard_expr],
-                body: Box::new(e),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-        }
+        let branch = GenericPattern::Standard {
+            vars: vec![],
+            pattern: WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            constraint: (
+                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+            ),
+        };
+        WithLocation::new(TypeAst::Apply {
+            func: Box::new(WithLocation::new(TypeAst::Match {
+                branches: vec![(branch, e)],
+            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            arg: Box::new(discard_expr),
+        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
 

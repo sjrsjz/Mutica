@@ -103,12 +103,6 @@ pub enum TypeAst {
         handler: Box<WithLocation<TypeAst>>,
     },
     #[allow(clippy::type_complexity)]
-    Expression {
-        binding_patterns: Vec<GenericPattern>,
-        binding_types: Vec<WithLocation<TypeAst>>,
-        body: Box<WithLocation<TypeAst>>,
-    },
-    #[allow(clippy::type_complexity)]
     Match {
         branches: Vec<(GenericPattern, WithLocation<TypeAst>)>, // pattern, expr
     },
@@ -1096,39 +1090,6 @@ impl TypeAst {
                 },
                 loc,
             ),
-            TypeAst::Expression { binding_patterns, binding_types, body } => {
-                // 转换为嵌套的闭包和应用
-                let mut expr = body.into_basic(multifile_builder, body.location());
-                for (branch, ty) in binding_patterns.iter().rev().zip(binding_types.iter().rev()) {
-                    let branch_basic = match branch {
-                        GenericPattern::Standard { vars, pattern, constraint: (f, g) } => {
-                            BasicGenericPattern::Standard {
-                                vars: vars.clone(),
-                                pattern: pattern.into_basic(multifile_builder, pattern.location()),
-                                constraint: (
-                                    f.into_basic(multifile_builder, f.location()),
-                                    g.into_basic(multifile_builder, g.location()),
-                                ),
-                            }
-                        }
-                        GenericPattern::AutoBind { pattern } => BasicGenericPattern::AutoBind {
-                            pattern: pattern.into_basic(multifile_builder, pattern.location()),
-                        },
-                    };
-                    expr = WithLocation::new(
-                        BasicTypeAst::Apply {
-                            func: Box::new(WithLocation::new(
-                                BasicTypeAst::Match { branches: vec![(branch_basic, expr)] },
-                                ty.location(),
-                            )),
-                            arg: Box::new(ty.into_basic(multifile_builder, ty.location())),
-                            handler: None,
-                        },
-                        ty.location(),
-                    ); // 应用的位置信息不重要
-                }
-                expr
-            }
             TypeAst::Match { branches } => WithLocation::new(
                 BasicTypeAst::Match {
                     branches: branches
@@ -1483,24 +1444,6 @@ impl TypeAst {
                 init_val.collect_errors(errors);
                 catch.collect_errors(errors);
             }
-            TypeAst::Expression { binding_patterns, binding_types, body } => {
-                for branch in binding_patterns {
-                    match branch {
-                        GenericPattern::Standard { pattern, constraint: (f, g), .. } => {
-                            pattern.collect_errors(errors);
-                            f.collect_errors(errors);
-                            g.collect_errors(errors);
-                        }
-                        GenericPattern::AutoBind { pattern, .. } => {
-                            pattern.collect_errors(errors);
-                        }
-                    }
-                }
-                for ty in binding_types {
-                    ty.collect_errors(errors);
-                }
-                body.collect_errors(errors);
-            }
             TypeAst::Match { branches } => {
                 for (branch, expr) in branches {
                     match branch {
@@ -1617,25 +1560,6 @@ impl TypeAst {
                 closure: Box::new(Self::sanitize(*closure)),
                 init_val: Box::new(Self::sanitize(*init_val)),
                 handler: Box::new(Self::sanitize(*catch)),
-            },
-            TypeAst::Expression { binding_patterns, binding_types, body } => TypeAst::Expression {
-                binding_patterns: binding_patterns
-                    .into_iter()
-                    .map(|branch| match branch {
-                        GenericPattern::Standard { vars, pattern, constraint: (f, g) } => {
-                            GenericPattern::Standard {
-                                vars,
-                                pattern: Self::sanitize(pattern),
-                                constraint: (Self::sanitize(f), Self::sanitize(g)),
-                            }
-                        }
-                        GenericPattern::AutoBind { pattern } => {
-                            GenericPattern::AutoBind { pattern: Self::sanitize(pattern) }
-                        }
-                    })
-                    .collect(),
-                binding_types: binding_types.into_iter().map(Self::sanitize).collect(),
-                body: Box::new(Self::sanitize(*body)),
             },
             TypeAst::Match { branches } => TypeAst::Match {
                 branches: branches

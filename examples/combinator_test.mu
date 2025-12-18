@@ -4,7 +4,6 @@ let constraint {
     id::(id: any) &
     const::(const: any) &
     compose::(compose: any) &
-    flip::(flip: any) &
     pipe::(pipe: any) &
     apply_twice::(apply_twice: any) &
     not::(not: any) &

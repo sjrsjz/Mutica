@@ -13,16 +13,16 @@ let constraint Nothing::(Nothing: any) = maybe_pkg;
 let constraint String: any = List(char);
 
 let constraint println: any = constraint s: String => {
-    discard iter(s)(constraint c: char => {
+    discard iter constraint c: char = s in {
         discard print!(c);
-    });
+    };
     discard print!('\n');
 };
 
 let constraint print: any = constraint s: String => {
-    discard iter(s)(constraint c: char => {
+    iter constraint c: char = s in {
         discard print!(c);
-    });
+    }
 };
 
 let constraint slice: any = constraint (s: String, start: nat, end: nat) => {

@@ -197,7 +197,7 @@ let constraint find: any = constraint lst: List(Any) => constraint pred: any => 
         | panic;
     go(lst)
 };
-let constraint list_all: any = constraint lst: List(Any) => constraint pred: any => {
+let constraint allof: any = constraint lst: List(Any) => constraint pred: any => {
     let constraint go: any = dyn_rec go: match
         | assert () => true
         | constraint (h: any ~ t: any) => if pred(h)
@@ -206,7 +206,7 @@ let constraint list_all: any = constraint lst: List(Any) => constraint pred: any
         | panic;
     go(lst)
 };
-let constraint list_any: any = constraint lst: List(Any) => constraint pred: any => {
+let constraint anyof: any = constraint lst: List(Any) => constraint pred: any => {
     let constraint go: any = dyn_rec go: match
         | assert () => false
         | constraint (h: any ~ t: any) => if pred(h)
@@ -239,6 +239,6 @@ nth::nth &
 take::take &
 drop::drop &
 find::find &
-list_all::list_all &
-list_any::list_any &
+allof::allof &
+anyof::anyof &
 iteri::iteri

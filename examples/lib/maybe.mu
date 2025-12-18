@@ -8,6 +8,12 @@ let constraint map: any = constraint v: Maybe(Any) => constraint f: any =>
         | constraint Just::(x: any) => Just(f(x))
         | assert Nothing::() => Nothing
         | panic;
+// A version of map that works with custom let bindings
+let constraint map_let: any = constraint f: any => constraint v: Maybe(Any) => 
+    match v
+        | constraint Just::(x: any) => Just(f(x))
+        | assert Nothing::() => Nothing
+        | panic;
 let constraint unwrap_or_else: any = constraint v: Maybe(Any) => constraint f: any => 
     match v
         | constraint Just::(x: any) => x
@@ -23,11 +29,18 @@ let constraint unwrap: any = constraint v: Maybe(Any) =>
         | constraint Just::(x: any) => x
         | constraint _T: any => throw_panic("Called unwrap on Nothing")
         | panic;
+let constraint unwrap_let: any = constraint f: any => constraint v: Maybe(Any) => 
+    match v
+        | constraint Just::(x: any) => f(x)
+        | constraint _T: any => throw_panic("Called unwrap on Nothing")
+        | panic;
 
 Just::Just &
 Nothing::Nothing &
 Maybe::Maybe &
 map::map &
+map_let::map_let &
 unwrap_or_else::unwrap_or_else &
 unwrap_or::unwrap_or &
-unwrap::unwrap
+unwrap::unwrap &
+unwrap_let::unwrap_let

@@ -17,8 +17,8 @@ let constraint {
     take::(take: any) &
     drop::(drop: any) &
     find::(find: any) &
-    list_all::(list_all: any) &
-    list_any::(list_any: any) &
+    allof::(allof: any) &
+    anyof::(anyof: any) &
     map::(list_map: any) &
     len::(len: any)
 } = list_pkg;
@@ -45,7 +45,7 @@ let constraint {
 let constraint test_list: any = cons(1, cons(2, cons(3, cons(4, cons(5, Nil)))));
 let exist _x in (_x, _x) where () as () = (test_list, (1, 2, 3, 4, 5)); // 类型检查
 let constraint print_int_list: any = constraint lst: List(nat) => {
-    discard for constraint x: nat = iter(lst) in {
+    discard iter constraint x: nat = lst in {
         discard print!(x);
         discard print!(' ');
     };
@@ -64,40 +64,40 @@ discard print_int_list[foldr(test_list)(Nil)(constraint (h: nat, acc: any) => co
 // 测试 append: 连接两个列表，期望结果: [1, 2, 3, 4]
 let constraint list1: List(nat) = cons(1, cons(2, Nil));
 let constraint list2: List(nat) = cons(3, cons(4, Nil));
-discard print_int_list[append(list1)(list2)];
+discard print_int_list[list1.append(list2)];
 
 // 测试 reverse: 反转列表，期望结果: [5, 4, 3, 2, 1]
 discard print_int_list[reverse(test_list)];
 
 // 测试 nth: 获取索引为 2 的元素，期望结果: 3
-discard println![nth(test_list)(2)];
+discard println![test_list.nth(2)];
 
 // 测试 take: 取前 3 个元素，期望结果: [1, 2, 3]
-discard print_int_list[take(test_list)(3)];
+discard print_int_list[test_list.take(3)];
 
 // 测试 drop: 丢弃前 2 个元素，期望结果: [3, 4, 5]
-discard print_int_list[drop(test_list)(2)];
+discard print_int_list[test_list.drop(2)];
 
 // 测试 find: 查找第一个大于 3 的元素，期望结果: Just::4
-discard println![find(test_list)(constraint x: nat => x > 3)];
+discard println![test_list.find(constraint x: nat => x > 3)];
 
 // 测试 find: 查找不存在的元素，期望结果: Nothing::()
-discard println![find(test_list)(constraint x: nat => x > 10)];
+discard println![test_list.find(constraint x: nat => x > 10)];
 
-// 测试 list_all: 检查是否所有元素都大于 0，期望结果: true
-discard println![list_all(test_list)(constraint x: nat => x > 0)];
+// 测试 allof: 检查是否所有元素都大于 0，期望结果: true
+discard println![test_list.allof(constraint x: nat => x > 0)];
 
-// 测试 list_all: 检查是否所有元素都大于 3，期望结果: false
-discard println![list_all(test_list)(constraint x: nat => x > 3)];
+// 测试 allof: 检查是否所有元素都大于 3，期望结果: false
+discard println![test_list.allof(constraint x: nat => x > 3)];
 
-// 测试 list_any: 检查是否存在元素大于 4，期望结果: true
-discard println![list_any(test_list)(constraint x: nat => x > 4)];
+// 测试 anyof: 检查是否存在元素大于 4，期望结果: true
+discard println![test_list.anyof(constraint x: nat => x > 4)];
 
-// 测试 list_any: 检查是否存在元素小于 0，期望结果: false
-discard println![list_any(test_list)(constraint x: nat => x < 0)];
+// 测试 anyof: 检查是否存在元素小于 0，期望结果: false
+discard println![test_list.anyof(constraint x: nat => x < 0)];
 
 // 测试 map: 将所有元素乘以 2，期望结果: [2, 4, 6, 8, 10]
-discard print_int_list[list_map(test_list)(constraint x: nat => x * 2)];
+discard print_int_list[test_list.list_map(constraint x: nat => x * 2)];
 
 // 测试 len: 获取列表长度，期望结果: 5
 discard println![len(test_list)];
