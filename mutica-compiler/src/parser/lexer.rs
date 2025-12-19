@@ -213,12 +213,8 @@ pub enum LexerToken {
     Rot,
     #[token("handle")]
     Handle,
-    #[token("eq")]
-    EqOf,
     #[token("sub")]
     SubOf,
-    #[token("type")]
-    Type,
     #[token("for")]
     For,
     #[token("in")]

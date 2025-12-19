@@ -327,7 +327,7 @@ impl<'ast> ParseError<'ast> {
                     .with_message("Ambiguous pattern")
                     .with_label(
                         Label::new((filepath, char_start..char_end))
-                            .with_message("Here: pattern variables are not allowed within generalized/specialized types. Pattern variables may only be used in ordered contexts (e.g., tuples, lists)")
+                            .with_message("Here: pattern variables are not allowed within AnyOfd/AllOfd types. Pattern variables may only be used in ordered contexts (e.g., tuples, lists)")
                             .with_color(Color::Red),
                     )
                     .finish()
@@ -1075,7 +1075,6 @@ pub fn inject_std_library(
                 BasicTypeAst::Wildcard => std_ast,
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
-                BasicTypeAst::OrderedType(_) => std_ast,
                 BasicTypeAst::Tuple(items) => BasicTypeAst::Tuple(
                     items.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
                 ),
@@ -1087,10 +1086,10 @@ pub fn inject_std_library(
                     head: head.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
                     tail: replace_placeholder(*tail, ast).into(),
                 },
-                BasicTypeAst::Generalize(items) => BasicTypeAst::Generalize(
+                BasicTypeAst::AnyOf(items) => BasicTypeAst::AnyOf(
                     items.into_iter().map(|item| replace_placeholder(item, ast)).collect(),
                 ),
-                BasicTypeAst::Specialize(items) => BasicTypeAst::Specialize(
+                BasicTypeAst::AllOf(items) => BasicTypeAst::AllOf(
                     items.into_iter().map(|item| replace_placeholder(item, ast)).collect(),
                 ),
                 BasicTypeAst::Invoke { func, arg, continuation, perform_handler } => {
@@ -1162,9 +1161,6 @@ pub fn inject_std_library(
                 ),
                 BasicTypeAst::Literal(v) => {
                     BasicTypeAst::Literal(replace_placeholder(*v, ast).into())
-                }
-                BasicTypeAst::EqOf { value } => {
-                    BasicTypeAst::EqOf { value: replace_placeholder(*value, ast).into() }
                 }
                 BasicTypeAst::SubOf { value } => {
                     BasicTypeAst::SubOf { value: replace_placeholder(*value, ast).into() }

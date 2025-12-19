@@ -10,7 +10,8 @@ use crate::{
         TypeRef, unify::EnvironmentView,
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
+        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -132,7 +133,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Constraint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Sequence(v) => {
@@ -211,44 +211,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             }
                         }
 
-                        (SequenceType::Repeat(_, l_repeat), SequenceType::Repeat(_, r_repeat)) => {
-                            let (mut all, self_seek, other_seek) =
-                                self.check_prefix(v, &mut inner_ctx)?;
-                            test_true!(all);
-                            all &= test_true!(
-                                l_repeat.check(r_repeat.as_ref_dispatcher(), &mut inner_ctx)?
-                            );
-                            match (self_seek, other_seek) {
-                                (None, None) => Ok(all),
-                                (mut seek @ Some(_), None) => {
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_self = &self.physical_prefix()[cursor].0;
-                                        all &=
-                                            test_true!(ty_self.check(
-                                                r_repeat.as_ref_dispatcher(),
-                                                &mut inner_ctx
-                                            )?);
-                                        seek = self.next_block(cursor);
-                                    }
-                                    Ok(all)
-                                }
-                                (None, mut seek @ Some(_)) => {
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_other = &v.physical_prefix()[cursor].0;
-                                        all &=
-                                            test_true!(l_repeat.check(
-                                                ty_other.as_ref_dispatcher(),
-                                                &mut inner_ctx
-                                            )?);
-                                        seek = v.next_block(cursor);
-                                    }
-                                    Ok(all)
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
+                        // check 要求LHS是单例类型，而Repeat不是单例类型，因此不能让Repeat去check Repeat否则会违反单例类型的要求
+                        // (SequenceType::Repeat(_, l_repeat), SequenceType::Repeat(_, r_repeat)) => {
+                        //     let (mut all, self_seek, other_seek) =
+                        //         self.check_prefix(v, &mut inner_ctx)?;
+                        //     test_true!(all);
+                        //     all &= test_true!(
+                        //         l_repeat.check(r_repeat.as_ref_dispatcher(), &mut inner_ctx)?
+                        //     );
+                        //     match (self_seek, other_seek) {
+                        //         (None, None) => Ok(all),
+                        //         (mut seek @ Some(_), None) => {
+                        //             while let Some((cursor, _)) = seek {
+                        //                 let ty_self = &self.physical_prefix()[cursor].0;
+                        //                 all &=
+                        //                     test_true!(ty_self.check(
+                        //                         r_repeat.as_ref_dispatcher(),
+                        //                         &mut inner_ctx
+                        //                     )?);
+                        //                 seek = self.next_block(cursor);
+                        //             }
+                        //             Ok(all)
+                        //         }
+                        //         (None, mut seek @ Some(_)) => {
+                        //             while let Some((cursor, _)) = seek {
+                        //                 let ty_other = &v.physical_prefix()[cursor].0;
+                        //                 all &=
+                        //                     test_true!(l_repeat.check(
+                        //                         ty_other.as_ref_dispatcher(),
+                        //                         &mut inner_ctx
+                        //                     )?);
+                        //                 seek = v.next_block(cursor);
+                        //             }
+                        //             Ok(all)
+                        //         }
+                        //         _ => unreachable!(),
+                        //     }
+                        // }
 
-                        (SequenceType::Repeat(_, l_repeat), SequenceType::Cons(_, r_cons)) => {
+                        // Repeat可以去check Cons，因为Repeat的tail部分可以视为Cons，递归会详细处理，这样允许Cons尾部被设为Any来匹配无限长序列
+                        // 这个是合理的，因为我们允许Any接受任意类型
+                        (SequenceType::Repeat(_, _), SequenceType::Cons(_, r_cons)) => {
                             let (mut all, self_seek, other_seek) =
                                 self.check_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -282,32 +285,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     );
                                     Ok(all)
                                 }
-                                (None, mut seek @ Some(_)) => {
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_other = &v.physical_prefix()[cursor].0;
-                                        all &=
-                                            test_true!(l_repeat.check(
-                                                ty_other.as_ref_dispatcher(),
-                                                &mut inner_ctx
-                                            )?);
-                                        seek = v.next_block(cursor);
-                                    }
-                                    // 处理完前缀后，检查剩余部分
-                                    let viewed = Self {
-                                        ty: self.ty.clone(),
-                                        source_info: self.source_info.clone(),
-                                        offset: self.physical_prefix_len(),
-                                    };
-                                    let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
-                                    if inner_ctx.assumptions.contains(&pair) {
-                                        return Ok(ThreeValuedLogic::True);
-                                    }
-                                    inner_ctx.assumptions.push(pair);
-                                    let result =
-                                        viewed.check(r_cons.as_ref_dispatcher(), &mut inner_ctx);
-                                    inner_ctx.assumptions.pop();
-                                    all &= result?;
-                                    Ok(all)
+                                (None, Some(_)) => {
+                                    // 如果Cons还有前缀未匹配完，由于单例类型的要求，这里必须返回False
+                                    // 这个是合理的，因为Repeat可以匹配任意长度（包括0长）的序列，而如果Cons还有前缀未匹配完，说明Repeat不可能匹配成功
+                                    Ok(ThreeValuedLogic::False)
                                 }
                                 _ => unreachable!(),
                             }
@@ -596,7 +577,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             }
                         }
 
-                        (SequenceType::Repeat(_, l_repeat), SequenceType::Cons(_, r_cons)) => {
+                        (SequenceType::Repeat(_, _), SequenceType::Cons(_, r_cons)) => {
                             let (mut all, self_seek, other_seek) =
                                 self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -629,32 +610,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     );
                                     Ok(all)
                                 }
-                                (None, mut seek @ Some(_)) => {
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_other = &v.physical_prefix()[cursor].0;
-                                        all &=
-                                            test_true!(l_repeat.subof(
-                                                ty_other.as_ref_dispatcher(),
-                                                &mut inner_ctx
-                                            )?);
-                                        seek = v.next_block(cursor);
-                                    }
-                                    // 处理完前缀后，检查剩余部分
-                                    let viewed = Self {
-                                        ty: self.ty.clone(),
-                                        source_info: self.source_info.clone(),
-                                        offset: self.physical_prefix_len(),
-                                    };
-                                    let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
-                                    if inner_ctx.assumptions.contains(&pair) {
-                                        return Ok(ThreeValuedLogic::True);
-                                    }
-                                    inner_ctx.assumptions.push(pair);
-                                    let result =
-                                        viewed.subof(r_cons.as_ref_dispatcher(), &mut inner_ctx);
-                                    inner_ctx.assumptions.pop();
-                                    all &= result?;
-                                    Ok(all)
+                                (None, Some(_)) => {
+                                    // 如果Cons还有前缀未匹配完，由于Repeat可以匹配任意长度（包括0长）的序列，这里显然不可能成功，因为Cons还有前缀未匹配完，它能能匹配的最短序列长度大于0
+                                    Ok(ThreeValuedLogic::False)
                                 }
                                 _ => unreachable!(),
                             }

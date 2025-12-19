@@ -47,7 +47,6 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::Char => (),
             LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
-            LinearTypeAst::OrderedType(_) => (),
             LinearTypeAst::Variable(_) => (),
             LinearTypeAst::Tuple(items) => {
                 for (item, _count) in items {
@@ -66,12 +65,12 @@ impl<'ast> SourceMapping<'ast> {
                 }
                 Self::build_mapping(tail, mapping, source_file);
             }
-            LinearTypeAst::Generalize(items) => {
+            LinearTypeAst::AnyOf(items) => {
                 for item in items {
                     Self::build_mapping(item, mapping, source_file);
                 }
             }
-            LinearTypeAst::Specialize(items) => {
+            LinearTypeAst::AllOf(items) => {
                 for item in items {
                     Self::build_mapping(item, mapping, source_file);
                 }
@@ -106,9 +105,6 @@ impl<'ast> SourceMapping<'ast> {
             }
             LinearTypeAst::Literal(expr) => {
                 Self::build_mapping(expr, mapping, source_file);
-            }
-            LinearTypeAst::EqOf { value } => {
-                Self::build_mapping(value, mapping, source_file);
             }
             LinearTypeAst::SubOf { value } => {
                 Self::build_mapping(value, mapping, source_file);
@@ -335,10 +331,12 @@ mod test {
             return;
         }
 
-        let linearized =
-            desugared.linearize(&mut LinearizeContext::new(), desugared.location()).finalize();
-
         let mut flow_errors = Vec::new();
+
+        let linearized = desugared
+            .linearize(&mut LinearizeContext::new(), &mut flow_errors, desugared.location())
+            .finalize();
+
         let flowed =
             linearized.flow(&mut ParseContext::new(), linearized.location(), &mut flow_errors);
 
@@ -536,8 +534,8 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
         println!("{}: Invoke", "magenta".magenta());
         println!("{}: Tuple", "cyan".cyan());
         println!("{}: List", "bright cyan".bright_cyan());
-        println!("{}: Generalize", "bright green".bright_green());
-        println!("{}: Specialize", "bright yellow".bright_yellow());
+        println!("{}: AnyOf", "bright green".bright_green());
+        println!("{}: AllOf", "bright yellow".bright_yellow());
         println!("{}: AtomicOpcode", "bright magenta".bright_magenta());
         println!("{}: FixPoint", "bright red".bright_red());
         println!("{}: Namespace", "white".white());

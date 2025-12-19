@@ -13,7 +13,6 @@ use mutica_core::types::character::Character;
 use mutica_core::types::character_value::CharacterValue;
 use mutica_core::types::closure::Closure;
 use mutica_core::types::constraint::Constraint;
-use mutica_core::types::eqof::EqOf;
 use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
@@ -21,7 +20,6 @@ use mutica_core::types::invoke::Invoke;
 use mutica_core::types::lazy::Lazy;
 use mutica_core::types::namespace::Namespace;
 use mutica_core::types::opcode::{Opcode, OpcodeKind};
-use mutica_core::types::ordered_type::OrderedType;
 use mutica_core::types::sequence::Sequence;
 use mutica_core::types::subof::SubOf;
 use mutica_core::types::unify::EnvironmentVarState;
@@ -76,7 +74,6 @@ pub enum TypeAst {
     Char,
     Wildcard,
     DiscardPattern,
-    OrderedType(usize),
     FloatLiteral(f64),
     CharLiteral(char),
     Variable(String),
@@ -89,8 +86,8 @@ pub enum TypeAst {
         head: Vec<(WithLocation<TypeAst>, NonZero<usize>)>,
         tail: Box<WithLocation<TypeAst>>,
     },
-    Generalize(Vec<WithLocation<TypeAst>>),
-    Specialize(Vec<WithLocation<TypeAst>>),
+    AnyOf(Vec<WithLocation<TypeAst>>),
+    AllOf(Vec<WithLocation<TypeAst>>),
     Invoke {
         func: Box<WithLocation<TypeAst>>,
         arg: Box<WithLocation<TypeAst>>,
@@ -140,9 +137,6 @@ pub enum TypeAst {
     },
     Generic(Box<GenericPattern>),
     Literal(Box<WithLocation<TypeAst>>),
-    EqOf {
-        value: Box<WithLocation<TypeAst>>,
-    },
     SubOf {
         value: Box<WithLocation<TypeAst>>,
     },
@@ -172,7 +166,6 @@ pub enum BasicTypeAst {
     Wildcard,
     FloatLiteral(f64),
     CharLiteral(char),
-    OrderedType(usize),
     Variable(String),
     Tuple(Vec<(WithLocation<BasicTypeAst>, NonZero<usize>)>),
     List {
@@ -183,8 +176,8 @@ pub enum BasicTypeAst {
         head: Vec<(WithLocation<BasicTypeAst>, NonZero<usize>)>,
         tail: Box<WithLocation<BasicTypeAst>>,
     },
-    Generalize(Vec<WithLocation<BasicTypeAst>>),
-    Specialize(Vec<WithLocation<BasicTypeAst>>),
+    AnyOf(Vec<WithLocation<BasicTypeAst>>),
+    AllOf(Vec<WithLocation<BasicTypeAst>>),
     Invoke {
         func: Box<WithLocation<BasicTypeAst>>,
         arg: Box<WithLocation<BasicTypeAst>>,
@@ -210,9 +203,6 @@ pub enum BasicTypeAst {
     },
     Generic(Box<BasicGenericPattern>),
     Literal(Box<WithLocation<BasicTypeAst>>),
-    EqOf {
-        value: Box<WithLocation<BasicTypeAst>>,
-    },
     SubOf {
         value: Box<WithLocation<BasicTypeAst>>,
     },
@@ -450,7 +440,7 @@ impl BasicTypeAst {
                 all_binds.extend(tail_binds);
                 (BasicTypeAst::Cons { head: new_head, tail: Box::new(new_tail) }, all_binds)
             }
-            BasicTypeAst::Generalize(elements) => {
+            BasicTypeAst::AnyOf(elements) => {
                 let mut new_elements = Vec::new();
                 let mut all_binds = Vec::new();
                 for e in elements {
@@ -458,9 +448,9 @@ impl BasicTypeAst {
                     new_elements.push(new_e);
                     all_binds.extend(binds);
                 }
-                (BasicTypeAst::Generalize(new_elements), all_binds)
+                (BasicTypeAst::AnyOf(new_elements), all_binds)
             }
-            BasicTypeAst::Specialize(elements) => {
+            BasicTypeAst::AllOf(elements) => {
                 let mut new_elements = Vec::new();
                 let mut all_binds = Vec::new();
                 for e in elements {
@@ -468,7 +458,7 @@ impl BasicTypeAst {
                     new_elements.push(new_e);
                     all_binds.extend(binds);
                 }
-                (BasicTypeAst::Specialize(new_elements), all_binds)
+                (BasicTypeAst::AllOf(new_elements), all_binds)
             }
             BasicTypeAst::Invoke { func, arg, continuation, perform_handler } => {
                 let (new_func, mut binds) = func.auto_bind();
@@ -578,10 +568,6 @@ impl BasicTypeAst {
                 let (new_inner, binds) = inner.auto_bind();
                 (BasicTypeAst::Literal(Box::new(new_inner)), binds)
             }
-            BasicTypeAst::EqOf { value } => {
-                let (new_value, binds) = value.auto_bind();
-                (BasicTypeAst::EqOf { value: Box::new(new_value) }, binds)
-            }
             BasicTypeAst::SubOf { value } => {
                 let (new_value, binds) = value.auto_bind();
                 (BasicTypeAst::SubOf { value: Box::new(new_value) }, binds)
@@ -595,7 +581,6 @@ impl BasicTypeAst {
             | BasicTypeAst::Wildcard
             | BasicTypeAst::FloatLiteral(_)
             | BasicTypeAst::CharLiteral(_)
-            | BasicTypeAst::OrderedType(_)
             | BasicTypeAst::Variable(_)
             | BasicTypeAst::AtomicOpcode(_) => (self, Vec::new()),
         };
@@ -639,9 +624,6 @@ impl BasicTypeAst {
             }
             BasicTypeAst::CharLiteral(v) => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::CharLiteral(*v), loc))
-            }
-            BasicTypeAst::OrderedType(v) => {
-                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::OrderedType(*v), loc))
             }
             BasicTypeAst::Variable(v) => LinearizeResult::new_simple(WithLocation::new(
                 LinearTypeAst::Variable(v.clone()),
@@ -703,10 +685,10 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Generalize(v) => {
+            BasicTypeAst::AnyOf(v) => {
                 let elements =
                     v.iter().map(|e| e.linearize(ctx, errors, e.location())).collect::<Vec<_>>();
-                let ty = LinearTypeAst::Generalize(
+                let ty = LinearTypeAst::AnyOf(
                     elements.iter().map(|e| e.tail_type().clone()).collect(),
                 );
                 LinearizeResult::new_with_binding(
@@ -714,10 +696,10 @@ impl BasicTypeAst {
                     WithLocation::new(ty, loc),
                 )
             }
-            BasicTypeAst::Specialize(v) => {
+            BasicTypeAst::AllOf(v) => {
                 let elements =
                     v.iter().map(|e| e.linearize(ctx, errors, e.location())).collect::<Vec<_>>();
-                let ty = LinearTypeAst::Specialize(
+                let ty = LinearTypeAst::AllOf(
                     elements.iter().map(|e| e.tail_type().clone()).collect(),
                 );
                 LinearizeResult::new_with_binding(
@@ -851,11 +833,6 @@ impl BasicTypeAst {
                 )),
                 loc,
             )),
-            BasicTypeAst::EqOf { value } => {
-                let value = value.linearize(ctx, errors, value.location());
-                let ty = LinearTypeAst::EqOf { value: Box::new(value.tail_type().clone()) };
-                LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
-            }
             BasicTypeAst::SubOf { value } => {
                 let value = value.linearize(ctx, errors, value.location());
                 let ty = LinearTypeAst::SubOf { value: Box::new(value.tail_type().clone()) };
@@ -927,7 +904,6 @@ pub enum LinearTypeAst<'ast> {
     Float,
     FloatLiteral(f64),
     CharLiteral(char),
-    OrderedType(usize),
     Variable(String), // None 表示续体
     Tuple(Vec<(WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, NonZero<usize>)>),
     List {
@@ -938,8 +914,8 @@ pub enum LinearTypeAst<'ast> {
         head: Vec<(WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, NonZero<usize>)>,
         tail: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
-    Generalize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
-    Specialize(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    AnyOf(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    AllOf(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
     #[allow(clippy::type_complexity)]
     Match {
         auto_captures: HashMap<String, WithLocation<()>>,
@@ -973,9 +949,6 @@ pub enum LinearTypeAst<'ast> {
         )>,
     },
     Literal(Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
-    EqOf {
-        value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
-    },
     SubOf {
         value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
     },
@@ -1007,7 +980,6 @@ impl TypeAst {
             ),
             TypeAst::Float => WithLocation::new(BasicTypeAst::Float, loc),
             TypeAst::Char => WithLocation::new(BasicTypeAst::Char, loc),
-            TypeAst::OrderedType(v) => WithLocation::new(BasicTypeAst::OrderedType(*v), loc),
             TypeAst::Wildcard => WithLocation::new(BasicTypeAst::Wildcard, loc),
             TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // discard 只允许丢弃unit
             TypeAst::FloatLiteral(v) => WithLocation::new(BasicTypeAst::FloatLiteral(*v), loc),
@@ -1042,8 +1014,8 @@ impl TypeAst {
                 },
                 loc,
             ),
-            TypeAst::Generalize(elements) => WithLocation::new(
-                BasicTypeAst::Generalize(
+            TypeAst::AnyOf(elements) => WithLocation::new(
+                BasicTypeAst::AnyOf(
                     elements
                         .iter()
                         .map(|e| e.into_basic(multifile_builder, e.location()))
@@ -1051,8 +1023,8 @@ impl TypeAst {
                 ),
                 loc,
             ),
-            TypeAst::Specialize(elements) => WithLocation::new(
-                BasicTypeAst::Specialize(
+            TypeAst::AllOf(elements) => WithLocation::new(
+                BasicTypeAst::AllOf(
                     elements
                         .iter()
                         .map(|e| e.into_basic(multifile_builder, e.location()))
@@ -1377,12 +1349,6 @@ impl TypeAst {
                     }
                 }
             }
-            TypeAst::EqOf { value } => WithLocation::new(
-                BasicTypeAst::EqOf {
-                    value: Box::new(value.into_basic(multifile_builder, value.location())),
-                },
-                loc,
-            ),
             TypeAst::SubOf { value } => WithLocation::new(
                 BasicTypeAst::SubOf {
                     value: Box::new(value.into_basic(multifile_builder, value.location())),
@@ -1410,7 +1376,6 @@ impl TypeAst {
             | TypeAst::DiscardPattern
             | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
-            | TypeAst::OrderedType(_)
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => {}
             TypeAst::Range { ty, .. } => {
@@ -1424,7 +1389,7 @@ impl TypeAst {
                     elem.collect_errors(errors);
                 }
             }
-            TypeAst::Generalize(elements) | TypeAst::Specialize(elements) => {
+            TypeAst::AnyOf(elements) | TypeAst::AllOf(elements) => {
                 for elem in elements {
                     elem.collect_errors(errors);
                 }
@@ -1503,9 +1468,6 @@ impl TypeAst {
                 }
                 tail.collect_errors(errors);
             }
-            TypeAst::EqOf { value } => {
-                value.collect_errors(errors);
-            }
             TypeAst::SubOf { value } => {
                 value.collect_errors(errors);
             }
@@ -1524,7 +1486,6 @@ impl TypeAst {
             | TypeAst::DiscardPattern
             | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
-            | TypeAst::OrderedType(_)
             | TypeAst::Variable(_)
             | TypeAst::Import(_) => ast,
             TypeAst::Range { ty, min, delta } => {
@@ -1544,11 +1505,11 @@ impl TypeAst {
                 head: head.into_iter().map(|(e, count)| (Self::sanitize(e), count)).collect(),
                 tail: Box::new(Self::sanitize(*tail)),
             },
-            TypeAst::Generalize(elements) => {
-                TypeAst::Generalize(elements.into_iter().map(Self::sanitize).collect())
+            TypeAst::AnyOf(elements) => {
+                TypeAst::AnyOf(elements.into_iter().map(Self::sanitize).collect())
             }
-            TypeAst::Specialize(elements) => {
-                TypeAst::Specialize(elements.into_iter().map(Self::sanitize).collect())
+            TypeAst::AllOf(elements) => {
+                TypeAst::AllOf(elements.into_iter().map(Self::sanitize).collect())
             }
             TypeAst::Invoke { func, arg, continuation, perform_handler } => TypeAst::Invoke {
                 func: Box::new(Self::sanitize(*func)),
@@ -1617,7 +1578,6 @@ impl TypeAst {
                 }
             }),
             TypeAst::Literal(inner) => TypeAst::Literal(Box::new(Self::sanitize(*inner))),
-            TypeAst::EqOf { value } => TypeAst::EqOf { value: Box::new(Self::sanitize(*value)) },
             TypeAst::SubOf { value } => TypeAst::SubOf { value: Box::new(Self::sanitize(*value)) },
             TypeAst::StaticFixPoint { param_name, expr } => {
                 TypeAst::StaticFixPoint { param_name, expr: Box::new(Self::sanitize(*expr)) }
@@ -1724,10 +1684,6 @@ impl<'ast> LinearTypeAst<'ast> {
             ),
             LinearTypeAst::Char => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Char, loc)
-                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
-            ),
-            LinearTypeAst::OrderedType(v) => FlowResult::simple(
-                WithLocation::new(LinearTypeAst::OrderedType(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
             LinearTypeAst::FloatLiteral(v) => FlowResult::simple(
@@ -1838,7 +1794,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::Generalize(types) => {
+            LinearTypeAst::AnyOf(types) => {
                 let mut new_types = Vec::new();
                 let mut all_captures = HashMap::new();
                 for ty in types {
@@ -1847,12 +1803,12 @@ impl<'ast> LinearTypeAst<'ast> {
                     all_captures.extend(res.captures);
                 }
                 FlowResult::complex(
-                    WithLocation::new(LinearTypeAst::Generalize(new_types), loc),
+                    WithLocation::new(LinearTypeAst::AnyOf(new_types), loc),
                     all_captures,
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::Specialize(types) => {
+            LinearTypeAst::AllOf(types) => {
                 let mut new_types = Vec::new();
                 let mut all_captures = HashMap::new();
                 for ty in types {
@@ -1861,7 +1817,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     all_captures.extend(res.captures);
                 }
                 FlowResult::complex(
-                    WithLocation::new(LinearTypeAst::Specialize(new_types), loc),
+                    WithLocation::new(LinearTypeAst::AllOf(new_types), loc),
                     all_captures,
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
@@ -2151,14 +2107,6 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::EqOf { value } => {
-                let value_res = value.flow(ctx, value.location(), errors);
-                FlowResult::complex(
-                    WithLocation::new(LinearTypeAst::EqOf { value: Box::new(value_res.ty) }, loc),
-                    value_res.captures,
-                )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
-            }
             LinearTypeAst::SubOf { value } => {
                 let value_res = value.flow(ctx, value.location(), errors);
                 FlowResult::complex(
@@ -2231,9 +2179,6 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(loc.cloned().map(Arc::new)))),
             LinearTypeAst::Char => {
                 Ok(BuildResult::simple(Character::new(loc.cloned().map(Arc::new))))
-            }
-            LinearTypeAst::OrderedType(v) => {
-                Ok(BuildResult::simple(OrderedType::new(*v, loc.cloned().map(Arc::new))))
             }
             LinearTypeAst::FloatLiteral(v) => {
                 Ok(BuildResult::simple(FloatValue::new(*v, loc.cloned().map(Arc::new))))
@@ -2317,7 +2262,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     loc.cloned().map(Arc::new),
                 )))
             }
-            LinearTypeAst::Generalize(basic_type_asts) => {
+            LinearTypeAst::AnyOf(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(ctx, gc, roots, bta.location())?);
@@ -2325,7 +2270,7 @@ impl<'ast> LinearTypeAst<'ast> {
                 let types = BuildResult::fold(types);
                 Ok(BuildResult::simple(AnyOf::new(types, loc.cloned().map(Arc::new))))
             }
-            LinearTypeAst::Specialize(basic_type_asts) => {
+            LinearTypeAst::AllOf(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
                     types.push(bta.to_type(ctx, gc, roots, bta.location())?);
@@ -2471,10 +2416,6 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Literal(inner) => {
                 let inner_type = inner.to_type(ctx, gc, roots, inner.location())?;
                 Ok(BuildResult::simple(Lazy::new(&inner_type.ty, loc.cloned().map(Arc::new))))
-            }
-            LinearTypeAst::EqOf { value } => {
-                let value_type = value.to_type(ctx, gc, roots, value.location())?;
-                Ok(BuildResult::simple(EqOf::new(&value_type.ty, loc.cloned().map(Arc::new))))
             }
             LinearTypeAst::SubOf { value } => {
                 let value_type = value.to_type(ctx, gc, roots, value.location())?;

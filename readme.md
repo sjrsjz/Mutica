@@ -63,10 +63,10 @@ let c: char = 'A';
 // Tuple
 let pair: (int, int) = (1, 2);
 
-// Generalize Type
+// AnyOf Type
 let value: (int | char) = 42;
 
-// Specialize Type (used for records/structs)
+// AllOf Type (used for records/structs)
 let point: { x::int & y::int } = { x::1 & y::2 };
 
 // Top Type (any)

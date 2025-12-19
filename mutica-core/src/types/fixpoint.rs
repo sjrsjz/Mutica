@@ -170,7 +170,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 ctx.collected,
             );
             match other {
-                // 这里不能放 Generalize 等，不然会导致 fixpoint <: Max<> 这种形式，但是由于是通过accept调用的，会导致 Max 比 fixpoint 先拆开
+                // 这里不能放 AnyOf 等，不然会导致 fixpoint <: Max<> 这种形式，但是由于是通过accept调用的，会导致 Max 比 fixpoint 先拆开
                 // 为了透明化 fixpoint 的存在，我们必须先展开 fixpoint
                 TypeRef::FixPoint(v) => {
                     let l: Weak<_> = self.reference.clone().into();

@@ -180,7 +180,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             Ok(Some(Sequence::new_tuple(elements, source_info.cloned())))
                         }
                         _ => Err(TypeError::TypeMismatch(
-                            (arg.clone_data(), "Tuple | List | Generalize | Specialize".into())
+                            (arg.clone_data(), "Tuple | List | AnyOf | AllOf".into())
                                 .into(),
                         )),
                     })?

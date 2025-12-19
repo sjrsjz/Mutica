@@ -48,9 +48,7 @@ extern {
         "Else"          => LexerToken::Else,
         "Rot"           => LexerToken::Rot,
         "Handle"        => LexerToken::Handle,
-        "EqOf"          => LexerToken::EqOf,
         "SubOf"         => LexerToken::SubOf,
-        "Type"          => LexerToken::Type,
         "For"           => LexerToken::For,
         "In"            => LexerToken::In,
         "Extend"        => LexerToken::Extend,
@@ -173,9 +171,7 @@ ThenTok: () = <l:@L> "Then" <r:@R> => { TokenColor::fill_colors(colors, l..r, To
 ElseTok: () = <l:@L> "Else" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 RotTok: () = <l:@L> "Rot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 HandleTok: () = <l:@L> "Handle" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-EqOfTok: () = <l:@L> "EqOf" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 SubOfTok: () = <l:@L> "SubOf" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-TypeTok: () = <l:@L> "Type" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 ForTok: () = <l:@L> "For" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 InTok: () = <l:@L> "In" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 ExtendTok: () = <l:@L> "Extend" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
@@ -273,9 +269,6 @@ AtomType: WithLocation<TypeAst> = {
         };
         WithLocation::new(op, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
-    <l:@L> TypeTok <n:Num> <r:@R> => {
-        WithLocation::new(TypeAst::OrderedType(n as usize), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
     <l:@L> ImportTok <s: StringLiteral> <r:@R> => {
         WithLocation::new(TypeAst::Import(s), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
@@ -294,7 +287,6 @@ Term: WithLocation<TypeAst> = {
     LParenTok <t: Type> RParenTok => t,
     LBracketTok <t: Type> RBracketTok => t,
     LBraceTok <t: Type> RBraceTok => t,
-    <eq: EqOf> => eq,
     <sub: SubOf> => sub,
     <np: Namespace> => np,
     <a: AtomType> => a,
@@ -306,14 +298,6 @@ Namespace: WithLocation<TypeAst> = {
         WithLocation::new(TypeAst::Namespace {
             tag: tag,
             expr: Box::new(t),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
-    },
-}
-
-EqOf: WithLocation<TypeAst> = {
-    <l:@L> EqOfTok <t: Term> <r:@R> => {
-        WithLocation::new(TypeAst::EqOf {
-            value: Box::new(t),
         }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
     },
 }
@@ -624,11 +608,11 @@ TupleElementWithNum: (WithLocation<TypeAst>, NonZero<usize>) = {
     },
 };
 
-TupleElement = Generalize;
+TupleElement = AnyOf;
 
-Generalize: WithLocation<TypeAst> = {
-    <l:@L> <items: Bars<Specialize>> <r:@R> => WithLocation::new(TypeAst::Generalize(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <e: Specialize> => e,
+AnyOf: WithLocation<TypeAst> = {
+    <l:@L> <items: Bars<AllOf>> <r:@R> => WithLocation::new(TypeAst::AnyOf(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <e: AllOf> => e,
 }
 
 Bars<T>: Vec<T> = {
@@ -644,8 +628,8 @@ Bars<T>: Vec<T> = {
 
 BarsSep: () = <l:@L> PipeTok+ <r:@R> => ();
 
-Specialize: WithLocation<TypeAst> = {
-    <l:@L> <items: Ands<Primary>> <r:@R> => WithLocation::new(TypeAst::Specialize(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+AllOf: WithLocation<TypeAst> = {
+    <l:@L> <items: Ands<Primary>> <r:@R> => WithLocation::new(TypeAst::AllOf(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
     <e: Primary> => e,
 }
 

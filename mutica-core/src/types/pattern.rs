@@ -87,7 +87,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                         TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                         TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                         TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                        TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                         // Pattern 无法直接匹配其他类型
                         _ => Ok(ThreeValuedLogic::False),
@@ -195,10 +194,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     #[stacksafe::stacksafe]
     fn superof(
         &self,
-        _other: Self::RefDispatcher<'_>,
-        _ctx: &mut TypeCheckContext<Type<T>, T>,
+        other: Self::RefDispatcher<'_>,
+        ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        Ok(ThreeValuedLogic::Unknown)
+        if ctx.pattern_collector.is_some() {
+            Ok(ThreeValuedLogic::Unknown) // pattern_collector 收集的是 LHS: RHS 的约束，无法去收集子类型关系，只能返回 Unknown
+        } else {
+            other.subof(
+                match ctx.collected.lookup_at_last_layer(&self.bind_name) {
+                    Some(existing) => existing.clone(),
+                    None => return Ok(ThreeValuedLogic::Unknown),
+                }
+                .as_ref_dispatcher(),
+                ctx,
+            )
+        }
     }
 }
 

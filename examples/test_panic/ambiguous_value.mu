@@ -1,0 +1,1 @@
+let constraint x: nat = 1 | 2;

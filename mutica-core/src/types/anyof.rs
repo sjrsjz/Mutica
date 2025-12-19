@@ -10,7 +10,8 @@ use crate::{
         TypeRef,
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
+        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -83,15 +84,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Constraint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 _ => {
                     let mut found = ThreeValuedLogic::True;
-                    for sub in self.types.iter() {
+                    let first =
+                        self.types.first().expect("CRITICAL: AnyOf must have at least one type");
+
+                    // 验证LHS是单例类型
+                    // 这是因为 check 不是子类型语义，而是验证某个类型是否是某个类型的实例
+                    // 而实例一般要求LHS是单例类型，至于RHS为通配符的情况，可以通过Constraint的空约束来实现
+                    let mut unique = ThreeValuedLogic::True;
+                    for (i, sub) in self.types.iter().enumerate() {
                         found &= test_true!(sub.check(other, &mut inner_ctx)?);
+                        if i > 0 {
+                            unique &= test_true!(first.equals(
+                                sub.as_ref_dispatcher(),
+                                inner_ctx.lhs_env,
+                                inner_ctx.lhs_env
+                            )?);
+                        }
                     }
-                    Ok(found)
+                    Ok(found & unique)
                 }
             }
         })
@@ -246,7 +260,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
     {
         let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         match collected.len() {
-            0 => panic!("Generalize requires at least one type"),
+            0 => panic!("CRITICAL: AnyOf requires at least one type"),
             1 => collected.into_iter().next().unwrap(),
             _ => Self { types: Arc::from(collected), source_info }.dispatch(),
         }

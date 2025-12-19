@@ -81,7 +81,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
                 TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Constraint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::EqOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 _ => {
@@ -243,7 +242,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
     {
         let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
         match collected.len() {
-            0 => panic!("Specialize requires at least one type"),
+            0 => panic!("AllOf requires at least one type"),
             1 => collected.into_iter().next().unwrap(),
             _ => Self { types: Arc::from(collected), source_info }.dispatch(),
         }

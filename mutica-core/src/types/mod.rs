@@ -6,7 +6,6 @@ pub mod character;
 pub mod character_value;
 pub mod closure;
 pub mod constraint;
-pub mod eqof;
 pub mod fixpoint;
 pub mod float;
 pub mod float_value;
@@ -14,7 +13,6 @@ pub mod invoke;
 pub mod lazy;
 pub mod namespace;
 pub mod opcode;
-pub mod ordered_type;
 pub mod pattern;
 pub mod sequence;
 pub mod subof;
@@ -39,7 +37,6 @@ use crate::{
         character_value::CharacterValue,
         closure::Closure,
         constraint::Constraint,
-        eqof::EqOf,
         fixpoint::FixPoint,
         float::Float,
         float_value::FloatValue,
@@ -47,7 +44,6 @@ use crate::{
         lazy::Lazy,
         namespace::Namespace,
         opcode::Opcode,
-        ordered_type::OrderedType,
         pattern::Pattern,
         sequence::Sequence,
         subof::SubOf,
@@ -84,8 +80,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Constraint(v) => Type::<T>::Constraint(v.clone()),
             Type::Pattern(v) => Type::<T>::Pattern(v.clone()),
             Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            Type::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
-            Type::EqOf(v) => Type::<T>::EqOf(v.clone()),
             Type::SubOf(v) => Type::<T>::SubOf(v.clone()),
         }
     }
@@ -124,10 +118,6 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Pattern(Pattern<T>),
     // 惰性包装器
     Lazy(Lazy<T>),
-    // 高阶类型
-    OrderedType(OrderedType<T>),
-    // 单例等价类型
-    EqOf(EqOf<T>),
     // 子类型
     SubOf(SubOf<T>),
 }
@@ -149,8 +139,6 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Constraint(&'a Constraint<T>),
     Pattern(&'a Pattern<T>),
     Lazy(&'a Lazy<T>),
-    OrderedType(&'a OrderedType<T>),
-    EqOf(&'a EqOf<T>),
     SubOf(&'a SubOf<T>),
 }
 
@@ -201,8 +189,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Constraint(v) => v.check(other, ctx),
             TypeRef::Pattern(v) => v.check(other, ctx),
             TypeRef::Lazy(v) => v.check(other, ctx),
-            TypeRef::OrderedType(v) => v.check(other, ctx),
-            TypeRef::EqOf(v) => v.check(other, ctx),
             TypeRef::SubOf(v) => v.check(other, ctx),
         }
     }
@@ -229,8 +215,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Constraint(v) => v.subof(other, ctx),
             TypeRef::Pattern(v) => v.subof(other, ctx),
             TypeRef::Lazy(v) => v.subof(other, ctx),
-            TypeRef::OrderedType(v) => v.subof(other, ctx),
-            TypeRef::EqOf(v) => v.subof(other, ctx),
             TypeRef::SubOf(v) => v.subof(other, ctx),
         }
     }
@@ -253,8 +237,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Constraint(v) => v.tagged_ptr(),
             TypeRef::Pattern(v) => v.tagged_ptr(),
             TypeRef::Lazy(v) => v.tagged_ptr(),
-            TypeRef::OrderedType(v) => v.tagged_ptr(),
-            TypeRef::EqOf(v) => v.tagged_ptr(),
             TypeRef::SubOf(v) => v.tagged_ptr(),
         }
     }
@@ -281,8 +263,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Constraint(v) => v.source_info(),
             TypeRef::Pattern(v) => v.source_info(),
             TypeRef::Lazy(v) => v.source_info(),
-            TypeRef::OrderedType(v) => v.source_info(),
-            TypeRef::EqOf(v) => v.source_info(),
             TypeRef::SubOf(v) => v.source_info(),
         }
     }
@@ -305,8 +285,6 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
             TypeRef::Constraint(v) => v.report_source_info(),
             TypeRef::Pattern(v) => v.report_source_info(),
             TypeRef::Lazy(v) => v.report_source_info(),
-            TypeRef::OrderedType(v) => v.report_source_info(),
-            TypeRef::EqOf(v) => v.report_source_info(),
             TypeRef::SubOf(v) => v.report_source_info(),
         }
     }
@@ -331,8 +309,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Constraint(v) => Type::<T>::Constraint(v.clone()),
             TypeRef::Pattern(v) => Type::<T>::Pattern(v.clone()),
             TypeRef::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            TypeRef::OrderedType(v) => Type::<T>::OrderedType(v.clone()),
-            TypeRef::EqOf(v) => Type::<T>::EqOf(v.clone()),
             TypeRef::SubOf(v) => Type::<T>::SubOf(v.clone()),
         }
     }
@@ -924,8 +900,6 @@ macro_rules! type_dispatch {
             Type::Constraint(v) => v.$method($($args),*),
             Type::Pattern(v) => v.$method($($args),*),
             Type::Lazy(v) => v.$method($($args),*),
-            Type::OrderedType(v) => v.$method($($args),*),
-            Type::EqOf(v) => v.$method($($args),*),
             Type::SubOf(v) => v.$method($($args),*),
         }
     };
@@ -1119,8 +1093,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Constraint(v) => TypeRef::Constraint(v),
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
-            Type::OrderedType(v) => TypeRef::OrderedType(v),
-            Type::EqOf(v) => TypeRef::EqOf(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
         }
     }
@@ -1155,8 +1127,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Constraint(v) => TypeRef::Constraint(v),
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
-            Type::OrderedType(v) => TypeRef::OrderedType(v),
-            Type::EqOf(v) => TypeRef::EqOf(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
         }
     }
@@ -1287,7 +1257,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         ctx: &mut TypeCheckContext<U, V>,
     ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
 
-    // A <: B，验证类型图A是图B的特例（关键处理的是Generalize和Specialize）
+    // A <: B，验证类型图A是图B的特例（关键处理的是AnyOf和AllOf）
     fn subof<'a>(
         &'a self,
         other: Self::RefDispatcher<'a>,
@@ -1364,7 +1334,7 @@ pub trait CoinductiveTypeRef<
         ctx: &mut TypeCheckContext<U, V>,
     ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
 
-    // A <: B，验证类型图A是图B的特例（关键处理的是Generalize和Specialize）
+    // A <: B，验证类型图A是图B的特例（关键处理的是AnyOf和AllOf）
     fn subof(
         &self,
         other: W,
