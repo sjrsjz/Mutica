@@ -334,7 +334,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         let expect_arg =
             self.branches().iter().map(|b| b.pattern.clone().into_dispatcher()).collect::<Vec<_>>();
         Err(TypeError::AssertFailed(
-            (AnyOf::new(expect_arg, self.source_info().cloned()), ctx.arg.clone()).into(),
+            (
+                AnyOf::new(expect_arg, self.source_info().cloned(), ctx.environment)?,
+                ctx.arg.clone(),
+            )
+                .into(),
         ))
     }
 

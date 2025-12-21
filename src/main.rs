@@ -82,6 +82,11 @@ enum Command {
         /// Code file path
         file: String,
     },
+    /// Show colorized source code with syntax highlighting
+    Color {
+        /// Code file path
+        file: String,
+    },
     /// Show Mutica version
     Version,
 }
@@ -101,6 +106,16 @@ async fn main() {
                 }
             };
             parse_and_reduce(&code, PathBuf::from(file)).await;
+        }
+        Command::Color { file } => {
+            let code = match fs::read_to_string(&file) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to read file '{}': {}", file, e);
+                    process::exit(1);
+                }
+            };
+            print_colored_source(&code, PathBuf::from(file));
         }
         Command::Version => {
             println!("Mutica version {}", env!("CARGO_PKG_VERSION"));
@@ -156,6 +171,90 @@ fn report_builder_errors(
             }
         }
     }
+}
+
+/// Print colorized source code with syntax highlighting
+pub fn print_colored_source(expr: &str, path: PathBuf) {
+    use colored::Colorize;
+    use mutica_core::util::colorize::TokenColor;
+
+    println!("File: {}", path.display().to_string().bright_cyan());
+
+    // 使用 MultiFileBuilder 来构建整个项目
+    let mut imported_ast = HashMap::new();
+    let mut cycle_detector = FastCycleDetector::new();
+    let mut builder_errors = Vec::new();
+    let mut multifile_builder =
+        MultiFileBuilder::new(&mut imported_ast, &mut cycle_detector, &mut builder_errors);
+    let (ast, _source) = multifile_builder.build(path.clone(), expr.to_string());
+
+    // 直接使用 MultiFileBuilder 构建
+    let basic = match ast {
+        Some(ast) if builder_errors.is_empty() => ast,
+        Some(ast) => {
+            // 报告构建错误
+            report_builder_errors(&builder_errors, &path, expr);
+            ast
+        }
+        None => {
+            // 报告构建错误
+            report_builder_errors(&builder_errors, &path, expr);
+            return;
+        }
+    };
+
+    println!("\n{}", "=== Colorized Source Code ===".bright_white().bold());
+
+    let color_buffer = basic.1.color_mapping();
+
+    // 按照字节偏移打印带颜色的源代码
+    for (i, ch) in expr.char_indices() {
+        if i < color_buffer.len() {
+            let color = color_buffer[i];
+            let colored_char = match color {
+                TokenColor::UnSpecified => ch.to_string().dimmed(),
+                TokenColor::Keyword => ch.to_string().bright_blue().bold(),
+                TokenColor::Declaration => ch.to_string().bright_blue().underline().bold(),
+                TokenColor::Namespace => ch.to_string().bright_yellow().underline().bold(),
+                TokenColor::Identifier => ch.to_string().green(),
+                TokenColor::Literal => ch.to_string().yellow(),
+                TokenColor::Operator => ch.to_string().magenta(),
+                TokenColor::Comment => ch.to_string().bright_black().italic(),
+                TokenColor::Whitespace => ch.to_string().dimmed(),
+                TokenColor::Punctuation => ch.to_string().cyan(),
+                TokenColor::Function => ch.to_string().bright_green().bold(),
+                TokenColor::Type => ch.to_string().blue(),
+                TokenColor::Attribute => ch.to_string().bright_yellow().bold(),
+                TokenColor::Macro => ch.to_string().bright_magenta().bold(),
+                TokenColor::Number => ch.to_string().yellow(),
+                TokenColor::String => ch.to_string().yellow(),
+                TokenColor::Boolean => ch.to_string().bright_blue(),
+                TokenColor::Error => ch.to_string().red().bold(),
+            };
+            print!("{}", colored_char);
+        } else {
+            print!("{}", ch);
+        }
+    }
+    println!();
+
+    println!("\n{}", "=== Color Legend ===".bright_white().bold());
+    println!("{}: Keyword", "keyword".bright_blue().bold());
+    println!("{}: Declaration", "declaration".bright_blue().underline().bold());
+    println!("{}: Namespace", "namespace".bright_yellow().underline().bold());
+    println!("{}: Variable", "variable".green());
+    println!("{}: Literal", "literal".yellow());
+    println!("{}: Operator", "operator".magenta());
+    println!("{}: Comment", "comment".bright_black().italic());
+    println!("{}: Punctuation", "punctuation".cyan());
+    println!("{}: Function", "function".bright_green().bold());
+    println!("{}: Type", "type".blue());
+    println!("{}: Attribute", "attribute".bright_yellow().bold());
+    println!("{}: Macro", "macro".bright_magenta().bold());
+    println!("{}: Number", "123".yellow());
+    println!("{}: String", "\"string\"".yellow());
+    println!("{}: Boolean", "true".bright_blue());
+    println!("{}: Error", "error".red().bold());
 }
 
 pub async fn parse_and_reduce(expr: &str, path: PathBuf) {

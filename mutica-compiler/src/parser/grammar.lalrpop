@@ -9,6 +9,7 @@ use crate::parser::calculate_full_error_span;
 use std::num::NonZero;
 use std::sync::Arc;
 use crate::parser::ast::GenericPattern;
+use crate::parser::with_loc;
 grammar(source: &Arc<SourceFile>, colors: &mut Vec<TokenColor>);
 
 
@@ -225,30 +226,30 @@ SemicolonTok: () = <l:@L> "Semicolon" <r:@R> => { TokenColor::fill_colors(colors
 
 
 AtomType: WithLocation<TypeAst> = {
-   <l:@L> NatTok <r:@R> => WithLocation::new(TypeAst::List {
+   <l:@L> NatTok <r:@R> => with_loc(TypeAst::List {
         head: vec![],
-        tail: Box::new(WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> FloatTok <r:@R> => WithLocation::new(TypeAst::Float, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> CharTok <r:@R> => WithLocation::new(TypeAst::Char, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> TrueTok <r:@R> => WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> FalseTok <r:@R> => WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> AnyTok <r:@R> => WithLocation::new(TypeAst::Wildcard, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> WildcardTok <r:@R> => WithLocation::new(TypeAst::Wildcard, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <f: Float> <r:@R> => WithLocation::new(TypeAst::FloatLiteral(f), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        tail: Box::new(with_loc(TypeAst::Tuple(vec![]), source, l..r)),
+    }, source, l..r),
+    <l:@L> FloatTok <r:@R> => with_loc(TypeAst::Float, source, l..r),
+    <l:@L> CharTok <r:@R> => with_loc(TypeAst::Char, source, l..r),
+    <l:@L> TrueTok <r:@R> => with_loc(TypeAst::Variable(with_loc("op#true".to_string(), source, l..r)), source, l..r),
+    <l:@L> FalseTok <r:@R> => with_loc(TypeAst::Variable(with_loc("op#false".to_string(), source, l..r)), source, l..r),
+    <l:@L> AnyTok <r:@R> => with_loc(TypeAst::Wildcard, source, l..r),
+    <l:@L> WildcardTok <r:@R> => with_loc(TypeAst::Wildcard, source, l..r),
+    <l:@L> <f: Float> <r:@R> => with_loc(TypeAst::FloatLiteral(f), source, l..r),
     <l:@L> <n: Num> <r:@R> => {
         if n == 0 {
-            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+            with_loc(TypeAst::Tuple(vec![]), source, l..r)
         } else {
-            let unit = WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref());
-            WithLocation::new(TypeAst::Tuple(vec![(unit, NonZero::new(n).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+            let unit = with_loc(TypeAst::Tuple(vec![]), source, l..r);
+            with_loc(TypeAst::Tuple(vec![(unit, NonZero::new(n).unwrap())]), source, l..r)
         }
     },
-    <l:@L> <id: Ident> <r:@R> => WithLocation::new(TypeAst::Variable(id), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <c: CharLiteral> <r:@R> => WithLocation::new(TypeAst::CharLiteral(c), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <id: Ident> <r:@R> => with_loc(TypeAst::Variable(with_loc(id, source, l..r)), source, l..r),
+    <l:@L> <c: CharLiteral> <r:@R> => with_loc(TypeAst::CharLiteral(c), source, l..r),
     <l:@L> <s: StringLiteral> <r:@R> => {
-        let chars: Vec<(WithLocation<TypeAst>, NonZero<usize>)> = s.chars().map(|ch| (WithLocation::new(TypeAst::CharLiteral(ch), Some(SourceLocation::new(source.clone(), l..r)).as_ref()), NonZero::new(1).unwrap())).collect();
-        WithLocation::new(TypeAst::Tuple(chars), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        let chars: Vec<(WithLocation<TypeAst>, NonZero<usize>)> = s.chars().map(|ch| (with_loc(TypeAst::CharLiteral(ch), source, l..r), NonZero::new(1).unwrap())).collect();
+        with_loc(TypeAst::Tuple(chars), source, l..r)
     },
     <l:@L> <io: Ident> BangTok <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Function);
@@ -267,19 +268,19 @@ AtomType: WithLocation<TypeAst> = {
             "__set" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Set),
             _ => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)),
         };
-        WithLocation::new(op, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(op, source, l..r)
     },
     <l:@L> ImportTok <s: StringLiteral> <r:@R> => {
-        WithLocation::new(TypeAst::Import(s), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Import(s), source, l..r)
     },
 }
 
 AutoBind: WithLocation<TypeAst> = {
     <l:@L> <v_l:@L> <var: Ident> <v_r:@R> ColonTok <t: Factor> <r:@R> => {
-        WithLocation::new(TypeAst::Bind {
-            var: WithLocation::new(var, Some(SourceLocation::new(source.clone(), v_l..v_r)).as_ref()),
+        with_loc(TypeAst::Bind {
+            var: with_loc(var, source, v_l..v_r),
             expr: Box::new(t),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
 }
 
@@ -295,89 +296,89 @@ Term: WithLocation<TypeAst> = {
 Namespace: WithLocation<TypeAst> = {
     <l:@L> <n_l:@L> <tag: Ident> <n_r:@R> DoubleColonTok <t: Term> <r:@R> => {
         TokenColor::fill_colors(colors, n_l..n_r, TokenColor::Namespace);
-        WithLocation::new(TypeAst::Namespace {
-            tag: tag,
+        with_loc(TypeAst::Namespace {
+            tag: with_loc(tag, source, n_l..n_r),
             expr: Box::new(t),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
 }
 
 SubOf: WithLocation<TypeAst> = {
     <l:@L> SubOfTok <t: Term> <r:@R> => {
-        WithLocation::new(TypeAst::SubOf {
+        with_loc(TypeAst::SubOf {
             value: Box::new(t),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
 }
 
 Apply: WithLocation<TypeAst> = {
     <l:@L> <obj: Apply> DotTok <k: Term> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
+        with_loc(TypeAst::Apply {
             func: Box::new(k),
             arg: Box::new(obj),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <l:@L> <f: Apply> <x: Term> PipeGreaterThanTok <k: Term> <r:@R> => {
-        WithLocation::new(TypeAst::Invoke {
+        with_loc(TypeAst::Invoke {
             func: Box::new(f),
             arg: Box::new(x),
             continuation: Some(Box::new(k)),
             perform_handler: None,
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
-    <l:@L> <f: Apply> <x: Term> <r:@R> => WithLocation::new(TypeAst::Apply {
+    <l:@L> <f: Apply> <x: Term> <r:@R> => with_loc(TypeAst::Apply {
         func: Box::new(f),
         arg: Box::new(x),
-    }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    }, source, l..r),
     <t: Term> => t,
 }
 
 IfElse: WithLocation<TypeAst> = {
     <l:@L> IfTok <cond: Primary?> ThenTok <then_branch: Primary> ElseTok <else_branch: Primary> <r:@R> => {
         match cond {
-            Some(c) => WithLocation::new(TypeAst::Apply {
-                func: Box::new(WithLocation::new(TypeAst::Match {
+            Some(c) => with_loc(TypeAst::Apply {
+                func: Box::new(with_loc(TypeAst::Match {
                     branches: vec![
                         (GenericPattern::Standard {
                             vars: vec![],
-                            pattern: WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                            pattern: with_loc(TypeAst::Variable(with_loc("op#false".to_string(), source, l..r)), source, l..r),
                             constraint: (
-                                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                                with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                                with_loc(TypeAst::Tuple(vec![]), source, l..r)
                             ),
                         }, else_branch),
                         (GenericPattern::Standard {
                             vars: vec![],
-                            pattern: WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                            pattern: with_loc(TypeAst::Variable(with_loc("op#true".to_string(), source, l..r)), source, l..r),
                             constraint: (
-                                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                                with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                                with_loc(TypeAst::Tuple(vec![]), source, l..r)
                             ),
                         }, then_branch),
                     ],
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                }, source, l..r)),
                 arg: Box::new(c),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-            None => WithLocation::new(TypeAst::Match {
+            }, source, l..r),
+            None => with_loc(TypeAst::Match {
                 branches: vec![
                     (GenericPattern::Standard {
                         vars: vec![],
-                        pattern: WithLocation::new(TypeAst::Variable("op#false".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        pattern: with_loc(TypeAst::Variable(with_loc("op#false".to_string(), source, l..r)), source, l..r),
                         constraint: (
-                            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                            with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                            with_loc(TypeAst::Tuple(vec![]), source, l..r)
                         ),
                     }, else_branch),
                     (GenericPattern::Standard {
                         vars: vec![],
-                        pattern: WithLocation::new(TypeAst::Variable("op#true".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                        pattern: with_loc(TypeAst::Variable(with_loc("op#true".to_string(), source, l..r)), source, l..r),
                         constraint: (
-                            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                            WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                            with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                            with_loc(TypeAst::Tuple(vec![]), source, l..r)
                         ),
                     }, then_branch),
                 ],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),    
+            }, source, l..r),    
         }
     },
 }
@@ -385,15 +386,15 @@ IfElse: WithLocation<TypeAst> = {
 Match: WithLocation<TypeAst> = {
     <l:@L> MatchTok <value: Primary?> <branches: MatchBranch*> PipeTok PanicTok? <r:@R> => {
         match value {
-            Some(v) => WithLocation::new(TypeAst::Apply {
-                func: Box::new(WithLocation::new(TypeAst::Match {
+            Some(v) => with_loc(TypeAst::Apply {
+                func: Box::new(with_loc(TypeAst::Match {
                     branches: branches,
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                }, source, l..r)),
                 arg: Box::new(v),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-            None => WithLocation::new(TypeAst::Match {
+            }, source, l..r),
+            None => with_loc(TypeAst::Match {
                 branches: branches,
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            }, source, l..r),
         }
     },
 }
@@ -401,28 +402,28 @@ Match: WithLocation<TypeAst> = {
 ForIn: WithLocation<TypeAst> = {
     <l:@L> ForTok <binding: Binding> InTok <expr: Primary> <r:@R> => {
         let (branch, value) = binding;
-        WithLocation::new(TypeAst::Apply {
+        with_loc(TypeAst::Apply {
             func: Box::new(value),
-            arg: Box::new(WithLocation::new(TypeAst::Match {
+            arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+            }, source, l..r)),
+        }, source, l..r)
     },
     <l:@L> <f_l:@L> <func_var: IdentAsMarco> <f_r:@R> <binding: Binding> InTok <expr: Primary> <r:@R> => {
         let (branch, value) = binding;
         // func_var(value)(pattern=>expr)
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Apply {
-                func: Box::new(WithLocation::new(
-                    TypeAst::Variable(func_var),
-                    Some(SourceLocation::new(source.clone(), f_l..f_r)).as_ref()
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Apply {
+                func: Box::new(with_loc(
+                    TypeAst::Variable(with_loc(func_var, source, f_l..f_r)),
+                    source, f_l..f_r
                 )),
                 arg: Box::new(value),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Match {
+            }, source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+            }, source, l..r)),
+        }, source, l..r)
     },
 }
 
@@ -436,56 +437,55 @@ MatchBranch: (GenericPattern, WithLocation<TypeAst>) = {
 
 
 RecursiveGen: WithLocation<TypeAst> = {
-    <l:@L> RecTok <id: Ident> ColonTok <t: Primary> <r:@R> => {
-        WithLocation::new(TypeAst::StaticFixPoint {
-            param_name: id,
+    <l:@L> RecTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <t: Primary> <r:@R> => {
+        with_loc(TypeAst::StaticFixPoint {
+            param_name: with_loc(id, source, id_l..id_r),
             expr: Box::new(t),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
-    <l:@L> DynamicRecTok <id: Ident> ColonTok <t: Primary> <r:@R> => {
-        WithLocation::new(TypeAst::FixPoint {
-            param_name: id,
+    <l:@L> DynamicRecTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <t: Primary> <r:@R> => {
+        with_loc(TypeAst::FixPoint {
+            param_name: with_loc(id, source, id_l..id_r),
             expr: Box::new(t),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
 }
 
 Closure: WithLocation<TypeAst> = {
     <l:@L> <fn_def: FnDef> <r:@R> => {
-        WithLocation::new(TypeAst::Match {
+        with_loc(TypeAst::Match {
             branches: vec![fn_def],
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
 }
 
 Tuple: WithLocation<TypeAst> = {
-    <l:@L> <r:@R> => WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <items: Comma<TupleElementWithNum>> <r:@R> => WithLocation::new(TypeAst::Tuple(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <prefix: Comma<TupleElementWithNum>> RangeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::List {
+    <l:@L> <r:@R> => with_loc(TypeAst::Tuple(vec![]), source, l..r),
+    <l:@L> <items: Comma<TupleElementWithNum>> <r:@R> => with_loc(TypeAst::Tuple(items), source, l..r),
+    <l:@L> <prefix: Comma<TupleElementWithNum>> RangeTok <repeat: TupleElement> <r:@R> => with_loc(TypeAst::List {
             head: prefix,
             tail: Box::new(repeat),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <prefix: Comma<TupleElementWithNum>> TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
+        }, source, l..r),
+    <l:@L> <prefix: Comma<TupleElementWithNum>> TildeTok <repeat: TupleElement> <r:@R> => with_loc(TypeAst::Cons {
             head: prefix,
             tail: Box::new(repeat),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <prefix: TupleElement> RangeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::List {
+        }, source, l..r),
+    <l:@L> <prefix: TupleElement> RangeTok <repeat: TupleElement> <r:@R> => with_loc(TypeAst::List {
             head: vec![(prefix, NonZero::new(1).unwrap())],
             tail: Box::new(repeat),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> <prefix: TupleElement> TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
+        }, source, l..r),
+    <l:@L> <prefix: TupleElement> TildeTok <repeat: TupleElement> <r:@R> => with_loc(TypeAst::Cons {
             head: vec![(prefix, NonZero::new(1).unwrap())],
             tail: Box::new(repeat),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    <l:@L> BangTok RangeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::List {
+        }, source, l..r),
+    <l:@L> BangTok RangeTok <repeat: TupleElement> <r:@R> => with_loc(TypeAst::List {
             head: vec![],
             tail: Box::new(repeat),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-    // 允许空head的Cons可能导致约束检查不停机
-    // <l:@L> BangTok TildeTok <repeat: TupleElement> <r:@R> => WithLocation::new(TypeAst::Cons {
-    //         head: vec![],
-    //         tail: Box::new(repeat),
-    //     }, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+        }, source, l..r),
+}
+
+Expression: WithLocation<TypeAst> = {
+    <t: Tuple> => t,
     <item: TupleElement> => item,
 }
 
@@ -507,17 +507,17 @@ CommaSep: () = <l:@L> CommaTok+ <r:@R> => ();
 
 Literal: WithLocation<TypeAst> = {
     <l:@L> HashTok <t: Primary> <r:@R> => {
-        WithLocation::new(TypeAst::Literal(Box::new(t)), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Literal(Box::new(t)), source, l..r)
     },
 }
 
 DictItems: Vec<WithLocation<String>> = {
     <l:@L> <r:@R> => vec![],
     <l:@L> <key: Ident> <r:@R> => {
-        vec![WithLocation::new(key, Some(SourceLocation::new(source.clone(), l..r)).as_ref())]
+        vec![with_loc(key, source, l..r)]
     },
     <mut items: DictItems> CommaTok <l:@L> <key: Ident> <r:@R> => {
-        items.push(WithLocation::new(key, Some(SourceLocation::new(source.clone(), l..r)).as_ref()));
+        items.push(with_loc(key, source, l..r));
         items
     },
 }
@@ -526,7 +526,7 @@ GenericVariables: Vec<WithLocation<String>> = {
     LBraceTok <items: DictItems> RBraceTok => items,
     LBracketTok <items: DictItems> RBracketTok => items,
     LParenTok <items: DictItems> RParenTok => items,
-    <l:@L> <key: Ident> <r:@R> => vec![WithLocation::new(key, Some(SourceLocation::new(source.clone(), l..r)).as_ref())],
+    <l:@L> <key: Ident> <r:@R> => vec![with_loc(key, source, l..r)],
 }
 
 // exist {x, ..} T where F: R
@@ -543,8 +543,8 @@ Generic: GenericPattern = {
             vars: vec![],
             pattern: expr,
             constraint: (
-                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                with_loc(TypeAst::Tuple(vec![]), source, l..r)
             ),
         }
     },
@@ -557,7 +557,7 @@ Generic: GenericPattern = {
 
 Constraint: WithLocation<TypeAst> = {
     <l:@L> <pattern: Generic> <r:@R> => {
-        WithLocation::new(TypeAst::Generic(pattern.into()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Generic(pattern.into()), source, l..r)
     },
 }
 
@@ -580,15 +580,15 @@ Primary: WithLocation<TypeAst> = {
 
 Factor: WithLocation<TypeAst> = {
     <l:@L> BangTok <a: Factor> <r:@R> => {
-        WithLocation::new(TypeAst::Not {
+        with_loc(TypeAst::Not {
             value: Box::new(a),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <l:@L> MinusTok <n: Factor> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#neg".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#neg".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(n),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <bind: AutoBind> => bind,
     <a: Apply> => a,
@@ -611,7 +611,7 @@ TupleElementWithNum: (WithLocation<TypeAst>, NonZero<usize>) = {
 TupleElement = AnyOf;
 
 AnyOf: WithLocation<TypeAst> = {
-    <l:@L> <items: Bars<AllOf>> <r:@R> => WithLocation::new(TypeAst::AnyOf(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <items: Bars<AllOf>> <r:@R> => with_loc(TypeAst::AnyOf(items), source, l..r),
     <e: AllOf> => e,
 }
 
@@ -629,7 +629,7 @@ Bars<T>: Vec<T> = {
 BarsSep: () = <l:@L> PipeTok+ <r:@R> => ();
 
 AllOf: WithLocation<TypeAst> = {
-    <l:@L> <items: Ands<Primary>> <r:@R> => WithLocation::new(TypeAst::AllOf(items), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+    <l:@L> <items: Ands<Primary>> <r:@R> => with_loc(TypeAst::AllOf(items), source, l..r),
     <e: Primary> => e,
 }
 
@@ -652,108 +652,108 @@ Calculate: WithLocation<TypeAst> = { Or };
 
 Or: WithLocation<TypeAst> = {
     <l:@L> <left: Or> DoublePipeTok <right: And> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#or".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#or".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <t: And> => t,
 }
 
 And: WithLocation<TypeAst> = {
     <l:@L> <left: And> DoubleAmpersandTok <right: Compare> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#and".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#and".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <t: Compare> => t,
 }
 
 Compare: WithLocation<TypeAst> = {
     <l:@L> <left: Compare> EqTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Eq {
+        with_loc(TypeAst::Eq {
             left: Box::new(left),
             right: Box::new(right),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <l:@L> <left: Compare> NeqTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Neq {
+        with_loc(TypeAst::Neq {
             left: Box::new(left),
             right: Box::new(right),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <l:@L> <left: Compare> LtTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#lt".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#lt".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <l:@L> <left: Compare> LteTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#lte".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#lte".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <l:@L> <left: Compare> GtTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#gt".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#gt".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <l:@L> <left: Compare> GteTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#gte".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#gte".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <l:@L> <left: Compare> IsTok <right: AddSub> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#is".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#is".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <t: AddSub> => t,
 }
 
 AddSub: WithLocation<TypeAst> = {
     <l:@L> <left: AddSub> <op_l:@L> PlusTok <op_r:@R> <right: Mod> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#add".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#add".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <l:@L> <left: AddSub> MinusTok <right: Mod> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#sub".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#sub".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <t: Mod> => t,
 }
 
 Mod: WithLocation<TypeAst> = {
     <l:@L> <left: Mod> PercentTok <right: MulDiv> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#mod".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#mod".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <t: MulDiv> => t,
 }
 
 MulDiv: WithLocation<TypeAst> = {
     <l:@L> <left: MulDiv> StarTok <right: Factor> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#mul".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#mul".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <l:@L> <left: MulDiv> SlashTok <right: Factor> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Variable("op#div".to_string()), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#div".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+        }, source, l..r)
     },
     <f: Factor> => f,
 }
@@ -769,177 +769,211 @@ Let: (GenericPattern, WithLocation<TypeAst>) = {
 
 CustomLet: (WithLocation<String>, GenericPattern, WithLocation<TypeAst>) = {
     <l:@L> <func: IdentAsMarco> <r:@R> <binding: Binding> SemicolonTok => {
-        (WithLocation::new(func, Some(SourceLocation::new(source.clone(), l..r)).as_ref()), binding.0, binding.1)
+        (with_loc(func, source, l..r), binding.0, binding.1)
     }
 }
 
 LetWithoutValue: WithLocation<TypeAst> = {
     <l:@L> LetTok <branch: Generic> SemicolonTok <expr: Type> <r:@R> => {
-        WithLocation::new(TypeAst::Match {
+        with_loc(TypeAst::Match {
             branches: vec![(branch, expr)],
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
 }
 
 CustomLetWithoutValue: WithLocation<TypeAst> = {
     <l:@L> <f_l:@L> <custom_func: IdentAsMarco> <f_r:@R> <branch: Generic> SemicolonTok <expr: Type> <r:@R> => {
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(
-                TypeAst::Variable(custom_func),
-                Some(SourceLocation::new(source.clone(), f_l..f_r)).as_ref()
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(
+                TypeAst::Variable(with_loc(custom_func, source, f_l..f_r)),
+                source, f_l..f_r
             )),
-            arg: Box::new(WithLocation::new(TypeAst::Match {
+            arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+            }, source, l..r)),
+        }, source, l..r)
     },
 }
 
 
-ExtendDef: (String, WithLocation<TypeAst>, usize, usize) = {
+ExtendDef: (WithLocation<String>, WithLocation<TypeAst>) = {
     // extend label: extend_type;
-    <l:@L> ExtendTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <expr: Type> SemicolonTok <r:@R> => {
-        (id, expr, id_l, id_r)
+    ExtendTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <expr: Type> SemicolonTok => {
+        (
+            with_loc(
+                id,
+                source, id_l..id_r
+            ),
+            expr,
+        )
     },
 }
 
 Discard: WithLocation<TypeAst> = {
-    <l:@L> DiscardTok <e: Type> SemicolonTok <r:@R> => {
+    DiscardTok <e: Type> SemicolonTok => {
         e
     },
 }
 
-Recursive: (String, GenericPattern, WithLocation<TypeAst>) = {
+CustomDiscard: (WithLocation<String>, WithLocation<TypeAst>) = {
+    <l:@L> AtTok <var: IdentAsMarco> <r:@R> <e: Type> SemicolonTok => {
+        (
+            with_loc(var, source, l..r),
+            e
+        )
+    },
+
+}
+
+Recursive: (WithLocation<String>, GenericPattern, WithLocation<TypeAst>) = {
     // loop label: pattern = initialize_value;
-    <l:@L> LoopTok <id: Ident> ColonTok <binding: Binding> SemicolonTok <r:@R> => {
-        (id, binding.0, binding.1)
+    <l:@L> LoopTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <binding: Binding> SemicolonTok <r:@R> => {
+        (with_loc(id, source, id_l..id_r), binding.0, binding.1)
     },
 }
 
-Expression: WithLocation<TypeAst> = {
+Line: WithLocation<TypeAst> = {
     <let_without_value: LetWithoutValue> => let_without_value,
     <custom_let_without_value: CustomLetWithoutValue> => custom_let_without_value,
     <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
         let (branch, binding_value) = let_expr;
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Match {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, e)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, source, l..r)),
             arg: Box::new(binding_value),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <l:@L> <let_expr: CustomLet> <e: Type> <r:@R> => {
         let (custom_func, branch, binding_value) = let_expr;
+        let func_span = custom_func.location().map(|loc| loc.span().clone()).unwrap_or(l..r);
         // custom_func_var(pattern=>expr)(value)
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Apply {
-                func: Box::new(WithLocation::new(TypeAst::Variable(custom_func.value().clone()), custom_func.location())),
-                arg: Box::new(WithLocation::new(TypeAst::Match {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Apply {
+                func: Box::new(with_loc(TypeAst::Variable(with_loc(custom_func.value().clone(), source, func_span.clone())), source, func_span)),
+                arg: Box::new(with_loc(TypeAst::Match {
                     branches: vec![(branch, e)],
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                }, source, l..r)),
+            }, source, l..r)),
             arg: Box::new(binding_value),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <l:@L> <extend_expr: ExtendDef> <e: Type> <r:@R> => {
         let branch = GenericPattern::Standard {
-            vars: vec![
-                WithLocation::new(extend_expr.0.clone(), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
-            ],
-            pattern: WithLocation::new(
-                TypeAst::Variable(extend_expr.0.clone()),
-                Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-            ),
+            vars: vec![extend_expr.0.clone()],
+            pattern: extend_expr.0.clone().map(|var| TypeAst::Variable(with_loc(var, source, l..r))),
             constraint: (
-                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()),
-                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref())
+                with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                with_loc(TypeAst::Tuple(vec![]), source, l..r)
             ),
         };
-        let binding_value = WithLocation::new(
+        let binding_value = with_loc(
             TypeAst::Apply {
-                func: Box::new(WithLocation::new(
-                    TypeAst::Variable("op#add".to_string()),
-                    Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
+                func: Box::new(with_loc(
+                    TypeAst::Variable(with_loc("op#add".to_string(), source, l..r)),
+                    source, l..r
                 )),
-                arg: Box::new(WithLocation::new(TypeAst::Tuple(vec![
+                arg: Box::new(with_loc(TypeAst::Tuple(vec![
                     (extend_expr.1, NonZero::new(1).unwrap()),
-                    (WithLocation::new(
-                        TypeAst::Variable(extend_expr.0),
-                        Some(SourceLocation::new(source.clone(), extend_expr.2..extend_expr.3)).as_ref()
-                    ), NonZero::new(1).unwrap()),
-                ]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                    (extend_expr.0.clone().map(|var| TypeAst::Variable(with_loc(var, source, l..r))), NonZero::new(1).unwrap()),
+                ]), source, l..r)),
             },
-            Some(SourceLocation::new(source.clone(), l..r)).as_ref()
+            source, l..r
         );
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Match {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, e)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, source, l..r)),
             arg: Box::new(binding_value),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <l:@L> <discard_expr: Discard> <e: Type> <r:@R> => {
         let branch = GenericPattern::Standard {
             vars: vec![],
-            pattern: WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+            pattern: with_loc(TypeAst::DiscardPattern, source, l..r),
             constraint: (
-                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                with_loc(TypeAst::Tuple(vec![]), source, l..r)
             ),
         };
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::Match {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, e)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, source, l..r)),
             arg: Box::new(discard_expr),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
+    },
+    <l:@L> <custom_discard_expr: CustomDiscard> <e: Type> <r:@R> => {
+        let (custom_func, discard_expr) = custom_discard_expr;
+        let func_span = custom_func.location().map(|loc| loc.span().clone()).unwrap_or(l..r);
+        let branch = GenericPattern::Standard {
+            vars: vec![],
+            pattern: with_loc(TypeAst::DiscardPattern, source, l..r),
+            constraint: (
+                with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                with_loc(TypeAst::Tuple(vec![]), source, l..r)
+            ),
+        };
+        // custom_func_var(pattern=>expr)(value)
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Apply {
+                func: Box::new(with_loc(
+                    TypeAst::Variable(with_loc(custom_func.value().clone(), source, func_span.clone())),
+                    source, func_span
+                )),
+                arg: Box::new(with_loc(TypeAst::Match {
+                    branches: vec![(branch, e)],
+                }, source, l..r)),
+            }, source, l..r)),
+            arg: Box::new(discard_expr),
+        }, source, l..r)
     },
 }
 
 Loop: WithLocation<TypeAst> = {
     <l:@L> <rec_expr: Recursive> <e: Type> <r:@R> => {
         let (id, branch, init) = rec_expr;
-        WithLocation::new(TypeAst::Apply {
-            func: Box::new(WithLocation::new(TypeAst::FixPoint {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::FixPoint {
                 param_name: id,
-                expr: Box::new(WithLocation::new(TypeAst::Match {
+                expr: Box::new(with_loc(TypeAst::Match {
                     branches: vec![(branch, e)],
-                }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+                }, source, l..r)),
+            }, source, l..r)),
             arg: Box::new(init),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
 }
 
 HandleWith: WithLocation<TypeAst> = {
     <l:@L> HandleTok <binding: Binding> WithTok <handler: Type> SemicolonTok <expr: Type> <r:@R> => {
         let (branch, binding_value) = binding;
-        WithLocation::new(TypeAst::HandleWith {
-            closure: Box::new(WithLocation::new(TypeAst::Match {
+        with_loc(TypeAst::HandleWith {
+            closure: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, source, l..r)),
             init_val: Box::new(binding_value),
             handler: Box::new(handler),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
     <l:@L> HandleTok WithTok <handler: Type> SemicolonTok <expr: Type> <r:@R> => {
-        WithLocation::new(TypeAst::HandleWith {
-            closure: Box::new(WithLocation::new(TypeAst::Match {
+        with_loc(TypeAst::HandleWith {
+            closure: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(GenericPattern::Standard {
                     vars: vec![],
-                    pattern: WithLocation::new(TypeAst::DiscardPattern, Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
+                    pattern: with_loc(TypeAst::DiscardPattern, source, l..r),
                     constraint: (
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref()),
-                        WithLocation::new(TypeAst::Tuple(vec![]), Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                        with_loc(TypeAst::Tuple(vec![]), source, l..r),
+                        with_loc(TypeAst::Tuple(vec![]), source, l..r)
                     ),
                 }, expr)],
-            }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())),
+            }, source, l..r)),
             init_val: Box::new(
-                WithLocation::new(TypeAst::DiscardPattern,
-                Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+                with_loc(TypeAst::DiscardPattern,
+                source, l..r)
             ),
             handler: Box::new(handler),
-        }, Some(SourceLocation::new(source.clone(), l..r)).as_ref())
+        }, source, l..r)
     },
 }
 
@@ -947,6 +981,6 @@ HandleWith: WithLocation<TypeAst> = {
 pub Type: WithLocation<TypeAst> = {
     <h: HandleWith> => h,
     <l: Loop> => l,
+    <l: Line> => l,
     <e: Expression> => e,
-    <t: Tuple> => t,
 }

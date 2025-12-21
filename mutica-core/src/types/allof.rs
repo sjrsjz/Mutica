@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
+use smallvec::{SmallVec, smallvec};
 
 use crate::{
     test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeRef, unify::EnvironmentView,
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
+        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -131,7 +133,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
         for sub in self.types.iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
-        Ok(Self::new(&result, self.source_info.clone()))
+        Self::new(&result, self.source_info.clone(), ctx.capture_environment)
     }
 
     fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
@@ -233,19 +235,84 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AllOf<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
-    /// 直接构造，不进行任何简化
+    // /// 直接构造，不进行任何简化
+    // #[allow(clippy::new_ret_no_self)]
+    // pub fn new<I, X>(types: I, source_info: Option<Arc<SourceLocation>>) -> Type<T>
+    // where
+    //     I: IntoIterator<Item = X>,
+    //     X: AsDispatcher<Type<T>, T>,
+    // {
+    //     let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
+    //     match collected.len() {
+    //         0 => panic!("AllOf requires at least one type"),
+    //         1 => collected.into_iter().next().unwrap(),
+    //         _ => Self { types: Arc::from(collected), source_info }.dispatch(),
+    //     }
+    // }
+
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<I, X>(types: I, source_info: Option<Arc<SourceLocation>>) -> Type<T>
+    pub fn new<I, X>(
+        types: I,
+        source_info: Option<Arc<SourceLocation>>,
+        env: EnvironmentView<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>>
     where
         I: IntoIterator<Item = X>,
         X: AsDispatcher<Type<T>, T>,
     {
-        let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
-        match collected.len() {
-            0 => panic!("AllOf requires at least one type"),
-            1 => collected.into_iter().next().unwrap(),
-            _ => Self { types: Arc::from(collected), source_info }.dispatch(),
+        fn collect<T: GcAllocObject<T, Inner = Type<T>>>(
+            collected: &mut SmallVec<[Type<T>; 8]>,
+            path: &mut FastCycleDetector<TaggedPtr<()>>,
+            x: Type<T>,
+        ) -> Result<(), TypeError<Type<T>, T>> {
+            if x.map(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
+                Ok(match t {
+                    TypeRef::All(allof) => {
+                        for sub in allof.types.iter() {
+                            collect(collected, path, sub.clone())?;
+                        }
+                        false
+                    }
+                    _ => true,
+                })
+            })?
+            .unwrap_or(Ok(true))?
+            {
+                collected.push(x);
+            }
+            Ok(())
         }
+        let mut collected = SmallVec::new();
+
+        for t in types.into_iter() {
+            collect(&mut collected, &mut FastCycleDetector::new(), t.into_dispatcher())?;
+        }
+
+        let mut absorbed: SmallVec<[bool; 8]> = smallvec![false; collected.len()];
+
+        for i in 0..collected.len() {
+            for j in (i + 1)..collected.len() {
+                if let ThreeValuedLogic::True =
+                    collected[i].equals(collected[j].as_ref_dispatcher(), env, env)?
+                {
+                    absorbed[i] = true;
+                    break;
+                }
+            }
+        }
+
+        let mut result = Vec::new();
+        for (i, t) in collected.into_iter().enumerate() {
+            if !absorbed[i] {
+                result.push(t);
+            }
+        }
+        let new_type = match result.len() {
+            0 => panic!("CRITICAL: AllOf requires at least one type after simplification"),
+            1 => result.into_iter().next().unwrap(),
+            _ => AllOf { types: Arc::from(result), source_info }.dispatch(),
+        };
+        Ok(new_type)
     }
 
     pub fn types(&self) -> &[Type<T>] {

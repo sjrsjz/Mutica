@@ -207,6 +207,18 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentView<'a, U, V
     }
 }
 
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Default for Environment<U, V> {
+    fn default() -> Self {
+        Self { type_vars: Vec::new(), _phantom: std::marker::PhantomData }
+    }
+}
+
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Default for EnvironmentView<'_, U, V> {
+    fn default() -> Self {
+        Self { type_vars: &[] }
+    }
+}
+
 pub struct EnvironmentStack<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     stack: SmallVec<[Environment<U, V>; 4]>,
 }

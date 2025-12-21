@@ -33,6 +33,16 @@ use crate::{
 use lalrpop_util::ErrorRecovery;
 use mutica_core::ariadne::{Color, Label, Report, ReportKind};
 
+/// Helper function to simplify WithLocation creation with source location
+#[inline]
+pub fn with_loc<T>(
+    value: T,
+    src: &Arc<SourceFile>,
+    range: std::ops::Range<usize>,
+) -> WithLocation<T> {
+    WithLocation::new(value, Some(SourceLocation::new(src.clone(), range)).as_ref())
+}
+
 /// Calculate the full error span including all dropped tokens
 /// Returns (byte_start, byte_end) tuple
 pub fn calculate_full_error_span(
@@ -79,13 +89,13 @@ pub fn calculate_full_error_span(
 
 #[derive(Debug, Clone)]
 pub enum ParseError<'ast> {
-    UseBeforeDeclaration(WithLocation<LinearTypeAst<'ast>>, String),
+    UseBeforeDeclaration(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>),
     RedeclaredCaptureValue(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>),
     UnusedVariable(WithLocation<LinearTypeAst<'ast>>, Vec<WithLocation<String>>),
     AmbiguousPattern(WithLocation<LinearTypeAst<'ast>>),
     PatternOutOfParameterDefinition(WithLocation<LinearTypeAst<'ast>>),
     MissingBranch(WithLocation<LinearTypeAst<'ast>>),
-    OutgoingFixPointReference(WithLocation<LinearTypeAst<'ast>>, String, usize),
+    OutgoingFixPointReference(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>, usize),
     WildcardOutOfConstraint(WithLocation<BasicTypeAst>),
     AstNotDesugared(WithLocation<BasicTypeAst>),
     InternalError(String),
@@ -95,10 +105,11 @@ impl<'ast> ParseError<'ast> {
     pub fn is_warning(&self) -> bool {
         matches!(self, ParseError::UnusedVariable(_, _))
     }
+
     /// 辅助函数：从 WithLocation 提取位置信息
     /// 返回 (char_start, char_end, filepath_owned)
-    fn extract_location_info(ast: &WithLocation<LinearTypeAst<'ast>>) -> (usize, usize, String) {
-        if let Some(location) = ast.location() {
+    fn extract_location_info<T>(with_loc: &WithLocation<T>) -> (usize, usize, String) {
+        if let Some(location) = with_loc.location() {
             let source = location.source();
             let span = location.span();
             let content = source.content();
@@ -107,22 +118,6 @@ impl<'ast> ParseError<'ast> {
             let filepath = source.filepath();
             (char_start, char_end, filepath)
         } else {
-            // 如果没有位置信息，使用默认值
-            (0, 1, "<unknown>".to_string())
-        }
-    }
-
-    fn extract_location_info_basic(ast: &WithLocation<BasicTypeAst>) -> (usize, usize, String) {
-        if let Some(location) = ast.location() {
-            let source = location.source();
-            let span = location.span();
-            let content = source.content();
-            let char_start = byte_offset_to_char_offset(content, span.start);
-            let char_end = byte_offset_to_char_offset(content, span.end);
-            let filepath = source.filepath();
-            (char_start, char_end, filepath)
-        } else {
-            // 如果没有位置信息，使用默认值
             (0, 1, "<unknown>".to_string())
         }
     }
@@ -131,29 +126,40 @@ impl<'ast> ParseError<'ast> {
     pub fn report(&self) -> Report<'static, (String, std::ops::Range<usize>)> {
         match self {
             ParseError::UseBeforeDeclaration(ast, name) => {
-                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
+                let (char_start, char_end, filepath) = Self::extract_location_info(name);
+                let (ast_char_start, ast_char_end, ast_filepath) = Self::extract_location_info(ast);
                 Report::build(ReportKind::Error, filepath.clone(), char_start)
-                    .with_message(format!("Use of undeclared variable '{}'", name))
+                    .with_message(format!("Use of undeclared variable '{}'", name.value()))
                     .with_label(
                         Label::new((filepath, char_start..char_end))
-                            .with_message(format!("Variable '{}' is used before declaration", name))
+                            .with_message(format!(
+                                "Variable '{}' is used before declaration",
+                                name.value()
+                            ))
                             .with_color(Color::Red),
+                    )
+                    .with_label(
+                        Label::new((ast_filepath, ast_char_start..ast_char_end))
+                            .with_message("Here is where the variable is referenced")
+                            .with_color(Color::Cyan),
                     )
                     .with_help("Make sure the variable is declared before use")
                     .finish()
             }
             ParseError::OutgoingFixPointReference(ast, name, count) => {
-                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
-                Report::build(ReportKind::Error, filepath.clone(), char_start)
+                let (char_start, _, filepath) = Self::extract_location_info(ast);
+                let (var_start, var_end, var_filepath) = Self::extract_location_info(name);
+
+                Report::build(ReportKind::Error, filepath, char_start)
                     .with_message(format!(
                         "Fix-point variable '{}' referenced from {} layer(s) outside function scope",
-                        name, count
+                        name.value(), count
                     ))
                     .with_label(
-                        Label::new((filepath, char_start..char_end))
+                        Label::new((var_filepath, var_start..var_end))
                             .with_message(format!(
                                 "Here, the fix-point variable '{}' is used outside its defining function's scope",
-                                name
+                                name.value()
                             ))
                             .with_color(Color::Red),
                     )
@@ -161,7 +167,7 @@ impl<'ast> ParseError<'ast> {
                     .finish()
             }
             ParseError::WildcardOutOfConstraint(ast) => {
-                let (char_start, char_end, filepath) = Self::extract_location_info_basic(ast);
+                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
                 Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message("Wildcard type used outside of a constraint")
                     .with_label(
@@ -173,7 +179,7 @@ impl<'ast> ParseError<'ast> {
                     .finish()
             }
             ParseError::AstNotDesugared(ast) => {
-                let (char_start, char_end, filepath) = Self::extract_location_info_basic(ast);
+                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
                 Report::build(ReportKind::Error, filepath.clone(), char_start)
                     .with_message("CRITICAL: AST node not desugared before type processing")
                     .with_label(
@@ -187,83 +193,44 @@ impl<'ast> ParseError<'ast> {
                     .finish()
             }
             ParseError::RedeclaredCaptureValue(ast, name) => {
-                // 优先使用 name 的位置信息
-                let (report_start, report_filepath) = if let Some(name_location) = name.location() {
-                    let source = name_location.source();
-                    let span = name_location.span();
-                    let content = source.content();
-                    let char_start = byte_offset_to_char_offset(content, span.start);
-                    (char_start, source.filepath())
-                } else {
-                    let (char_start, _, filepath) = Self::extract_location_info(ast);
-                    (char_start, filepath)
-                };
+                let (name_start, name_end, name_filepath) = Self::extract_location_info(name);
+                let (ast_start, ast_end, ast_filepath) = Self::extract_location_info(ast);
 
-                let mut report =
-                    Report::build(ReportKind::Error, report_filepath.clone(), report_start)
-                        .with_message(format!("Redeclared capture variable '{}'", name.value()));
-
-                // 如果 name 有位置信息，为其添加 Label
-                if let Some(name_location) = name.location() {
-                    let source = name_location.source();
-                    let span = name_location.span();
-                    let content = source.content();
-                    let char_start = byte_offset_to_char_offset(content, span.start);
-                    let char_end = byte_offset_to_char_offset(content, span.end);
-                    let filepath = source.filepath();
-
-                    report = report.with_label(
-                        Label::new((filepath, char_start..char_end))
+                Report::build(ReportKind::Error, name_filepath.clone(), name_start)
+                    .with_message(format!("Redeclared capture variable '{}'", name.value()))
+                    .with_label(
+                        Label::new((name_filepath, name_start..name_end))
                             .with_message(format!(
                                 "Capture variable '{}' is redeclared here",
                                 name.value()
                             ))
                             .with_color(Color::Red),
-                    );
-                }
-
-                // 如果 ast 有位置信息，添加上下文 Label
-                if let Some(ast_location) = ast.location() {
-                    let source = ast_location.source();
-                    let span = ast_location.span();
-                    let content = source.content();
-                    let ast_start = byte_offset_to_char_offset(content, span.start);
-                    let ast_end = byte_offset_to_char_offset(content, span.end);
-                    let ast_filepath = source.filepath();
-
-                    report = report.with_label(
+                    )
+                    .with_label(
                         Label::new((ast_filepath, ast_start..ast_end))
                             .with_message("The variable was already declared in this closure's capture, it might be a internal compiler error")
                             .with_color(Color::Yellow),
-                    );
-                }
-
-                report.with_help("A pattern cannot contain duplicate variable names").finish()
+                    )
+                    .with_help("A pattern cannot contain duplicate variable names")
+                    .finish()
             }
             ParseError::UnusedVariable(ast, names) => {
                 let var_names: Vec<&str> = names.iter().map(|n| n.value().as_str()).collect();
 
-                // 收集所有有位置信息的变量Label
-                let mut labels = Vec::new();
-                for name_with_loc in names {
-                    if let Some(location) = name_with_loc.location() {
-                        let source = location.source();
-                        let span = location.span();
-                        let content = source.content();
-                        let char_start = byte_offset_to_char_offset(content, span.start);
-                        let char_end = byte_offset_to_char_offset(content, span.end);
-                        let filepath = source.filepath();
-
-                        labels.push(
-                            Label::new((filepath, char_start..char_end))
-                                .with_message(format!(
-                                    "Variable '{}' is declared but never used",
-                                    name_with_loc.value()
-                                ))
-                                .with_color(Color::Yellow),
-                        );
-                    }
-                }
+                // 收集所有变量的 Label
+                let labels: Vec<_> = names
+                    .iter()
+                    .map(|name_with_loc| {
+                        let (char_start, char_end, filepath) =
+                            Self::extract_location_info(name_with_loc);
+                        Label::new((filepath, char_start..char_end))
+                            .with_message(format!(
+                                "Variable '{}' is declared but never used",
+                                name_with_loc.value()
+                            ))
+                            .with_color(Color::Yellow)
+                    })
+                    .collect();
 
                 // 如果没有任何变量有位置信息，使用简化报告
                 if labels.is_empty() {
@@ -281,19 +248,11 @@ impl<'ast> ParseError<'ast> {
                         .finish();
                 }
 
-                // 确定报告的起始位置和文件名（优先使用ast，否则用0）
-                let (report_filepath, report_start) = if let Some(ast_location) = ast.location() {
-                    let source = ast_location.source();
-                    let span = ast_location.span();
-                    let content = source.content();
-                    let char_start = byte_offset_to_char_offset(content, span.start);
-                    (source.filepath(), char_start)
-                } else {
-                    ("<unknown>".to_string(), 0)
-                };
+                // 确定报告的起始位置和文件名
+                let (ast_start, ast_end, ast_filepath) = Self::extract_location_info(ast);
 
                 let mut report =
-                    Report::build(ReportKind::Warning, report_filepath.clone(), report_start)
+                    Report::build(ReportKind::Warning, ast_filepath.clone(), ast_start)
                         .with_message(format!("Unused variables: {}", var_names.join(", ")));
 
                 // 添加所有变量的 Label
@@ -301,21 +260,12 @@ impl<'ast> ParseError<'ast> {
                     report = report.with_label(label);
                 }
 
-                // 如果 ast 有位置信息，添加分析器触发位置的 Label
-                if let Some(ast_location) = ast.location() {
-                    let source = ast_location.source();
-                    let span = ast_location.span();
-                    let content = source.content();
-                    let ast_start = byte_offset_to_char_offset(content, span.start);
-                    let ast_end = byte_offset_to_char_offset(content, span.end);
-                    let ast_filepath = source.filepath();
-
-                    report = report.with_label(
-                        Label::new((ast_filepath, ast_start..ast_end))
-                            .with_message("Analyzer detected unused variables in this scope")
-                            .with_color(Color::Cyan),
-                    );
-                }
+                // 添加分析器触发位置的 Label
+                report = report.with_label(
+                    Label::new((ast_filepath, ast_start..ast_end))
+                        .with_message("Analyzer detected unused variables in this scope")
+                        .with_color(Color::Cyan),
+                );
 
                 report
                     .with_help("Consider removing unused variables or prefixing with '_' to intentionally ignore them")
@@ -441,11 +391,11 @@ impl ParseContext {
         self.declared_variables.push(Scope::Generic(HashMap::new()));
     }
 
-    pub fn enter_fixpoint_scope(&mut self, name: String, loc: Option<&SourceLocation>) {
+    pub fn enter_fixpoint_scope(&mut self, name: WithLocation<String>) {
         self.declared_variables.push(Scope::FixPoint(
-            name,
+            name.value().clone(),
             Self::NOT_USED,
-            WithLocation::new((), loc),
+            WithLocation::new((), name.location()),
         ));
     }
 
@@ -482,25 +432,28 @@ impl ParseContext {
         Ok(())
     }
 
-    pub fn declare_variable(
-        &mut self,
-        name: String,
-        loc: Option<&SourceLocation>,
-    ) -> Result<(), ContextError> {
+    pub fn declare_variable(&mut self, name: WithLocation<String>) -> Result<(), ContextError> {
         if let Some(current_scope) = self.declared_variables.last_mut() {
             match current_scope {
                 Scope::Function(map) | Scope::Generic(map) => {
-                    if map.contains_key(&name)
-                        && map[&name].0 == Self::NOT_USED
-                        && !name.starts_with("_")
-                        && !name.contains("#")
+                    if map.contains_key(name.value())
+                        && map[name.value()].0 == Self::NOT_USED
+                        && !name.value().starts_with("_")
+                        && !name.value().contains("#")
                     // 允许以 _ 开头的变量不被使用
                     {
-                        let unused_vars = vec![map[&name].1.clone().map(|_| name.clone())];
-                        map.insert(name, (Self::NOT_USED, WithLocation::new((), loc)));
+                        let unused_vars =
+                            vec![map[name.value()].1.clone().map(|_| name.value().clone())];
+                        map.insert(
+                            name.value().clone(),
+                            (Self::NOT_USED, WithLocation::new((), name.location())),
+                        );
                         return Err(ContextError::NotUsed(unused_vars));
                     }
-                    map.insert(name, (Self::NOT_USED, WithLocation::new((), loc)));
+                    map.insert(
+                        name.value().clone(),
+                        (Self::NOT_USED, WithLocation::new((), name.location())),
+                    );
                     return Ok(());
                 }
                 Scope::FixPoint(_, _, _) => return Err(ContextError::EmptyContext),
@@ -553,7 +506,7 @@ pub enum BuildContextLayer<T: GcAllocObject<T, Inner = Type<T>>> {
         captures: HashMap<String, WithLocation<()>>,
     },
     GenericBinding(HashMap<String, WithLocation<()>>),
-    FixPoint(String, Type<T>),
+    FixPoint(WithLocation<String>, Type<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContextLayer<T> {
@@ -568,7 +521,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContextLayer<T> {
         Self::GenericBinding(patterns)
     }
 
-    pub fn new_fixpoint_layer(name: String, ty: Type<T>) -> Self {
+    pub fn new_fixpoint_layer(name: WithLocation<String>, ty: Type<T>) -> Self {
         Self::FixPoint(name, ty)
     }
 }
@@ -642,7 +595,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     skip_generic = true; // 只允许跨越一层 Generic
                 }
                 BuildContextLayer::FixPoint(name, v) => {
-                    if var.as_ref().eq(name) {
+                    if var.as_ref().eq(name.value()) {
                         return Some((v.clone(), Some(outgoing_function_layer_count)));
                     }
                 }
@@ -673,7 +626,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
     }
 }
 
-#[derive(Clone)]
 pub struct WithLocation<T, P = ()>
 where
     P: Clone,
@@ -681,6 +633,21 @@ where
     value: T,
     location: Option<SourceLocation>,
     payload: P,
+}
+
+impl<T, P> Clone for WithLocation<T, P>
+where
+    T: Clone,
+    P: Clone,
+{
+    #[stacksafe::stacksafe]
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            location: self.location.clone(),
+            payload: self.payload.clone(),
+        }
+    }
 }
 
 impl<T, P> Debug for WithLocation<T, P>
@@ -785,6 +752,7 @@ impl<'a> MultiFileBuilder<'a> {
     }
 
     #[allow(clippy::type_complexity)]
+    #[stacksafe::stacksafe]
     pub fn build(
         &mut self,
         path: PathBuf,
@@ -1060,118 +1028,162 @@ pub fn inject_std_library(
         builder.build(PathBuf::from("<std>"), std_lib_code.to_string());
     // 合并 AST, 把 Variable("<placeholder>") 替换为实际的 ast
     if let Some((std_ast, _)) = std_ast_opt {
+        #[stacksafe::stacksafe]
         fn replace_placeholder(
             std_ast: WithLocation<BasicTypeAst>,
-            ast: &BasicTypeAst,
+            ast: &WithLocation<BasicTypeAst>,
         ) -> WithLocation<BasicTypeAst> {
-            std_ast.map(|std_ast| match std_ast {
-                BasicTypeAst::Variable(name) if name == "<placeholder>" => ast.clone(),
+            let loc = std_ast.location().cloned();
+            match std_ast.value {
+                BasicTypeAst::Variable(name) if name.value() == "<placeholder>" => ast.clone(),
                 BasicTypeAst::Variable(_) => std_ast,
-                BasicTypeAst::Range { ty, min, delta } => {
-                    BasicTypeAst::Range { ty: replace_placeholder(*ty, ast).into(), min, delta }
-                }
+                BasicTypeAst::Range { ty, min, delta } => WithLocation::new(
+                    BasicTypeAst::Range { ty: replace_placeholder(*ty, ast).into(), min, delta },
+                    loc.as_ref(),
+                ),
                 BasicTypeAst::Float => std_ast,
                 BasicTypeAst::Char => std_ast,
                 BasicTypeAst::Wildcard => std_ast,
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
-                BasicTypeAst::Tuple(items) => BasicTypeAst::Tuple(
-                    items.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
+                BasicTypeAst::Tuple(items) => WithLocation::new(
+                    BasicTypeAst::Tuple(
+                        items.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
+                    ),
+                    loc.as_ref(),
                 ),
-                BasicTypeAst::List { head, tail } => BasicTypeAst::List {
-                    head: head.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
-                    tail: replace_placeholder(*tail, ast).into(),
-                },
-                BasicTypeAst::Cons { head, tail } => BasicTypeAst::Cons {
-                    head: head.into_iter().map(|(s, n)| (replace_placeholder(s, ast), n)).collect(),
-                    tail: replace_placeholder(*tail, ast).into(),
-                },
-                BasicTypeAst::AnyOf(items) => BasicTypeAst::AnyOf(
-                    items.into_iter().map(|item| replace_placeholder(item, ast)).collect(),
+                BasicTypeAst::List { head, tail } => WithLocation::new(
+                    BasicTypeAst::List {
+                        head: head
+                            .into_iter()
+                            .map(|(s, n)| (replace_placeholder(s, ast), n))
+                            .collect(),
+                        tail: replace_placeholder(*tail, ast).into(),
+                    },
+                    loc.as_ref(),
                 ),
-                BasicTypeAst::AllOf(items) => BasicTypeAst::AllOf(
-                    items.into_iter().map(|item| replace_placeholder(item, ast)).collect(),
+                BasicTypeAst::Cons { head, tail } => WithLocation::new(
+                    BasicTypeAst::Cons {
+                        head: head
+                            .into_iter()
+                            .map(|(s, n)| (replace_placeholder(s, ast), n))
+                            .collect(),
+                        tail: replace_placeholder(*tail, ast).into(),
+                    },
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::AnyOf(items) => WithLocation::new(
+                    BasicTypeAst::AnyOf(
+                        items.into_iter().map(|item| replace_placeholder(item, ast)).collect(),
+                    ),
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::AllOf(items) => WithLocation::new(
+                    BasicTypeAst::AllOf(
+                        items.into_iter().map(|item| replace_placeholder(item, ast)).collect(),
+                    ),
+                    loc.as_ref(),
                 ),
                 BasicTypeAst::Invoke { func, arg, continuation, perform_handler } => {
-                    BasicTypeAst::Invoke {
+                    WithLocation::new(
+                        BasicTypeAst::Invoke {
+                            func: Box::new(replace_placeholder(*func, ast)),
+                            arg: Box::new(replace_placeholder(*arg, ast)),
+                            continuation: continuation
+                                .map(|c| Box::new(replace_placeholder(*c, ast))),
+                            perform_handler: perform_handler
+                                .map(|h| Box::new(replace_placeholder(*h, ast))),
+                        },
+                        loc.as_ref(),
+                    )
+                }
+                BasicTypeAst::Match { branches } => WithLocation::new(
+                    BasicTypeAst::Match {
+                        branches: branches
+                            .into_iter()
+                            .map(|(pattern_variant, expr)| {
+                                let new_expr = replace_placeholder(expr, ast);
+                                let new_variant = match pattern_variant {
+                                    BasicGenericPattern::Standard { vars, pattern, constraint } => {
+                                        BasicGenericPattern::Standard {
+                                            vars,
+                                            pattern: replace_placeholder(pattern, ast),
+                                            constraint: (
+                                                replace_placeholder(constraint.0, ast),
+                                                replace_placeholder(constraint.1, ast),
+                                            ),
+                                        }
+                                    }
+                                    BasicGenericPattern::AutoBind { pattern } => {
+                                        BasicGenericPattern::AutoBind {
+                                            pattern: replace_placeholder(pattern, ast),
+                                        }
+                                    }
+                                };
+                                (new_variant, new_expr)
+                            })
+                            .collect(),
+                    },
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::Bind { var, expr } => WithLocation::new(
+                    BasicTypeAst::Bind { var, expr: replace_placeholder(*expr, ast).into() },
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::Apply { func, arg, handler } => WithLocation::new(
+                    BasicTypeAst::Apply {
                         func: replace_placeholder(*func, ast).into(),
                         arg: replace_placeholder(*arg, ast).into(),
-                        continuation: continuation.map(|c| replace_placeholder(*c, ast).into()),
-                        perform_handler: perform_handler
-                            .map(|h| replace_placeholder(*h, ast).into()),
-                    }
-                }
-                BasicTypeAst::Match { branches } => BasicTypeAst::Match {
-                    branches: branches
-                        .into_iter()
-                        .map(|(pattern_variant, expr)| {
-                            let new_expr = replace_placeholder(expr, ast);
-                            let new_variant = match pattern_variant {
-                                BasicGenericPattern::Standard { vars, pattern, constraint } => {
-                                    BasicGenericPattern::Standard {
-                                        vars,
-                                        pattern: replace_placeholder(pattern, ast),
-                                        constraint: (
-                                            replace_placeholder(constraint.0, ast),
-                                            replace_placeholder(constraint.1, ast),
-                                        ),
-                                    }
-                                }
-                                BasicGenericPattern::AutoBind { pattern } => {
-                                    BasicGenericPattern::AutoBind {
-                                        pattern: replace_placeholder(pattern, ast),
-                                    }
-                                }
-                            };
-                            (new_variant, new_expr)
-                        })
-                        .collect(),
-                },
-                BasicTypeAst::Bind { var, expr } => {
-                    BasicTypeAst::Bind { var, expr: replace_placeholder(*expr, ast).into() }
-                }
-                BasicTypeAst::Apply { func, arg, handler } => BasicTypeAst::Apply {
-                    func: replace_placeholder(*func, ast).into(),
-                    arg: replace_placeholder(*arg, ast).into(),
-                    handler: handler.map(|h| replace_placeholder(*h, ast).into()),
-                },
-                BasicTypeAst::AtomicOpcode(_) => std_ast,
-                BasicTypeAst::Namespace { tag, expr } => {
-                    BasicTypeAst::Namespace { tag, expr: replace_placeholder(*expr, ast).into() }
-                }
-                BasicTypeAst::Generic(pattern) => BasicTypeAst::Generic(
-                    (match *pattern {
-                        BasicGenericPattern::Standard { vars, pattern, constraint } => {
-                            BasicGenericPattern::Standard {
-                                vars,
-                                pattern: replace_placeholder(pattern, ast),
-                                constraint: (
-                                    replace_placeholder(constraint.0, ast),
-                                    replace_placeholder(constraint.1, ast),
-                                ),
-                            }
-                        }
-                        BasicGenericPattern::AutoBind { pattern } => {
-                            BasicGenericPattern::AutoBind {
-                                pattern: replace_placeholder(pattern, ast),
-                            }
-                        }
-                    })
-                    .into(),
+                        handler: handler.map(|h| replace_placeholder(*h, ast).into()),
+                    },
+                    loc.as_ref(),
                 ),
-                BasicTypeAst::Literal(v) => {
-                    BasicTypeAst::Literal(replace_placeholder(*v, ast).into())
-                }
-                BasicTypeAst::SubOf { value } => {
-                    BasicTypeAst::SubOf { value: replace_placeholder(*value, ast).into() }
-                }
-                BasicTypeAst::StaticFixPoint { param_name, expr } => BasicTypeAst::StaticFixPoint {
-                    param_name,
-                    expr: replace_placeholder(*expr, ast).into(),
-                },
-            })
+                BasicTypeAst::AtomicOpcode(_) => std_ast,
+                BasicTypeAst::Namespace { tag, expr } => WithLocation::new(
+                    BasicTypeAst::Namespace { tag, expr: replace_placeholder(*expr, ast).into() },
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::Generic(pattern) => WithLocation::new(
+                    BasicTypeAst::Generic(
+                        (match *pattern {
+                            BasicGenericPattern::Standard { vars, pattern, constraint } => {
+                                BasicGenericPattern::Standard {
+                                    vars,
+                                    pattern: replace_placeholder(pattern, ast),
+                                    constraint: (
+                                        replace_placeholder(constraint.0, ast),
+                                        replace_placeholder(constraint.1, ast),
+                                    ),
+                                }
+                            }
+                            BasicGenericPattern::AutoBind { pattern } => {
+                                BasicGenericPattern::AutoBind {
+                                    pattern: replace_placeholder(pattern, ast),
+                                }
+                            }
+                        })
+                        .into(),
+                    ),
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::Literal(v) => WithLocation::new(
+                    BasicTypeAst::Literal(replace_placeholder(*v, ast).into()),
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::SubOf { value } => WithLocation::new(
+                    BasicTypeAst::SubOf { value: replace_placeholder(*value, ast).into() },
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::StaticFixPoint { param_name, expr } => WithLocation::new(
+                    BasicTypeAst::StaticFixPoint {
+                        param_name,
+                        expr: replace_placeholder(*expr, ast).into(),
+                    },
+                    loc.as_ref(),
+                ),
+            }
         }
-        replace_placeholder(std_ast, ast.value())
+        replace_placeholder(std_ast, &ast)
     } else {
         ast
     }

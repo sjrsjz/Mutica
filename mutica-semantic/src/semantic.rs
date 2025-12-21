@@ -189,9 +189,9 @@ mod test {
     use mutica_compiler::{
         ariadne,
         logos::Source,
-        parser::{ParseContext, ast::LinearizeContext},
+        parser::{ParseContext, WithLocation, ast::LinearizeContext, inject_std_library},
     };
-    use mutica_core::util::colorize::TokenColor;
+    use mutica_core::util::{colorize::TokenColor, source_info::SourceLocation};
 
     use crate::semantic::SourceMapping;
 
@@ -211,7 +211,11 @@ mod test {
         let mut builder_errors = Vec::new();
         let mut multifile_builder =
             MultiFileBuilder::new(&mut imported_ast, &mut cycle_detector, &mut builder_errors);
-        let (ast, source) = multifile_builder.build(path.clone(), expr.to_string());
+        let (mut ast, source) = multifile_builder.build(path.clone(), expr.to_string());
+
+        if let Some((ast, _)) = &mut ast {
+            *ast = inject_std_library(ast.clone(), &mut builder_errors)
+        }
         // 直接使用 MultiFileBuilder 构建
         let basic = match ast {
             Some(ast) => ast,
@@ -389,15 +393,46 @@ mod test {
     #[test]
     fn test_source_mapping() {
         let expr = r#"
-let Option: any = T: any |-> (Some::T | None::());
-let println: any = x: any |-> {
-    discard print x;
-    discard print '\n';
-};
-discard println[Option(1)];
-discard println[Option(2)];
-discard println[Option(int)];
-Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option(int), Option(1) <: Option(2)
+// 阶乘和斐波那契数列示例
+
+// 普通递归阶乘
+let constraint factorial: any = 
+    dyn_rec fact: match
+        | assert 0 => 1
+        | assert 1 => 1
+        | constraint n: nat => n * fact(n - 1)
+        | panic;
+
+// 尾递归阶乘
+let constraint factorial_tail: any = constraint n: nat => [
+        let constraint helper: any = dyn_rec h: constraint acc: nat => match 
+            | assert 0 => acc
+            | assert 1 => acc
+            | constraint n: nat => h(acc * n)(n - 1)
+            | panic;
+        helper(1)(n)
+    ];
+
+// 斐波那契数列
+let constraint fibonacci: any = 
+    dyn_rec fib: match 
+        | assert 0 => 0
+        | assert 1 => 1
+        | constraint n: nat => fib(n - 1) + fib(n - 2)
+        | panic;
+
+// 尾递归斐波那契
+let constraint fibonacci_tail: any = constraint n: nat => [
+    let constraint helper: any = dyn_rec helper: constraint a: nat => constraint b: nat => match
+            | assert 0 => a
+            | constraint n: nat => helper(b)(a + b)(n - 1)
+            | panic;
+        helper(0)(1)(n)
+    ];
+
+// 测试
+factorial(5), factorial_tail(5), fibonacci(7), fibonacci_tail(7)
+
         "#;
         // 测试不同的字节偏移
         let mut byte_offsets = vec![];
@@ -546,171 +581,105 @@ Option(1), Option(2), Option(int), Option(1) <: Option(int), Option(2) <: Option
     #[test]
     fn test_colored_source_mapping() {
         let expr = r#"
-let maybe_pkg: any = import "maybe.mu";
-let List: any = T: any |-> rec list: (() | (T, list));
-let Nil: any = ();
-let cons: any = (head: any, tail: any) |-> (head, tail);
-let head: any = match
-    | (h: any, _) => h
-    | panic;
-let tail: any = match
-    | (_, t: any) => t
-    | panic;
-let is_nil: any = match
-    | () => true
-    | _ => false
-    | panic;
-let iter: any = lst: List(any) |-> f: any |-> {
-    let loop: any = rec go: match
-        | () => ()
-        | (h: any, t: any) => {
-            discard f(h);
-            go(t)
-        }
-        | panic;
-    loop(lst)
-};
-let map: any = lst: List(any) |-> f: any |-> {
-    let loop: any = rec go: match
-        | () => ()
-        | (h: any, t: any) => cons(f(h), go(t))
-        | panic;
-    loop(lst)
-};
-let len: any = lst: List(any) |-> {
-    let loop: any = rec go: match
-        | () => 0
-        | (_, t: any) => 1 + go(t)
-        | panic;
-    loop(lst)
-};
-let filter: any = lst: List(any) |-> pred: any |-> {
-    let loop: any = rec go: match
-        | () => ()
-        | (h: any, t: any) => match pred(h)
-            | false => go(t)
-            | true => cons(h, go(t))
-            | panic
-        | panic;
-    loop(lst)
-};
-let fold: any = lst: List(any) |-> acc: any |-> f: any |-> {
-    let loop: any = rec go: match
-        | ((), a: any) => a
-        | ((h: any, t: any), a: any) => go(t, f(a, h))
-        | panic;
-    loop(lst, acc)
-};
-let foldr: any = lst: List(any) |-> acc: any |-> f: any |-> {
-    let loop: any = rec go: match
-        | () => acc
-        | (h: any, t: any) => f(h, go(t))
-        | panic;
-    loop(lst)
-};
-let append: any = lst1: List(any) |-> lst2: List(any) |-> {
-    let loop: any = rec go: match
-        | () => lst2
-        | (h: any, t: any) => cons(h, go(t))
-        | panic;
-    loop(lst1)
-};
-let reverse: any = lst: List(any) |-> {
-    let loop: any = rec go: match
-        | ((), acc: any) => acc
-        | ((h: any, t: any), acc: any) => go(t, cons(h, acc))
-        | panic;
-    loop(lst, ())
-};
-let nth: any = lst: List(any) |-> n: int |-> {
-    let loop: any = rec go: match
-        | ((h: any, _), 0) => h
-        | ((_, t: any), i: any) => go(t, i - 1)
-        | panic;
-    loop(lst, n)
-};
-let take: any = lst: List(any) |-> n: int |-> {
-    let loop: any = rec go: match
-        | ((), _) => ()
-        | (_, 0) => ()
-        | ((h: any, t: any), i: any) => cons(h, go(t, i - 1))
-        | panic;
-    loop(lst, n)
-};
-let drop: any = lst: List(any) |-> n: int |-> {
-    let loop: any = rec go: match
-        | ((), _) => ()
-        | (l: any, 0) => l
-        | ((_, t: any), i: any) => go(t, i - 1)
-        | panic;
-    loop(lst, n)
-};
-let find: any = lst: List(any) |-> pred: any |-> {
-    let loop: any = rec go: match
-        | () => maybe_pkg.Nothing
-        | (h: any, t: any) => match pred(h)
-            | false => go(t)
-            | true => maybe_pkg.Just(h)
-            | panic
-        | panic;
-    loop(lst)
-};
-let list_all: any = lst: List(any) |-> pred: any |-> {
-    let loop: any = rec go: match
-        | () => true
-        | (h: any, t: any) => match pred(h)
-            | false => false
-            | true => go(t)
-            | panic
-        | panic;
-    loop(lst)
-};
-let list_any: any = lst: List(any) |-> pred: any |-> {
-    let loop: any = rec go: match
-        | () => false
-        | (h: any, t: any) => match pred(h)
-            | false => go(t)
-            | true => true
-            | panic
-        | panic;
-    loop(lst)
-};
+// 阶乘和斐波那契数列示例
 
-List::List &
-Nil::Nil &
-cons::cons &
-head::head &
-tail::tail &
-is_nil::is_nil &
-iter::iter &
-map::map &
-len::len &
-filter::filter &
-fold::fold &
-foldr::foldr &
-append::append &
-reverse::reverse &
-nth::nth &
-take::take &
-drop::drop &
-find::find &
-list_all::list_all &
-list_any::list_any
+// 普通递归阶乘
+let constraint factorial: any = 
+    dyn_rec fact: match
+        | assert 0 => 1
+        | assert 1 => 1
+        | constraint n: nat => n * fact(n - 1)
+        | panic;
+
+// 尾递归阶乘
+let constraint factorial_tail: any = constraint n: nat => [
+        let constraint helper: any = dyn_rec h: constraint acc: nat => match 
+            | assert 0 => acc
+            | assert 1 => acc
+            | constraint n: nat => h(acc * n)(n - 1)
+            | panic;
+        helper(1)(n)
+    ];
+
+// 斐波那契数列
+let constraint fibonacci: any = 
+    dyn_rec fib: match 
+        | assert 0 => 0
+        | assert 1 => 1
+        | constraint n: nat => fib(n - 1) + fib(n - 2)
+        | panic;
+
+// 尾递归斐波那契
+let constraint fibonacci_tail: any = constraint n: nat => [
+    let constraint helper: any = dyn_rec helper: constraint a: nat => constraint b: nat => match
+            | assert 0 => a
+            | constraint n: nat => helper(b)(a + b)(n - 1)
+            | panic;
+        helper(0)(1)(n)
+    ];
+
+// 测试
+factorial(5), factorial_tail(5), fibonacci(7), fibonacci_tail(7)
+
         "#;
 
         print_colored_mapping(expr);
 
         let expr = r#"
-let int_list: any = rec list: (() | (int, list));
-let append: any = rec append: (list1: any, list2: any) |->
-    match list1 // this is a comment
-        | () => list2
-        | (head: int, tail: any) => (head, append(tail, list2))
-        | panic;
-let lst1: any = @(1, 2, 3);
-let lst2: any = @(4, 5, 6);
-let lst3: any = append(lst1, lst2);
-lst3, lst3 <: int_list
+let constraint vec3: any = (float, float, float);
+
+extend $"op#add": constraint (A: vec3, B: vec3) => {
+    let constraint (x1: float, y1: float, z1: float) = A;
+    let constraint (x2: float, y2: float, z2: float) = B;
+    (x1 + x2, y1 + y2, z1 + z2)
+};
+
+extend $"op#sub": constraint (A: vec3, B: vec3) => {
+    let constraint (x1: float, y1: float, z1: float) = A;
+    let constraint (x2: float, y2: float, z2: float) = B;
+    (x1 - x2, y1 - y2, z1 - z2)
+};
+
+extend $"op#mul": constraint (A: vec3, B: vec3) => {
+    let constraint (x1: float, y1: float, z1: float) = A;
+    let constraint (x2: float, y2: float, z2: float) = B;
+    (x1 * x2, y1 * y2, z1 * z2)
+};
+
+extend $"op#mul": constraint (A: vec3, scale: float) => {
+    let constraint (x1: float, y1: float, z1: float) = A;
+    (x1 * scale, y1 * scale, z1 * scale)
+};
+
+extend $"op#div": constraint (A: vec3, scale: float) => {
+    let constraint (x1: float, y1: float, z1: float) = A;
+    (x1 / scale, y1 / scale, z1 / scale)
+};
+
+let constraint dot: any = constraint (A: vec3, B: vec3) => {
+    let constraint (x1: float, y1: float, z1: float) = A;
+    let constraint (x2: float, y2: float, z2: float) = B;
+    x1 * x2 + y1 * y2 + z1 * z2
+};
+
+let constraint cross: any = constraint (A: vec3, B: vec3) => {
+    let constraint (x1: float, y1: float, z1: float) = A;
+    let constraint (x2: float, y2: float, z2: float) = B;
+    (
+        y1 * z2 - z1 * y2,
+        z1 * x2 - x1 * z2,
+        x1 * y2 - y1 * x2
+    )
+};
+
+let constraint A: vec3 = (1.0, 2.0, 3.0);
+let constraint B: vec3 = (4.0, 5.0, 6.0);
+discard println!(A + B);
+discard println!(A - B);
+discard println!(A * B);
+discard println!(A / 2.0);
+discard println!(dot(A, B));
+discard println!(cross(A, B));
         "#;
 
         print_colored_mapping(expr);

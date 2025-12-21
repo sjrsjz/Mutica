@@ -433,6 +433,7 @@ name = "mutica"
 version = "0.3.0"
 dependencies = [
  "clap",
+ "colored",
  "mutica-compiler",
  "mutica-core",
  "mutica-semantic",

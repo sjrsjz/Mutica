@@ -33,7 +33,10 @@ let constraint forever: any = constraint init: any => constraint f: any => {
     go(f(state))
 };
 
+let constraint return: any = constraint _f: any => constraint v: any => v;
+
 while::while &
 whilei::whilei &
 repeat::repeat &
-forever::forever
+forever::forever &
+return::return
