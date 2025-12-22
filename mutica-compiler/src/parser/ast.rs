@@ -126,6 +126,7 @@ pub enum TypeAst {
     Apply {
         func: Box<WithLocation<TypeAst>>,
         arg: Box<WithLocation<TypeAst>>,
+        transformer_var: Option<WithLocation<String>>,
     },
     Eq {
         left: Box<WithLocation<TypeAst>>,
@@ -196,7 +197,11 @@ impl Clone for TypeAst {
             },
             TypeAst::Match { branches } => TypeAst::Match { branches: branches.clone() },
             TypeAst::Bind { var, expr } => TypeAst::Bind { var: var.clone(), expr: expr.clone() },
-            TypeAst::Apply { func, arg } => TypeAst::Apply { func: func.clone(), arg: arg.clone() },
+            TypeAst::Apply { func, arg, transformer_var } => TypeAst::Apply {
+                func: func.clone(),
+                arg: arg.clone(),
+                transformer_var: transformer_var.clone(),
+            },
             TypeAst::Eq { left, right } => TypeAst::Eq { left: left.clone(), right: right.clone() },
             TypeAst::Neq { left, right } => {
                 TypeAst::Neq { left: left.clone(), right: right.clone() }
@@ -272,6 +277,7 @@ pub enum BasicTypeAst {
         func: Box<WithLocation<BasicTypeAst>>,
         arg: Box<WithLocation<BasicTypeAst>>,
         handler: Option<Box<WithLocation<BasicTypeAst>>>,
+        transformer_var: Option<WithLocation<String>>,
     },
     AtomicOpcode(AtomicOpcode),
     Namespace {
@@ -323,10 +329,11 @@ impl Clone for BasicTypeAst {
             BasicTypeAst::Bind { var, expr } => {
                 BasicTypeAst::Bind { var: var.clone(), expr: expr.clone() }
             }
-            BasicTypeAst::Apply { func, arg, handler } => BasicTypeAst::Apply {
+            BasicTypeAst::Apply { func, arg, handler, transformer_var } => BasicTypeAst::Apply {
                 func: func.clone(),
                 arg: arg.clone(),
                 handler: handler.clone(),
+                transformer_var: transformer_var.clone(),
             },
             BasicTypeAst::AtomicOpcode(op) => BasicTypeAst::AtomicOpcode(op.clone()),
             BasicTypeAst::Namespace { tag, expr } => {
@@ -377,7 +384,8 @@ pub struct LinearizeResult<'ast> {
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         WithLocation<String>,
-    )>, // (func, arg, handler, tmpvar_name)
+        Option<WithLocation<String>>,
+    )>, // (func, arg, handler, tmpvar_name, transformer_var)
     tail_type: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
 }
 
@@ -393,6 +401,7 @@ impl<'ast> LinearizeResult<'ast> {
             WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
             Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
             WithLocation<String>,
+            Option<WithLocation<String>>, // 变换器函数对应的变量
         )>,
         ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
     ) -> Self {
@@ -404,10 +413,17 @@ impl<'ast> LinearizeResult<'ast> {
         arg: LinearizeResult<'ast>,
         handler: Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         allocated_tmpvar_name: WithLocation<String>,
+        transformer_var: Option<WithLocation<String>>,
     ) -> Self {
         let mut bindings = func.bindings;
         bindings.extend(arg.bindings);
-        bindings.push((func.tail_type, arg.tail_type, handler, allocated_tmpvar_name.clone()));
+        bindings.push((
+            func.tail_type,
+            arg.tail_type,
+            handler,
+            allocated_tmpvar_name.clone(),
+            transformer_var,
+        ));
         Self { bindings, tail_type: LinearTypeAst::Variable(allocated_tmpvar_name).into() }
     }
 
@@ -419,6 +435,7 @@ impl<'ast> LinearizeResult<'ast> {
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         WithLocation<String>,
+        Option<WithLocation<String>>,
     )> {
         &self.bindings
     }
@@ -429,14 +446,100 @@ impl<'ast> LinearizeResult<'ast> {
 
     pub fn finalize(self) -> WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
         let mut ty = self.tail_type;
-        for (f, a, handler, tmpvar) in self.bindings.into_iter().rev() {
+        for (f, a, handler, tmpvar, transformer_var) in self.bindings.into_iter().rev() {
             let continuation = if let LinearTypeAst::Variable(v) = ty.value()
                 && v.eq(tmpvar.value())
             {
                 None // TCO（尾调用优化）
             } else {
-                Some(
-                    WithLocation::new(
+                Some(WithLocation::new(
+                    LinearTypeAst::Match {
+                        auto_captures: HashMap::new(),
+                        branches: vec![(
+                            vec![tmpvar.clone()],
+                            WithLocation::new(
+                                LinearTypeAst::Variable(tmpvar.clone()),
+                                None::<&SourceLocation>,
+                            ),
+                            (
+                                WithLocation::new(
+                                    LinearTypeAst::Tuple(vec![]),
+                                    None::<&SourceLocation>,
+                                ),
+                                WithLocation::new(
+                                    LinearTypeAst::Tuple(vec![]),
+                                    None::<&SourceLocation>,
+                                ),
+                            ),
+                            ty.clone(),
+                        )],
+                    },
+                    ty.location(),
+                ))
+            };
+            match transformer_var {
+                Some(tv) => {
+                    let transformer_arg = match (continuation, handler) {
+                        (Some(c), Some(h)) => WithLocation::new(
+                            LinearTypeAst::Namespace {
+                                tag: WithLocation::new("Both".to_string(), None::<&SourceLocation>),
+                                expr: Box::new(WithLocation::new(
+                                    LinearTypeAst::Tuple(vec![
+                                        (c, NonZero::new(1).unwrap()),
+                                        (h, NonZero::new(1).unwrap()),
+                                    ]),
+                                    None::<&SourceLocation>,
+                                )),
+                            },
+                            None::<&SourceLocation>,
+                        ),
+                        (Some(c), None) => WithLocation::new(
+                            LinearTypeAst::Namespace {
+                                tag: WithLocation::new(
+                                    "Continuation".to_string(),
+                                    None::<&SourceLocation>,
+                                ),
+                                expr: Box::new(c),
+                            },
+                            None::<&SourceLocation>,
+                        ),
+                        (None, Some(h)) => WithLocation::new(
+                            LinearTypeAst::Namespace {
+                                tag: WithLocation::new(
+                                    "Handler".to_string(),
+                                    None::<&SourceLocation>,
+                                ),
+                                expr: Box::new(h),
+                            },
+                            None::<&SourceLocation>,
+                        ),
+                        (None, None) => WithLocation::new(
+                            LinearTypeAst::Namespace {
+                                tag: "None".to_string().into(),
+                                expr: Box::new(WithLocation::new(
+                                    LinearTypeAst::Tuple(vec![]),
+                                    None::<&SourceLocation>,
+                                )),
+                            },
+                            None::<&SourceLocation>,
+                        ),
+                    };
+
+                    // transformer_var(transformer_arg)(f)(a)
+                    // 这里需要编译为CPS风格，也就是说不允许嵌套Invoke出现在func的位置
+                    let k2_body = WithLocation::new(
+                        LinearTypeAst::Invoke {
+                            func: Box::new(WithLocation::new(
+                                LinearTypeAst::Variable(tmpvar.clone()),
+                                None::<&SourceLocation>,
+                            )),
+                            arg: Box::new(a),
+                            continuation: None,
+                            perform_handler: None,
+                        },
+                        None::<&SourceLocation>,
+                    );
+                    let k2 = Some(Box::new(WithLocation::new(
                         LinearTypeAst::Match {
                             auto_captures: HashMap::new(),
                             branches: vec![(
@@ -455,23 +558,72 @@ impl<'ast> LinearizeResult<'ast> {
                                         None::<&SourceLocation>,
                                     ),
                                 ),
-                                ty.clone(),
+                                k2_body,
                             )],
                         },
-                        ty.location(),
+                        None::<&SourceLocation>,
+                    )));
+                    let k1_body = WithLocation::new(
+                        LinearTypeAst::Invoke {
+                            func: Box::new(WithLocation::new(
+                                LinearTypeAst::Variable(tmpvar.clone()),
+                                None::<&SourceLocation>,
+                            )),
+                            arg: Box::new(f),
+                            continuation: k2,
+                            perform_handler: None,
+                        },
+                        None::<&SourceLocation>,
+                    );
+                    let k1 = Some(Box::new(WithLocation::new(
+                        LinearTypeAst::Match {
+                            auto_captures: HashMap::new(),
+                            branches: vec![(
+                                vec![tmpvar.clone()],
+                                WithLocation::new(
+                                    LinearTypeAst::Variable(tmpvar.clone()),
+                                    None::<&SourceLocation>,
+                                ),
+                                (
+                                    WithLocation::new(
+                                        LinearTypeAst::Tuple(vec![]),
+                                        None::<&SourceLocation>,
+                                    ),
+                                    WithLocation::new(
+                                        LinearTypeAst::Tuple(vec![]),
+                                        None::<&SourceLocation>,
+                                    ),
+                                ),
+                                k1_body,
+                            )],
+                        },
+                        None::<&SourceLocation>,
+                    )));
+                    ty = WithLocation::new(
+                        LinearTypeAst::Invoke {
+                            func: Box::new(WithLocation::new(
+                                LinearTypeAst::Variable(tv),
+                                None::<&SourceLocation>,
+                            )),
+                            arg: Box::new(transformer_arg),
+                            continuation: k1,
+                            perform_handler: None,
+                        },
+                        None::<&SourceLocation>,
                     )
-                    .into(),
-                )
-            };
-            ty = WithLocation::new(
-                LinearTypeAst::Invoke {
-                    func: Box::new(f),
-                    arg: Box::new(a),
-                    continuation,
-                    perform_handler: handler.map(Box::new),
-                },
-                None::<&SourceLocation>,
-            )
+                }
+                None => {
+                    ty = WithLocation::new(
+                        LinearTypeAst::Invoke {
+                            func: Box::new(f),
+                            arg: Box::new(a),
+                            continuation: continuation.map(Box::new),
+                            perform_handler: handler.map(Box::new),
+                        },
+                        None::<&SourceLocation>,
+                    )
+                }
+            }
         }
         ty
     }
@@ -677,7 +829,7 @@ impl BasicTypeAst {
                     .collect();
                 (WithLocation::new(BasicTypeAst::Match { branches: new_branches }, loc), binds)
             }
-            BasicTypeAst::Apply { func, arg, handler } => {
+            BasicTypeAst::Apply { func, arg, handler, transformer_var } => {
                 let (new_func, mut binds) = func.auto_bind();
                 let (new_arg, arg_binds) = arg.auto_bind();
                 binds.extend(arg_binds);
@@ -694,6 +846,7 @@ impl BasicTypeAst {
                             func: Box::new(new_func),
                             arg: Box::new(new_arg),
                             handler: new_handler,
+                            transformer_var,
                         },
                         loc,
                     ),
@@ -945,7 +1098,7 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Apply { func, arg, handler } => {
+            BasicTypeAst::Apply { func, arg, handler, transformer_var } => {
                 let func = func.linearize(ctx, errors, func.location());
                 let arg = arg.linearize(ctx, errors, arg.location());
                 let allocated_tmpvar_name = ctx.allocate_tmpvar_name();
@@ -957,12 +1110,19 @@ impl BasicTypeAst {
                             arg,
                             Some(handler.tail_type().clone()),
                             allocated_tmpvar_name,
+                            transformer_var.clone(),
                         );
                         let mut bindings = result.bindings;
                         bindings.extend(handler.bindings);
                         LinearizeResult::new_with_binding(bindings, result.tail_type.clone())
                     }
-                    None => LinearizeResult::new_apply(func, arg, None, allocated_tmpvar_name),
+                    None => LinearizeResult::new_apply(
+                        func,
+                        arg,
+                        None,
+                        allocated_tmpvar_name,
+                        transformer_var.clone(),
+                    ),
                 }
             }
             BasicTypeAst::AtomicOpcode(atomic_opcode) => LinearizeResult::new_simple(
@@ -1278,6 +1438,7 @@ impl TypeAst {
                     handler: Some(Box::new(
                         handler.into_basic(multifile_builder, handler.location()),
                     )),
+                    transformer_var: None,
                 },
                 loc,
             ),
@@ -1322,11 +1483,12 @@ impl TypeAst {
                 },
                 loc,
             ),
-            TypeAst::Apply { func, arg } => WithLocation::new(
+            TypeAst::Apply { func, arg, transformer_var } => WithLocation::new(
                 BasicTypeAst::Apply {
                     func: Box::new(func.into_basic(multifile_builder, func.location())),
                     arg: Box::new(arg.into_basic(multifile_builder, arg.location())),
                     handler: None,
+                    transformer_var: transformer_var.clone(),
                 },
                 loc,
             ),
@@ -1432,6 +1594,7 @@ impl TypeAst {
                         loc,
                     )),
                     handler: None,
+                    transformer_var: None,
                 },
                 loc,
             ),
@@ -1540,6 +1703,7 @@ impl TypeAst {
                         loc,
                     )),
                     handler: None,
+                    transformer_var: None,
                 },
                 loc,
             ),
@@ -1552,6 +1716,7 @@ impl TypeAst {
                     .into(),
                     arg: value.into_basic(multifile_builder, value.location()).into(),
                     handler: None,
+                    transformer_var: None,
                 },
                 loc,
             ),
@@ -1586,6 +1751,7 @@ impl TypeAst {
                         )),
                         arg: Box::new(inner_lambda),
                         handler: None,
+                        transformer_var: None,
                     },
                     loc,
                 )
@@ -1718,7 +1884,7 @@ impl TypeAst {
                     }
                 }
             }
-            TypeAst::Apply { func, arg } => {
+            TypeAst::Apply { func, arg, .. } => {
                 func.collect_errors(errors);
                 arg.collect_errors(errors);
             }
@@ -1836,9 +2002,10 @@ impl TypeAst {
                     })
                     .collect(),
             },
-            TypeAst::Apply { func, arg } => TypeAst::Apply {
+            TypeAst::Apply { func, arg, transformer_var } => TypeAst::Apply {
                 func: Box::new(Self::sanitize(*func)),
                 arg: Box::new(Self::sanitize(*arg)),
+                transformer_var,
             },
             TypeAst::Eq { left, right } => TypeAst::Eq {
                 left: Box::new(Self::sanitize(*left)),

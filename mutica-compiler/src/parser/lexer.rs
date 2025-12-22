@@ -225,6 +225,8 @@ pub enum LexerToken {
     As,
     #[token("constraint")]
     Constraint,
+    #[token("lazy")]
+    Lazy,
 
     #[token("->")]
     Arrow,

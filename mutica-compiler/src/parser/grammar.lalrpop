@@ -55,6 +55,7 @@ extern {
         "Extend"        => LexerToken::Extend,
         "As"            => LexerToken::As,
         "Constraint"    => LexerToken::Constraint,
+        "Lazy"          => LexerToken::Lazy,
 
         "Arrow"         => LexerToken::Arrow,
         "FatArrow"      => LexerToken::FatArrow,
@@ -178,6 +179,7 @@ InTok: () = <l:@L> "In" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenC
 ExtendTok: () = <l:@L> "Extend" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 AsTok: () = <l:@L> "As" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 ConstraintTok: () = <l:@L> "Constraint" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+LazyTok: () = <l:@L> "Lazy" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
 
 // Individual operator tokens with centralized coloring
 DotTok: () = <l:@L> "Dot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
@@ -311,11 +313,24 @@ SubOf: WithLocation<TypeAst> = {
     },
 }
 
+// Transformer: Option<WithLocation<String>> = {
+//     <l:@L> <r:@R> => None,
+//     HashTok <t_l:@L> <t: IdentAsMarco> <t_r:@R> => Some(with_loc(t, source, t_l..t_r)),
+// }
+
 Apply: WithLocation<TypeAst> = {
     <l:@L> <obj: Apply> DotTok <k: Term> <r:@R> => {
         with_loc(TypeAst::Apply {
             func: Box::new(k),
             arg: Box::new(obj),
+            transformer_var: None,
+        }, source, l..r)
+    },
+    <l:@L> HashTok <t_l:@L> <t: IdentAsMarco> <t_r:@R> <obj: Term> DotTok <k: Term> <r:@R> => {
+        with_loc(TypeAst::Apply {
+            func: Box::new(k),
+            arg: Box::new(obj),
+            transformer_var: Some(with_loc(t, source, t_l..t_r)),
         }, source, l..r)
     },
     <l:@L> <f: Apply> <x: Term> PipeGreaterThanTok <k: Term> <r:@R> => {
@@ -329,6 +344,12 @@ Apply: WithLocation<TypeAst> = {
     <l:@L> <f: Apply> <x: Term> <r:@R> => with_loc(TypeAst::Apply {
         func: Box::new(f),
         arg: Box::new(x),
+        transformer_var: None,
+    }, source, l..r),
+    <l:@L> HashTok <t_l:@L> <t: IdentAsMarco> <t_r:@R> <f: Term> <x: Term> <r:@R> => with_loc(TypeAst::Apply {
+        func: Box::new(f),
+        arg: Box::new(x),
+        transformer_var: Some(with_loc(t, source, t_l..t_r)),
     }, source, l..r),
     <t: Term> => t,
 }
@@ -358,6 +379,7 @@ IfElse: WithLocation<TypeAst> = {
                     ],
                 }, source, l..r)),
                 arg: Box::new(c),
+                transformer_var: None,
             }, source, l..r),
             None => with_loc(TypeAst::Match {
                 branches: vec![
@@ -391,6 +413,7 @@ Match: WithLocation<TypeAst> = {
                     branches: branches,
                 }, source, l..r)),
                 arg: Box::new(v),
+                transformer_var: None,
             }, source, l..r),
             None => with_loc(TypeAst::Match {
                 branches: branches,
@@ -407,6 +430,7 @@ ForIn: WithLocation<TypeAst> = {
             arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
             }, source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <f_l:@L> <func_var: IdentAsMarco> <f_r:@R> <binding: Binding> InTok <expr: Primary> <r:@R> => {
@@ -419,10 +443,12 @@ ForIn: WithLocation<TypeAst> = {
                     source, f_l..f_r
                 )),
                 arg: Box::new(value),
+                transformer_var: None,
             }, source, l..r)),
             arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
             }, source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
 }
@@ -506,7 +532,7 @@ CommaSep: () = <l:@L> CommaTok+ <r:@R> => ();
 
 
 Literal: WithLocation<TypeAst> = {
-    <l:@L> HashTok <t: Primary> <r:@R> => {
+    <l:@L> LazyTok <t: Primary> <r:@R> => {
         with_loc(TypeAst::Literal(Box::new(t)), source, l..r)
     },
 }
@@ -588,6 +614,7 @@ Factor: WithLocation<TypeAst> = {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#neg".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(n),
+            transformer_var: None,
         }, source, l..r)
     },
     <bind: AutoBind> => bind,
@@ -655,6 +682,7 @@ Or: WithLocation<TypeAst> = {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#or".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <t: And> => t,
@@ -665,6 +693,7 @@ And: WithLocation<TypeAst> = {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#and".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <t: Compare> => t,
@@ -687,30 +716,35 @@ Compare: WithLocation<TypeAst> = {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#lt".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <left: Compare> LteTok <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#lte".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <left: Compare> GtTok <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#gt".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <left: Compare> GteTok <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#gte".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <left: Compare> IsTok <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#is".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <t: AddSub> => t,
@@ -721,12 +755,14 @@ AddSub: WithLocation<TypeAst> = {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#add".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <left: AddSub> MinusTok <right: Mod> <r:@R> => {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#sub".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <t: Mod> => t,
@@ -737,6 +773,7 @@ Mod: WithLocation<TypeAst> = {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#mod".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <t: MulDiv> => t,
@@ -747,12 +784,14 @@ MulDiv: WithLocation<TypeAst> = {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#mul".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <left: MulDiv> SlashTok <right: Factor> <r:@R> => {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc("op#div".to_string(), source, l..r)), source, l..r)),
             arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
     <f: Factor> => f,
@@ -791,6 +830,7 @@ CustomLetWithoutValue: WithLocation<TypeAst> = {
             arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
             }, source, l..r)),
+            transformer_var: None,
         }, source, l..r)
     },
 }
@@ -842,6 +882,7 @@ Line: WithLocation<TypeAst> = {
                 branches: vec![(branch, e)],
             }, source, l..r)),
             arg: Box::new(binding_value),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <let_expr: CustomLet> <e: Type> <r:@R> => {
@@ -854,8 +895,10 @@ Line: WithLocation<TypeAst> = {
                 arg: Box::new(with_loc(TypeAst::Match {
                     branches: vec![(branch, e)],
                 }, source, l..r)),
+                transformer_var: None,
             }, source, l..r)),
             arg: Box::new(binding_value),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <extend_expr: ExtendDef> <e: Type> <r:@R> => {
@@ -877,6 +920,7 @@ Line: WithLocation<TypeAst> = {
                     (extend_expr.1, NonZero::new(1).unwrap()),
                     (extend_expr.0.clone().map(|var| TypeAst::Variable(with_loc(var, source, l..r))), NonZero::new(1).unwrap()),
                 ]), source, l..r)),
+                transformer_var: None,
             },
             source, l..r
         );
@@ -885,6 +929,7 @@ Line: WithLocation<TypeAst> = {
                 branches: vec![(branch, e)],
             }, source, l..r)),
             arg: Box::new(binding_value),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <discard_expr: Discard> <e: Type> <r:@R> => {
@@ -901,6 +946,7 @@ Line: WithLocation<TypeAst> = {
                 branches: vec![(branch, e)],
             }, source, l..r)),
             arg: Box::new(discard_expr),
+            transformer_var: None,
         }, source, l..r)
     },
     <l:@L> <custom_discard_expr: CustomDiscard> <e: Type> <r:@R> => {
@@ -924,8 +970,10 @@ Line: WithLocation<TypeAst> = {
                 arg: Box::new(with_loc(TypeAst::Match {
                     branches: vec![(branch, e)],
                 }, source, l..r)),
+                transformer_var: None,
             }, source, l..r)),
             arg: Box::new(discard_expr),
+            transformer_var: None,
         }, source, l..r)
     },
 }
@@ -941,6 +989,7 @@ Loop: WithLocation<TypeAst> = {
                 }, source, l..r)),
             }, source, l..r)),
             arg: Box::new(init),
+            transformer_var: None,
         }, source, l..r)
     },
 }

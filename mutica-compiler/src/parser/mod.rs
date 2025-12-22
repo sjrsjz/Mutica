@@ -1130,11 +1130,12 @@ pub fn inject_std_library(
                     BasicTypeAst::Bind { var, expr: replace_placeholder(*expr, ast).into() },
                     loc.as_ref(),
                 ),
-                BasicTypeAst::Apply { func, arg, handler } => WithLocation::new(
+                BasicTypeAst::Apply { func, arg, handler, transformer_var } => WithLocation::new(
                     BasicTypeAst::Apply {
                         func: replace_placeholder(*func, ast).into(),
                         arg: replace_placeholder(*arg, ast).into(),
                         handler: handler.map(|h| replace_placeholder(*h, ast).into()),
+                        transformer_var,
                     },
                     loc.as_ref(),
                 ),
