@@ -126,7 +126,7 @@ pub enum TypeAst {
     Apply {
         func: Box<WithLocation<TypeAst>>,
         arg: Box<WithLocation<TypeAst>>,
-        transformer_var: Option<WithLocation<String>>,
+        auto_cps: bool,
     },
     Eq {
         left: Box<WithLocation<TypeAst>>,
@@ -197,11 +197,9 @@ impl Clone for TypeAst {
             },
             TypeAst::Match { branches } => TypeAst::Match { branches: branches.clone() },
             TypeAst::Bind { var, expr } => TypeAst::Bind { var: var.clone(), expr: expr.clone() },
-            TypeAst::Apply { func, arg, transformer_var } => TypeAst::Apply {
-                func: func.clone(),
-                arg: arg.clone(),
-                transformer_var: transformer_var.clone(),
-            },
+            TypeAst::Apply { func, arg, auto_cps } => {
+                TypeAst::Apply { func: func.clone(), arg: arg.clone(), auto_cps: *auto_cps }
+            }
             TypeAst::Eq { left, right } => TypeAst::Eq { left: left.clone(), right: right.clone() },
             TypeAst::Neq { left, right } => {
                 TypeAst::Neq { left: left.clone(), right: right.clone() }
@@ -277,7 +275,7 @@ pub enum BasicTypeAst {
         func: Box<WithLocation<BasicTypeAst>>,
         arg: Box<WithLocation<BasicTypeAst>>,
         handler: Option<Box<WithLocation<BasicTypeAst>>>,
-        transformer_var: Option<WithLocation<String>>,
+        auto_cps: bool,
     },
     AtomicOpcode(AtomicOpcode),
     Namespace {
@@ -329,11 +327,11 @@ impl Clone for BasicTypeAst {
             BasicTypeAst::Bind { var, expr } => {
                 BasicTypeAst::Bind { var: var.clone(), expr: expr.clone() }
             }
-            BasicTypeAst::Apply { func, arg, handler, transformer_var } => BasicTypeAst::Apply {
+            BasicTypeAst::Apply { func, arg, handler, auto_cps } => BasicTypeAst::Apply {
                 func: func.clone(),
                 arg: arg.clone(),
                 handler: handler.clone(),
-                transformer_var: transformer_var.clone(),
+                auto_cps: *auto_cps,
             },
             BasicTypeAst::AtomicOpcode(op) => BasicTypeAst::AtomicOpcode(op.clone()),
             BasicTypeAst::Namespace { tag, expr } => {
@@ -384,8 +382,8 @@ pub struct LinearizeResult<'ast> {
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         WithLocation<String>,
-        Option<WithLocation<String>>,
-    )>, // (func, arg, handler, tmpvar_name, transformer_var)
+        bool,
+    )>, // (func, arg, handler, tmpvar_name, auto_cps)
     tail_type: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
 }
 
@@ -401,7 +399,7 @@ impl<'ast> LinearizeResult<'ast> {
             WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
             Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
             WithLocation<String>,
-            Option<WithLocation<String>>, // 变换器函数对应的变量
+            bool,
         )>,
         ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
     ) -> Self {
@@ -413,7 +411,7 @@ impl<'ast> LinearizeResult<'ast> {
         arg: LinearizeResult<'ast>,
         handler: Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         allocated_tmpvar_name: WithLocation<String>,
-        transformer_var: Option<WithLocation<String>>,
+        auto_cps: bool,
     ) -> Self {
         let mut bindings = func.bindings;
         bindings.extend(arg.bindings);
@@ -422,7 +420,7 @@ impl<'ast> LinearizeResult<'ast> {
             arg.tail_type,
             handler,
             allocated_tmpvar_name.clone(),
-            transformer_var,
+            auto_cps,
         ));
         Self { bindings, tail_type: LinearTypeAst::Variable(allocated_tmpvar_name).into() }
     }
@@ -435,7 +433,7 @@ impl<'ast> LinearizeResult<'ast> {
         WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
         Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
         WithLocation<String>,
-        Option<WithLocation<String>>,
+        bool,
     )> {
         &self.bindings
     }
@@ -446,7 +444,7 @@ impl<'ast> LinearizeResult<'ast> {
 
     pub fn finalize(self) -> WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
         let mut ty = self.tail_type;
-        for (f, a, handler, tmpvar, transformer_var) in self.bindings.into_iter().rev() {
+        for (f, a, handler, tmpvar, auto_cps) in self.bindings.into_iter().rev() {
             let continuation = if let LinearTypeAst::Variable(v) = ty.value()
                 && v.eq(tmpvar.value())
             {
@@ -477,152 +475,94 @@ impl<'ast> LinearizeResult<'ast> {
                     ty.location(),
                 ))
             };
-            match transformer_var {
-                Some(tv) => {
-                    let transformer_arg = match (continuation, handler) {
-                        (Some(c), Some(h)) => WithLocation::new(
-                            LinearTypeAst::Namespace {
-                                tag: WithLocation::new("Both".to_string(), None::<&SourceLocation>),
-                                expr: Box::new(WithLocation::new(
-                                    LinearTypeAst::Tuple(vec![
-                                        (c, NonZero::new(1).unwrap()),
-                                        (h, NonZero::new(1).unwrap()),
-                                    ]),
-                                    None::<&SourceLocation>,
-                                )),
-                            },
-                            None::<&SourceLocation>,
-                        ),
-                        (Some(c), None) => WithLocation::new(
-                            LinearTypeAst::Namespace {
-                                tag: WithLocation::new(
-                                    "Continuation".to_string(),
-                                    None::<&SourceLocation>,
-                                ),
-                                expr: Box::new(c),
-                            },
-                            None::<&SourceLocation>,
-                        ),
-                        (None, Some(h)) => WithLocation::new(
-                            LinearTypeAst::Namespace {
-                                tag: WithLocation::new(
-                                    "Handler".to_string(),
-                                    None::<&SourceLocation>,
-                                ),
-                                expr: Box::new(h),
-                            },
-                            None::<&SourceLocation>,
-                        ),
-                        (None, None) => WithLocation::new(
-                            LinearTypeAst::Namespace {
-                                tag: "None".to_string().into(),
-                                expr: Box::new(WithLocation::new(
-                                    LinearTypeAst::Tuple(vec![]),
-                                    None::<&SourceLocation>,
-                                )),
-                            },
-                            None::<&SourceLocation>,
-                        ),
-                    };
+            if auto_cps {
+                ty = WithLocation::new(
+                    LinearTypeAst::Invoke {
+                        func: Box::new(f),
+                        arg: Box::new(a),
+                        continuation: continuation.map(Box::new),
+                        perform_handler: handler.map(Box::new),
+                    },
+                    None::<&SourceLocation>,
+                )
+            } else {
+                if handler.is_some() {
+                    panic!("Non-auto-cps Apply should not have a handler");
+                };
 
-                    // transformer_var(transformer_arg)(f)(a)
-                    // 这里需要编译为CPS风格，也就是说不允许嵌套Invoke出现在func的位置
-                    let k2_body = WithLocation::new(
-                        LinearTypeAst::Invoke {
-                            func: Box::new(WithLocation::new(
-                                LinearTypeAst::Variable(tmpvar.clone()),
-                                None::<&SourceLocation>,
-                            )),
-                            arg: Box::new(a),
-                            continuation: None,
-                            perform_handler: None,
-                        },
-                        None::<&SourceLocation>,
-                    );
-                    let k2 = Some(Box::new(WithLocation::new(
-                        LinearTypeAst::Match {
-                            auto_captures: HashMap::new(),
-                            branches: vec![(
-                                vec![tmpvar.clone()],
-                                WithLocation::new(
-                                    LinearTypeAst::Variable(tmpvar.clone()),
-                                    None::<&SourceLocation>,
-                                ),
-                                (
+                let continuation = match continuation {
+                    Some(c) => c,
+                    None => {
+                        // identity
+                        WithLocation::new(
+                            LinearTypeAst::Match {
+                                auto_captures: HashMap::new(),
+                                branches: vec![(
+                                    vec![tmpvar.clone()],
                                     WithLocation::new(
-                                        LinearTypeAst::Tuple(vec![]),
+                                        LinearTypeAst::Variable(tmpvar.clone()),
                                         None::<&SourceLocation>,
                                     ),
-                                    WithLocation::new(
-                                        LinearTypeAst::Tuple(vec![]),
-                                        None::<&SourceLocation>,
+                                    (
+                                        WithLocation::new(
+                                            LinearTypeAst::Tuple(vec![]),
+                                            None::<&SourceLocation>,
+                                        ),
+                                        WithLocation::new(
+                                            LinearTypeAst::Tuple(vec![]),
+                                            None::<&SourceLocation>,
+                                        ),
                                     ),
-                                ),
-                                k2_body,
-                            )],
-                        },
-                        None::<&SourceLocation>,
-                    )));
-                    let k1_body = WithLocation::new(
-                        LinearTypeAst::Invoke {
-                            func: Box::new(WithLocation::new(
-                                LinearTypeAst::Variable(tmpvar.clone()),
-                                None::<&SourceLocation>,
-                            )),
-                            arg: Box::new(f),
-                            continuation: k2,
-                            perform_handler: None,
-                        },
-                        None::<&SourceLocation>,
-                    );
-                    let k1 = Some(Box::new(WithLocation::new(
-                        LinearTypeAst::Match {
-                            auto_captures: HashMap::new(),
-                            branches: vec![(
-                                vec![tmpvar.clone()],
-                                WithLocation::new(
-                                    LinearTypeAst::Variable(tmpvar.clone()),
-                                    None::<&SourceLocation>,
-                                ),
-                                (
-                                    WithLocation::new(
-                                        LinearTypeAst::Tuple(vec![]),
-                                        None::<&SourceLocation>,
-                                    ),
-                                    WithLocation::new(
-                                        LinearTypeAst::Tuple(vec![]),
-                                        None::<&SourceLocation>,
-                                    ),
-                                ),
-                                k1_body,
-                            )],
-                        },
-                        None::<&SourceLocation>,
-                    )));
-                    ty = WithLocation::new(
-                        LinearTypeAst::Invoke {
-                            func: Box::new(WithLocation::new(
-                                LinearTypeAst::Variable(tv),
-                                None::<&SourceLocation>,
-                            )),
-                            arg: Box::new(transformer_arg),
-                            continuation: k1,
-                            perform_handler: None,
-                        },
-                        None::<&SourceLocation>,
-                    )
-                }
-                None => {
-                    ty = WithLocation::new(
-                        LinearTypeAst::Invoke {
-                            func: Box::new(f),
-                            arg: Box::new(a),
-                            continuation: continuation.map(Box::new),
-                            perform_handler: handler.map(Box::new),
-                        },
-                        None::<&SourceLocation>,
-                    )
-                }
+                                    LinearTypeAst::Variable(tmpvar.clone()).into(),
+                                )],
+                            },
+                            ty.location(),
+                        )
+                    }
+                };
+
+                // f(continuation)(a)
+                
+                // 1. Construct k1: \res -> res(a)
+                let res_name = WithLocation::new("invoke#manual_cps_res".to_string(), None::<&SourceLocation>);
+                let res_var = WithLocation::new(LinearTypeAst::Variable(res_name.clone()), None::<&SourceLocation>);
+
+                let body_k1 = WithLocation::new(
+                    LinearTypeAst::Invoke {
+                        func: Box::new(res_var.clone()),
+                        arg: Box::new(a),
+                        continuation: None,
+                        perform_handler: None,
+                    },
+                    None::<&SourceLocation>
+                );
+
+                let k1 = WithLocation::new(
+                    LinearTypeAst::Match {
+                        auto_captures: HashMap::new(),
+                        branches: vec![(
+                            vec![res_name.clone()],
+                            res_var, // pattern
+                            (
+                                WithLocation::new(LinearTypeAst::Tuple(vec![]), None::<&SourceLocation>),
+                                WithLocation::new(LinearTypeAst::Tuple(vec![]), None::<&SourceLocation>),
+                            ),
+                            body_k1
+                        )]
+                    },
+                    None::<&SourceLocation>
+                );
+
+                // 2. Main call: f(continuation) with continuation k1
+                ty = WithLocation::new(
+                    LinearTypeAst::Invoke {
+                        func: Box::new(f),
+                        arg: Box::new(continuation),
+                        continuation: Some(Box::new(k1)),
+                        perform_handler: None,
+                    },
+                    None::<&SourceLocation>,
+                );
             }
         }
         ty
@@ -829,7 +769,7 @@ impl BasicTypeAst {
                     .collect();
                 (WithLocation::new(BasicTypeAst::Match { branches: new_branches }, loc), binds)
             }
-            BasicTypeAst::Apply { func, arg, handler, transformer_var } => {
+            BasicTypeAst::Apply { func, arg, handler, auto_cps } => {
                 let (new_func, mut binds) = func.auto_bind();
                 let (new_arg, arg_binds) = arg.auto_bind();
                 binds.extend(arg_binds);
@@ -846,7 +786,7 @@ impl BasicTypeAst {
                             func: Box::new(new_func),
                             arg: Box::new(new_arg),
                             handler: new_handler,
-                            transformer_var,
+                            auto_cps,
                         },
                         loc,
                     ),
@@ -1098,7 +1038,7 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Apply { func, arg, handler, transformer_var } => {
+            BasicTypeAst::Apply { func, arg, handler, auto_cps } => {
                 let func = func.linearize(ctx, errors, func.location());
                 let arg = arg.linearize(ctx, errors, arg.location());
                 let allocated_tmpvar_name = ctx.allocate_tmpvar_name();
@@ -1110,7 +1050,7 @@ impl BasicTypeAst {
                             arg,
                             Some(handler.tail_type().clone()),
                             allocated_tmpvar_name,
-                            transformer_var.clone(),
+                            *auto_cps,
                         );
                         let mut bindings = result.bindings;
                         bindings.extend(handler.bindings);
@@ -1121,7 +1061,7 @@ impl BasicTypeAst {
                         arg,
                         None,
                         allocated_tmpvar_name,
-                        transformer_var.clone(),
+                        *auto_cps,
                     ),
                 }
             }
@@ -1438,7 +1378,7 @@ impl TypeAst {
                     handler: Some(Box::new(
                         handler.into_basic(multifile_builder, handler.location()),
                     )),
-                    transformer_var: None,
+                    auto_cps: true,
                 },
                 loc,
             ),
@@ -1483,12 +1423,12 @@ impl TypeAst {
                 },
                 loc,
             ),
-            TypeAst::Apply { func, arg, transformer_var } => WithLocation::new(
+            TypeAst::Apply { func, arg, auto_cps } => WithLocation::new(
                 BasicTypeAst::Apply {
                     func: Box::new(func.into_basic(multifile_builder, func.location())),
                     arg: Box::new(arg.into_basic(multifile_builder, arg.location())),
                     handler: None,
-                    transformer_var: transformer_var.clone(),
+                    auto_cps: *auto_cps,
                 },
                 loc,
             ),
@@ -1594,7 +1534,7 @@ impl TypeAst {
                         loc,
                     )),
                     handler: None,
-                    transformer_var: None,
+                    auto_cps: true,
                 },
                 loc,
             ),
@@ -1703,7 +1643,7 @@ impl TypeAst {
                         loc,
                     )),
                     handler: None,
-                    transformer_var: None,
+                    auto_cps: true,
                 },
                 loc,
             ),
@@ -1716,7 +1656,7 @@ impl TypeAst {
                     .into(),
                     arg: value.into_basic(multifile_builder, value.location()).into(),
                     handler: None,
-                    transformer_var: None,
+                    auto_cps: true,
                 },
                 loc,
             ),
@@ -1751,7 +1691,7 @@ impl TypeAst {
                         )),
                         arg: Box::new(inner_lambda),
                         handler: None,
-                        transformer_var: None,
+                        auto_cps: true,
                     },
                     loc,
                 )
@@ -2002,10 +1942,10 @@ impl TypeAst {
                     })
                     .collect(),
             },
-            TypeAst::Apply { func, arg, transformer_var } => TypeAst::Apply {
+            TypeAst::Apply { func, arg, auto_cps } => TypeAst::Apply {
                 func: Box::new(Self::sanitize(*func)),
                 arg: Box::new(Self::sanitize(*arg)),
-                transformer_var,
+                auto_cps,
             },
             TypeAst::Eq { left, right } => TypeAst::Eq {
                 left: Box::new(Self::sanitize(*left)),
