@@ -17,6 +17,7 @@ use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
 use mutica_core::types::invoke::Invoke;
+use mutica_core::types::lambda::Lambda;
 use mutica_core::types::lazy::Lazy;
 use mutica_core::types::namespace::Namespace;
 use mutica_core::types::opcode::{Opcode, OpcodeKind};
@@ -88,6 +89,7 @@ pub enum TypeAst {
     },
     Float,
     Char,
+    Lambda,
     Wildcard,
     DiscardPattern,
     FloatLiteral(f64),
@@ -153,7 +155,7 @@ pub enum TypeAst {
         expr: Box<WithLocation<TypeAst>>,
     },
     Generic(Box<GenericPattern>),
-    Literal(Box<WithLocation<TypeAst>>),
+    Lazy(Box<WithLocation<TypeAst>>),
     SubOf {
         value: Box<WithLocation<TypeAst>>,
     },
@@ -170,6 +172,7 @@ impl Clone for TypeAst {
             }
             TypeAst::Float => TypeAst::Float,
             TypeAst::Char => TypeAst::Char,
+            TypeAst::Lambda => TypeAst::Lambda,
             TypeAst::Wildcard => TypeAst::Wildcard,
             TypeAst::DiscardPattern => TypeAst::DiscardPattern,
             TypeAst::FloatLiteral(f) => TypeAst::FloatLiteral(*f),
@@ -216,7 +219,7 @@ impl Clone for TypeAst {
                 TypeAst::Namespace { tag: tag.clone(), expr: expr.clone() }
             }
             TypeAst::Generic(g) => TypeAst::Generic(g.clone()),
-            TypeAst::Literal(l) => TypeAst::Literal(l.clone()),
+            TypeAst::Lazy(l) => TypeAst::Lazy(l.clone()),
             TypeAst::SubOf { value } => TypeAst::SubOf { value: value.clone() },
         }
     }
@@ -243,6 +246,7 @@ pub enum BasicTypeAst {
     },
     Float,
     Char,
+    Lambda,
     Wildcard,
     FloatLiteral(f64),
     CharLiteral(char),
@@ -283,7 +287,7 @@ pub enum BasicTypeAst {
         expr: Box<WithLocation<BasicTypeAst>>,
     },
     Generic(Box<BasicGenericPattern>),
-    Literal(Box<WithLocation<BasicTypeAst>>),
+    Lazy(Box<WithLocation<BasicTypeAst>>),
     SubOf {
         value: Box<WithLocation<BasicTypeAst>>,
     },
@@ -303,6 +307,7 @@ impl Clone for BasicTypeAst {
             BasicTypeAst::Float => BasicTypeAst::Float,
             BasicTypeAst::Char => BasicTypeAst::Char,
             BasicTypeAst::Wildcard => BasicTypeAst::Wildcard,
+            BasicTypeAst::Lambda => BasicTypeAst::Lambda,
             BasicTypeAst::FloatLiteral(f) => BasicTypeAst::FloatLiteral(*f),
             BasicTypeAst::CharLiteral(c) => BasicTypeAst::CharLiteral(*c),
             BasicTypeAst::Variable(s) => BasicTypeAst::Variable(s.clone()),
@@ -338,7 +343,7 @@ impl Clone for BasicTypeAst {
                 BasicTypeAst::Namespace { tag: tag.clone(), expr: expr.clone() }
             }
             BasicTypeAst::Generic(g) => BasicTypeAst::Generic(g.clone()),
-            BasicTypeAst::Literal(l) => BasicTypeAst::Literal(l.clone()),
+            BasicTypeAst::Lazy(l) => BasicTypeAst::Lazy(l.clone()),
             BasicTypeAst::SubOf { value } => BasicTypeAst::SubOf { value: value.clone() },
             BasicTypeAst::StaticFixPoint { param_name, expr } => {
                 BasicTypeAst::StaticFixPoint { param_name: param_name.clone(), expr: expr.clone() }
@@ -375,41 +380,41 @@ impl LinearizeContext {
 }
 
 #[derive(Debug)]
-pub struct LinearizeResult<'ast> {
+pub struct LinearizeResult {
     #[allow(clippy::type_complexity)]
     bindings: Vec<(
-        WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-        WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-        Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        WithLocation<LinearTypeAst, FlowedMetaData>,
+        WithLocation<LinearTypeAst, FlowedMetaData>,
+        Option<WithLocation<LinearTypeAst, FlowedMetaData>>,
         WithLocation<String>,
         bool,
     )>, // (func, arg, handler, tmpvar_name, auto_cps)
-    tail_type: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+    tail_type: WithLocation<LinearTypeAst, FlowedMetaData>,
 }
 
-impl<'ast> LinearizeResult<'ast> {
-    pub fn new_simple(ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>) -> Self {
+impl LinearizeResult {
+    pub fn new_simple(ty: WithLocation<LinearTypeAst, FlowedMetaData>) -> Self {
         Self { bindings: Vec::new(), tail_type: ty }
     }
 
     #[allow(clippy::type_complexity)]
     pub fn new_with_binding(
         bindings: Vec<(
-            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-            Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+            WithLocation<LinearTypeAst, FlowedMetaData>,
+            WithLocation<LinearTypeAst, FlowedMetaData>,
+            Option<WithLocation<LinearTypeAst, FlowedMetaData>>,
             WithLocation<String>,
             bool,
         )>,
-        ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+        ty: WithLocation<LinearTypeAst, FlowedMetaData>,
     ) -> Self {
         Self { bindings, tail_type: ty }
     }
 
     pub fn new_apply(
-        func: LinearizeResult<'ast>,
-        arg: LinearizeResult<'ast>,
-        handler: Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        func: LinearizeResult,
+        arg: LinearizeResult,
+        handler: Option<WithLocation<LinearTypeAst, FlowedMetaData>>,
         allocated_tmpvar_name: WithLocation<String>,
         auto_cps: bool,
     ) -> Self {
@@ -429,20 +434,20 @@ impl<'ast> LinearizeResult<'ast> {
     pub fn bindings(
         &self,
     ) -> &Vec<(
-        WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-        WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-        Option<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        WithLocation<LinearTypeAst, FlowedMetaData>,
+        WithLocation<LinearTypeAst, FlowedMetaData>,
+        Option<WithLocation<LinearTypeAst, FlowedMetaData>>,
         WithLocation<String>,
         bool,
     )> {
         &self.bindings
     }
 
-    pub fn tail_type(&self) -> &WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
+    pub fn tail_type(&self) -> &WithLocation<LinearTypeAst, FlowedMetaData> {
         &self.tail_type
     }
 
-    pub fn finalize(self) -> WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
+    pub fn finalize(self) -> WithLocation<LinearTypeAst, FlowedMetaData> {
         let mut ty = self.tail_type;
         for (f, a, handler, tmpvar, auto_cps) in self.bindings.into_iter().rev() {
             let continuation = if let LinearTypeAst::Variable(v) = ty.value()
@@ -522,10 +527,14 @@ impl<'ast> LinearizeResult<'ast> {
                 };
 
                 // f(continuation)(a)
-                
+
                 // 1. Construct k1: \res -> res(a)
-                let res_name = WithLocation::new("invoke#manual_cps_res".to_string(), None::<&SourceLocation>);
-                let res_var = WithLocation::new(LinearTypeAst::Variable(res_name.clone()), None::<&SourceLocation>);
+                let res_name =
+                    WithLocation::new("invoke#manual_cps_res".to_string(), None::<&SourceLocation>);
+                let res_var = WithLocation::new(
+                    LinearTypeAst::Variable(res_name.clone()),
+                    None::<&SourceLocation>,
+                );
 
                 let body_k1 = WithLocation::new(
                     LinearTypeAst::Invoke {
@@ -534,7 +543,7 @@ impl<'ast> LinearizeResult<'ast> {
                         continuation: None,
                         perform_handler: None,
                     },
-                    None::<&SourceLocation>
+                    None::<&SourceLocation>,
                 );
 
                 let k1 = WithLocation::new(
@@ -544,13 +553,19 @@ impl<'ast> LinearizeResult<'ast> {
                             vec![res_name.clone()],
                             res_var, // pattern
                             (
-                                WithLocation::new(LinearTypeAst::Tuple(vec![]), None::<&SourceLocation>),
-                                WithLocation::new(LinearTypeAst::Tuple(vec![]), None::<&SourceLocation>),
+                                WithLocation::new(
+                                    LinearTypeAst::Tuple(vec![]),
+                                    None::<&SourceLocation>,
+                                ),
+                                WithLocation::new(
+                                    LinearTypeAst::Tuple(vec![]),
+                                    None::<&SourceLocation>,
+                                ),
                             ),
-                            body_k1
-                        )]
+                            body_k1,
+                        )],
                     },
-                    None::<&SourceLocation>
+                    None::<&SourceLocation>,
                 );
 
                 // 2. Main call: f(continuation) with continuation k1
@@ -828,9 +843,9 @@ impl BasicTypeAst {
                     )
                 }
             },
-            BasicTypeAst::Literal(inner) => {
+            BasicTypeAst::Lazy(inner) => {
                 let (new_inner, binds) = inner.auto_bind();
-                (WithLocation::new(BasicTypeAst::Literal(Box::new(new_inner)), loc), binds)
+                (WithLocation::new(BasicTypeAst::Lazy(Box::new(new_inner)), loc), binds)
             }
             BasicTypeAst::SubOf { value } => {
                 let (new_value, binds) = value.auto_bind();
@@ -848,6 +863,7 @@ impl BasicTypeAst {
             }
             BasicTypeAst::Float
             | BasicTypeAst::Char
+            | BasicTypeAst::Lambda
             | BasicTypeAst::Wildcard
             | BasicTypeAst::FloatLiteral(_)
             | BasicTypeAst::CharLiteral(_)
@@ -858,12 +874,12 @@ impl BasicTypeAst {
     }
 
     #[stacksafe::stacksafe]
-    pub fn linearize<'a>(
-        &'a self,
+    pub fn linearize(
+        &self,
         ctx: &mut LinearizeContext,
         errors: &mut Vec<WithLocation<ParseError>>,
         loc: Option<&SourceLocation>,
-    ) -> LinearizeResult<'a> {
+    ) -> LinearizeResult {
         match self {
             BasicTypeAst::Range { ty, min, delta } => {
                 let ty_result = ty.linearize(ctx, errors, ty.location());
@@ -881,6 +897,9 @@ impl BasicTypeAst {
             }
             BasicTypeAst::Char => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Char, loc))
+            }
+            BasicTypeAst::Lambda => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Lambda, loc))
             }
             BasicTypeAst::Wildcard => {
                 errors.push(WithLocation::new(
@@ -1102,8 +1121,8 @@ impl BasicTypeAst {
                 bindings.extend(g.bindings);
                 LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Literal(inner) => LinearizeResult::new_simple(WithLocation::new(
-                LinearTypeAst::Literal(Box::new(
+            BasicTypeAst::Lazy(inner) => LinearizeResult::new_simple(WithLocation::new(
+                LinearTypeAst::Lazy(Box::new(
                     inner.linearize(ctx, errors, inner.location()).finalize(),
                 )),
                 loc,
@@ -1142,13 +1161,13 @@ impl WithLocation<BasicTypeAst> {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct FlowedMetaData<'ast> {
-    reference: Option<WithLocation<Option<&'ast LinearTypeAst<'ast>>>>,
+pub struct FlowedMetaData {
+    reference: Option<WithLocation<()>>,
     variable_context: Vec<WithLocation<String>>,
 }
 
-impl<'ast> FlowedMetaData<'ast> {
-    pub fn reference(&self) -> Option<&WithLocation<Option<&'ast LinearTypeAst<'ast>>>> {
+impl FlowedMetaData {
+    pub fn reference(&self) -> Option<&WithLocation<()>> {
         self.reference.as_ref()
     }
 
@@ -1156,10 +1175,7 @@ impl<'ast> FlowedMetaData<'ast> {
         &self.variable_context
     }
 
-    pub fn with_reference(
-        self,
-        reference: Option<WithLocation<Option<&'ast LinearTypeAst<'ast>>>>,
-    ) -> Self {
+    pub fn with_reference(self, reference: Option<WithLocation<()>>) -> Self {
         Self { reference, ..self }
     }
 
@@ -1169,71 +1185,72 @@ impl<'ast> FlowedMetaData<'ast> {
 }
 
 #[derive(Debug)]
-pub enum LinearTypeAst<'ast> {
+pub enum LinearTypeAst {
     Range {
-        ty: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        ty: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
         min: usize,
         delta: Option<usize>,
     },
     Char,
     Float,
+    Lambda,
     FloatLiteral(f64),
     CharLiteral(char),
     Variable(WithLocation<String>), // None 表示续体
-    Tuple(Vec<(WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, NonZero<usize>)>),
+    Tuple(Vec<(WithLocation<LinearTypeAst, FlowedMetaData>, NonZero<usize>)>),
     List {
-        head: Vec<(WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, NonZero<usize>)>,
-        tail: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        head: Vec<(WithLocation<LinearTypeAst, FlowedMetaData>, NonZero<usize>)>,
+        tail: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
     },
     Cons {
-        head: Vec<(WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, NonZero<usize>)>,
-        tail: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        head: Vec<(WithLocation<LinearTypeAst, FlowedMetaData>, NonZero<usize>)>,
+        tail: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
     },
-    AnyOf(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
-    AllOf(Vec<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    AnyOf(Vec<WithLocation<LinearTypeAst, FlowedMetaData>>),
+    AllOf(Vec<WithLocation<LinearTypeAst, FlowedMetaData>>),
     #[allow(clippy::type_complexity)]
     Match {
         auto_captures: HashMap<String, WithLocation<()>>,
         branches: Vec<(
             Vec<WithLocation<String>>,
-            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+            WithLocation<LinearTypeAst, FlowedMetaData>,
             (
-                WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-                WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+                WithLocation<LinearTypeAst, FlowedMetaData>,
+                WithLocation<LinearTypeAst, FlowedMetaData>,
             ),
-            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+            WithLocation<LinearTypeAst, FlowedMetaData>,
         )>, // pattern, expr
     },
     Invoke {
-        func: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
-        arg: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
-        continuation: Option<Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
-        perform_handler: Option<Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
+        func: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
+        arg: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
+        continuation: Option<Box<WithLocation<LinearTypeAst, FlowedMetaData>>>,
+        perform_handler: Option<Box<WithLocation<LinearTypeAst, FlowedMetaData>>>,
     },
     AtomicOpcode(AtomicOpcode),
     Namespace {
         tag: WithLocation<String>,
-        expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        expr: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
     },
     Generic {
         generic_vars: Vec<WithLocation<String>>,
-        expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        expr: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
         constraint: Box<(
-            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-            WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+            WithLocation<LinearTypeAst, FlowedMetaData>,
+            WithLocation<LinearTypeAst, FlowedMetaData>,
         )>,
     },
-    Literal(Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>),
+    Lazy(Box<WithLocation<LinearTypeAst, FlowedMetaData>>),
     SubOf {
-        value: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        value: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
     },
     StaticFixPoint {
         param_name: WithLocation<String>,
-        expr: Box<WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>,
+        expr: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
     },
 }
 
-impl<'ast> Clone for LinearTypeAst<'ast> {
+impl Clone for LinearTypeAst {
     #[stacksafe::stacksafe]
     fn clone(&self) -> Self {
         match self {
@@ -1242,6 +1259,7 @@ impl<'ast> Clone for LinearTypeAst<'ast> {
             }
             LinearTypeAst::Char => LinearTypeAst::Char,
             LinearTypeAst::Float => LinearTypeAst::Float,
+            LinearTypeAst::Lambda => LinearTypeAst::Lambda,
             LinearTypeAst::FloatLiteral(f) => LinearTypeAst::FloatLiteral(*f),
             LinearTypeAst::CharLiteral(c) => LinearTypeAst::CharLiteral(*c),
             LinearTypeAst::Variable(s) => LinearTypeAst::Variable(s.clone()),
@@ -1275,7 +1293,7 @@ impl<'ast> Clone for LinearTypeAst<'ast> {
                 expr: expr.clone(),
                 constraint: constraint.clone(),
             },
-            LinearTypeAst::Literal(l) => LinearTypeAst::Literal(l.clone()),
+            LinearTypeAst::Lazy(l) => LinearTypeAst::Lazy(l.clone()),
             LinearTypeAst::SubOf { value } => LinearTypeAst::SubOf { value: value.clone() },
             LinearTypeAst::StaticFixPoint { param_name, expr } => {
                 LinearTypeAst::StaticFixPoint { param_name: param_name.clone(), expr: expr.clone() }
@@ -1306,6 +1324,7 @@ impl TypeAst {
             ),
             TypeAst::Float => WithLocation::new(BasicTypeAst::Float, loc),
             TypeAst::Char => WithLocation::new(BasicTypeAst::Char, loc),
+            TypeAst::Lambda => WithLocation::new(BasicTypeAst::Lambda, loc),
             TypeAst::Wildcard => WithLocation::new(BasicTypeAst::Wildcard, loc),
             TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // discard 只允许丢弃unit
             TypeAst::FloatLiteral(v) => WithLocation::new(BasicTypeAst::FloatLiteral(*v), loc),
@@ -1722,8 +1741,8 @@ impl TypeAst {
                     loc,
                 ),
             },
-            TypeAst::Literal(inner) => WithLocation::new(
-                BasicTypeAst::Literal(Box::new(
+            TypeAst::Lazy(inner) => WithLocation::new(
+                BasicTypeAst::Lazy(Box::new(
                     inner.into_basic(multifile_builder, inner.location()),
                 )),
                 loc,
@@ -1771,6 +1790,7 @@ impl TypeAst {
             }
             TypeAst::Float
             | TypeAst::Char
+            | TypeAst::Lambda
             | TypeAst::Wildcard
             | TypeAst::DiscardPattern
             | TypeAst::FloatLiteral(_)
@@ -1852,7 +1872,7 @@ impl TypeAst {
                     pattern.collect_errors(errors);
                 }
             },
-            TypeAst::Literal(inner) => {
+            TypeAst::Lazy(inner) => {
                 inner.collect_errors(errors);
             }
             TypeAst::Cons { head, tail } => {
@@ -1882,6 +1902,7 @@ impl TypeAst {
             TypeAst::ParseError(_) => TypeAst::Wildcard,
             TypeAst::Float
             | TypeAst::Char
+            | TypeAst::Lambda
             | TypeAst::Wildcard
             | TypeAst::DiscardPattern
             | TypeAst::FloatLiteral(_)
@@ -1978,7 +1999,7 @@ impl TypeAst {
                     Box::new(GenericPattern::AutoBind { pattern: Self::sanitize(pattern.clone()) })
                 }
             }),
-            TypeAst::Literal(inner) => TypeAst::Literal(Box::new(Self::sanitize(*inner))),
+            TypeAst::Lazy(inner) => TypeAst::Lazy(Box::new(Self::sanitize(*inner))),
             TypeAst::SubOf { value } => TypeAst::SubOf { value: Box::new(Self::sanitize(*value)) },
             TypeAst::StaticFixPoint { param_name, expr } => {
                 TypeAst::StaticFixPoint { param_name, expr: Box::new(Self::sanitize(*expr)) }
@@ -2029,24 +2050,24 @@ impl IntoIterator for GenericEnv {
     }
 }
 
-pub struct FlowResult<'ast> {
-    ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>, // flow后的类型
-    captures: HashMap<String, WithLocation<()>>,                 // 该类型所捕获的自由变量
+pub struct FlowResult {
+    ty: WithLocation<LinearTypeAst, FlowedMetaData>, // flow后的类型
+    captures: HashMap<String, WithLocation<()>>,     // 该类型所捕获的自由变量
 }
 
-impl<'ast> FlowResult<'ast> {
-    pub fn simple(ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>) -> Self {
+impl FlowResult {
+    pub fn simple(ty: WithLocation<LinearTypeAst, FlowedMetaData>) -> Self {
         FlowResult { ty: ty.with_payload(FlowedMetaData::default()), captures: HashMap::new() }
     }
 
     pub fn complex(
-        ty: WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+        ty: WithLocation<LinearTypeAst, FlowedMetaData>,
         captures: HashMap<String, WithLocation<()>>,
     ) -> Self {
         FlowResult { ty: ty.with_payload(FlowedMetaData::default()), captures }
     }
 
-    pub fn ty(&self) -> &WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>> {
+    pub fn ty(&self) -> &WithLocation<LinearTypeAst, FlowedMetaData> {
         &self.ty
     }
 
@@ -2054,19 +2075,19 @@ impl<'ast> FlowResult<'ast> {
         &self.captures
     }
 
-    pub fn with_payload(self, payload: FlowedMetaData<'ast>) -> Self {
+    pub fn with_payload(self, payload: FlowedMetaData) -> Self {
         FlowResult { ty: self.ty.with_payload(payload), captures: self.captures }
     }
 }
 
-impl<'ast> LinearTypeAst<'ast> {
+impl LinearTypeAst {
     #[stacksafe::stacksafe]
     pub fn flow(
         &self,
         ctx: &mut ParseContext,
         loc: Option<&SourceLocation>,
-        errors: &mut Vec<WithLocation<ParseError<'ast>>>,
-    ) -> FlowResult<'ast> {
+        errors: &mut Vec<WithLocation<ParseError>>,
+    ) -> FlowResult {
         match self {
             LinearTypeAst::Range { ty, min, delta } => {
                 let ty_res = ty.flow(ctx, ty.location(), errors);
@@ -2085,6 +2106,10 @@ impl<'ast> LinearTypeAst<'ast> {
             ),
             LinearTypeAst::Char => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Char, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            ),
+            LinearTypeAst::Lambda => FlowResult::simple(
+                WithLocation::new(LinearTypeAst::Lambda, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
             LinearTypeAst::FloatLiteral(v) => FlowResult::simple(
@@ -2121,7 +2146,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     )
                     .with_payload(
                         FlowedMetaData::default()
-                            .with_reference(Some(var_loc.clone().map(|_| None)))
+                            .with_reference(Some(var_loc.clone()))
                             .with_variable_context(ctx.capture()),
                     )
                 }
@@ -2500,10 +2525,10 @@ impl<'ast> LinearTypeAst<'ast> {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::Literal(inner) => {
+            LinearTypeAst::Lazy(inner) => {
                 let inner_res = inner.flow(ctx, inner.location(), errors);
                 FlowResult::complex(
-                    WithLocation::new(LinearTypeAst::Literal(Box::new(inner_res.ty)), loc),
+                    WithLocation::new(LinearTypeAst::Lazy(Box::new(inner_res.ty)), loc),
                     inner_res.captures,
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
@@ -2549,7 +2574,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildResult<T> {
 }
 
 #[allow(clippy::type_complexity)]
-impl<'ast> LinearTypeAst<'ast> {
+impl LinearTypeAst {
     #[stacksafe::stacksafe]
     pub fn to_type<'roots, T: GcAllocObject<T, Inner = Type<T>>>(
         &self,
@@ -2557,7 +2582,7 @@ impl<'ast> LinearTypeAst<'ast> {
         gc: &mut GC<T>,
         roots: &'roots mut RootStack<Type<T>, T>,
         loc: Option<&SourceLocation>,
-    ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError<'ast>>> {
+    ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError>> {
         match self {
             LinearTypeAst::Range { ty, min, delta } => {
                 let ty_result = ty.to_type(ctx, gc, roots, ty.location())?;
@@ -2580,6 +2605,9 @@ impl<'ast> LinearTypeAst<'ast> {
             LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(loc.cloned().map(Arc::new)))),
             LinearTypeAst::Char => {
                 Ok(BuildResult::simple(Character::new(loc.cloned().map(Arc::new))))
+            }
+            LinearTypeAst::Lambda => {
+                Ok(BuildResult::simple(Lambda::new(loc.cloned().map(Arc::new))))
             }
             LinearTypeAst::FloatLiteral(v) => {
                 Ok(BuildResult::simple(FloatValue::new(*v, loc.cloned().map(Arc::new))))
@@ -2820,7 +2848,7 @@ impl<'ast> LinearTypeAst<'ast> {
                     loc.cloned().map(Arc::new),
                 )))
             }
-            LinearTypeAst::Literal(inner) => {
+            LinearTypeAst::Lazy(inner) => {
                 let inner_type = inner.to_type(ctx, gc, roots, inner.location())?;
                 Ok(BuildResult::simple(Lazy::new(&inner_type.ty, loc.cloned().map(Arc::new))))
             }

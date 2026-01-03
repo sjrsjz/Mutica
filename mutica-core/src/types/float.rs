@@ -125,14 +125,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                .with_message(format!("Type 'Float' at {}", filepath))
+                .with_message(format!("Float type at {}", filepath))
                 .with_label(
                     ariadne::Label::new((filepath, span)).with_message("Float type defined here"),
                 )
                 .finish()
         } else {
             ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                .with_message("Type 'Float' has no source location")
+                .with_message("Float type has no source location")
                 .with_label(
                     ariadne::Label::new(("<unknown>".to_string(), 0..0))
                         .with_message("Location unknown"),

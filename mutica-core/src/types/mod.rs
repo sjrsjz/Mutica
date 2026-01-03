@@ -10,6 +10,7 @@ pub mod fixpoint;
 pub mod float;
 pub mod float_value;
 pub mod invoke;
+pub mod lambda;
 pub mod lazy;
 pub mod namespace;
 pub mod opcode;
@@ -18,6 +19,56 @@ pub mod sequence;
 pub mod subof;
 pub mod unify;
 pub mod variable;
+
+macro_rules! type_dispatch {
+    ($self:expr, $method:ident $(, $args:expr)*) => {
+        match $self {
+            Type::Sequence(v) => v.$method($($args),*),
+            Type::Float(v) => v.$method($($args),*),
+            Type::FloatValue(v) => v.$method($($args),*),
+            Type::Char(v) => v.$method($($args),*),
+            Type::CharValue(v) => v.$method($($args),*),
+            Type::Any(v) => v.$method($($args),*),
+            Type::All(v) => v.$method($($args),*),
+            Type::FixPoint(v) => v.$method($($args),*),
+            Type::Invoke(v) => v.$method($($args),*),
+            Type::Variable(v) => v.$method($($args),*),
+            Type::Closure(v) => v.$method($($args),*),
+            Type::Opcode(v) => v.$method($($args),*),
+            Type::Namespace(v) => v.$method($($args),*),
+            Type::Constraint(v) => v.$method($($args),*),
+            Type::Pattern(v) => v.$method($($args),*),
+            Type::Lazy(v) => v.$method($($args),*),
+            Type::SubOf(v) => v.$method($($args),*),
+            Type::Lambda(v) => v.$method($($args),*),
+        }
+    };
+}
+
+macro_rules! typeref_dispatch {
+    ($self:expr, $method:ident $(, $args:expr)*) => {
+        match $self {
+            TypeRef::Sequence(v) => v.$method($($args),*),
+            TypeRef::Float(v) => v.$method($($args),*),
+            TypeRef::FloatValue(v) => v.$method($($args),*),
+            TypeRef::Char(v) => v.$method($($args),*),
+            TypeRef::CharValue(v) => v.$method($($args),*),
+            TypeRef::Any(v) => v.$method($($args),*),
+            TypeRef::All(v) => v.$method($($args),*),
+            TypeRef::FixPoint(v) => v.$method($($args),*),
+            TypeRef::Invoke(v) => v.$method($($args),*),
+            TypeRef::Variable(v) => v.$method($($args),*),
+            TypeRef::Closure(v) => v.$method($($args),*),
+            TypeRef::Opcode(v) => v.$method($($args),*),
+            TypeRef::Namespace(v) => v.$method($($args),*),
+            TypeRef::Constraint(v) => v.$method($($args),*),
+            TypeRef::Pattern(v) => v.$method($($args),*),
+            TypeRef::Lazy(v) => v.$method($($args),*),
+            TypeRef::SubOf(v) => v.$method($($args),*),
+            TypeRef::Lambda(v) => v.$method($($args),*),
+        }
+    };
+}
 
 use std::{error::Error, fmt::Debug, marker::PhantomData, sync::Arc};
 
@@ -41,6 +92,7 @@ use crate::{
         float::Float,
         float_value::FloatValue,
         invoke::Invoke,
+        lambda::Lambda,
         lazy::Lazy,
         namespace::Namespace,
         opcode::Opcode,
@@ -64,23 +116,24 @@ pub type TypeReport = ariadne::Report<'static, (String, std::ops::Range<usize>)>
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
     fn clone(&self) -> Self {
         match self {
-            Type::Sequence(v) => Type::<T>::Sequence(v.clone()),
-            Type::Float(v) => Type::<T>::Float(v.clone()),
-            Type::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
-            Type::Char(v) => Type::<T>::Char(v.clone()),
-            Type::CharValue(v) => Type::<T>::CharValue(v.clone()),
-            Type::Any(v) => Type::<T>::Any(v.clone()),
-            Type::All(v) => Type::<T>::All(v.clone()),
-            Type::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
-            Type::Invoke(v) => Type::<T>::Invoke(v.clone()),
-            Type::Variable(v) => Type::<T>::Variable(v.clone()),
-            Type::Closure(v) => Type::<T>::Closure(v.clone()),
-            Type::Opcode(v) => Type::<T>::Opcode(v.clone()),
-            Type::Namespace(v) => Type::<T>::Namespace(v.clone()),
-            Type::Constraint(v) => Type::<T>::Constraint(v.clone()),
-            Type::Pattern(v) => Type::<T>::Pattern(v.clone()),
-            Type::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            Type::SubOf(v) => Type::<T>::SubOf(v.clone()),
+            Type::Sequence(v) => Type::Sequence(v.clone()),
+            Type::Float(v) => Type::Float(v.clone()),
+            Type::FloatValue(v) => Type::FloatValue(v.clone()),
+            Type::Char(v) => Type::Char(v.clone()),
+            Type::CharValue(v) => Type::CharValue(v.clone()),
+            Type::Any(v) => Type::Any(v.clone()),
+            Type::All(v) => Type::All(v.clone()),
+            Type::FixPoint(v) => Type::FixPoint(v.clone()),
+            Type::Invoke(v) => Type::Invoke(v.clone()),
+            Type::Variable(v) => Type::Variable(v.clone()),
+            Type::Closure(v) => Type::Closure(v.clone()),
+            Type::Opcode(v) => Type::Opcode(v.clone()),
+            Type::Namespace(v) => Type::Namespace(v.clone()),
+            Type::Constraint(v) => Type::Constraint(v.clone()),
+            Type::Pattern(v) => Type::Pattern(v.clone()),
+            Type::Lazy(v) => Type::Lazy(v.clone()),
+            Type::SubOf(v) => Type::SubOf(v.clone()),
+            Type::Lambda(v) => Type::Lambda(v.clone()),
         }
     }
 }
@@ -120,6 +173,8 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Lazy(Lazy<T>),
     // 子类型
     SubOf(SubOf<T>),
+    // 函数类型（仅仅只是粗略的表示）
+    Lambda(Lambda<T>),
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
@@ -140,6 +195,7 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Pattern(&'a Pattern<T>),
     Lazy(&'a Lazy<T>),
     SubOf(&'a SubOf<T>),
+    Lambda(&'a Lambda<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
@@ -172,25 +228,7 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
         other: Self,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        match self {
-            TypeRef::Sequence(v) => v.check(other, ctx),
-            TypeRef::Float(v) => v.check(other, ctx),
-            TypeRef::FloatValue(v) => v.check(other, ctx),
-            TypeRef::Char(v) => v.check(other, ctx),
-            TypeRef::CharValue(v) => v.check(other, ctx),
-            TypeRef::Any(v) => v.check(other, ctx),
-            TypeRef::All(v) => v.check(other, ctx),
-            TypeRef::FixPoint(v) => v.check(other, ctx),
-            TypeRef::Invoke(v) => v.check(other, ctx),
-            TypeRef::Variable(v) => v.check(other, ctx),
-            TypeRef::Closure(v) => v.check(other, ctx),
-            TypeRef::Opcode(v) => v.check(other, ctx),
-            TypeRef::Namespace(v) => v.check(other, ctx),
-            TypeRef::Constraint(v) => v.check(other, ctx),
-            TypeRef::Pattern(v) => v.check(other, ctx),
-            TypeRef::Lazy(v) => v.check(other, ctx),
-            TypeRef::SubOf(v) => v.check(other, ctx),
-        }
+        typeref_dispatch!(self, check, other, ctx)
     }
 
     fn subof(
@@ -198,47 +236,11 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
         other: Self,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        match self {
-            TypeRef::Sequence(v) => v.subof(other, ctx),
-            TypeRef::Float(v) => v.subof(other, ctx),
-            TypeRef::FloatValue(v) => v.subof(other, ctx),
-            TypeRef::Char(v) => v.subof(other, ctx),
-            TypeRef::CharValue(v) => v.subof(other, ctx),
-            TypeRef::Any(v) => v.subof(other, ctx),
-            TypeRef::All(v) => v.subof(other, ctx),
-            TypeRef::FixPoint(v) => v.subof(other, ctx),
-            TypeRef::Invoke(v) => v.subof(other, ctx),
-            TypeRef::Variable(v) => v.subof(other, ctx),
-            TypeRef::Closure(v) => v.subof(other, ctx),
-            TypeRef::Opcode(v) => v.subof(other, ctx),
-            TypeRef::Namespace(v) => v.subof(other, ctx),
-            TypeRef::Constraint(v) => v.subof(other, ctx),
-            TypeRef::Pattern(v) => v.subof(other, ctx),
-            TypeRef::Lazy(v) => v.subof(other, ctx),
-            TypeRef::SubOf(v) => v.subof(other, ctx),
-        }
+        typeref_dispatch!(self, subof, other, ctx)
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
-        match self {
-            TypeRef::Sequence(v) => v.tagged_ptr(),
-            TypeRef::Float(v) => v.tagged_ptr(),
-            TypeRef::FloatValue(v) => v.tagged_ptr(),
-            TypeRef::Char(v) => v.tagged_ptr(),
-            TypeRef::CharValue(v) => v.tagged_ptr(),
-            TypeRef::Any(v) => v.tagged_ptr(),
-            TypeRef::All(v) => v.tagged_ptr(),
-            TypeRef::FixPoint(v) => v.tagged_ptr(),
-            TypeRef::Invoke(v) => v.tagged_ptr(),
-            TypeRef::Variable(v) => v.tagged_ptr(),
-            TypeRef::Closure(v) => v.tagged_ptr(),
-            TypeRef::Opcode(v) => v.tagged_ptr(),
-            TypeRef::Namespace(v) => v.tagged_ptr(),
-            TypeRef::Constraint(v) => v.tagged_ptr(),
-            TypeRef::Pattern(v) => v.tagged_ptr(),
-            TypeRef::Lazy(v) => v.tagged_ptr(),
-            TypeRef::SubOf(v) => v.tagged_ptr(),
-        }
+        typeref_dispatch!(self, tagged_ptr)
     }
 
     fn as_ref_dispatcher(&self) -> Self {
@@ -246,70 +248,35 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        match self {
-            TypeRef::Sequence(v) => v.source_info(),
-            TypeRef::Float(v) => v.source_info(),
-            TypeRef::FloatValue(v) => v.source_info(),
-            TypeRef::Char(v) => v.source_info(),
-            TypeRef::CharValue(v) => v.source_info(),
-            TypeRef::Any(v) => v.source_info(),
-            TypeRef::All(v) => v.source_info(),
-            TypeRef::FixPoint(v) => v.source_info(),
-            TypeRef::Invoke(v) => v.source_info(),
-            TypeRef::Variable(v) => v.source_info(),
-            TypeRef::Closure(v) => v.source_info(),
-            TypeRef::Opcode(v) => v.source_info(),
-            TypeRef::Namespace(v) => v.source_info(),
-            TypeRef::Constraint(v) => v.source_info(),
-            TypeRef::Pattern(v) => v.source_info(),
-            TypeRef::Lazy(v) => v.source_info(),
-            TypeRef::SubOf(v) => v.source_info(),
-        }
+        typeref_dispatch!(self, source_info)
     }
 
     fn report_source_info(&self) -> TypeReport {
-        match self {
-            TypeRef::Sequence(v) => v.report_source_info(),
-            TypeRef::Float(v) => v.report_source_info(),
-            TypeRef::FloatValue(v) => v.report_source_info(),
-            TypeRef::Char(v) => v.report_source_info(),
-            TypeRef::CharValue(v) => v.report_source_info(),
-            TypeRef::Any(v) => v.report_source_info(),
-            TypeRef::All(v) => v.report_source_info(),
-            TypeRef::FixPoint(v) => v.report_source_info(),
-            TypeRef::Invoke(v) => v.report_source_info(),
-            TypeRef::Variable(v) => v.report_source_info(),
-            TypeRef::Closure(v) => v.report_source_info(),
-            TypeRef::Opcode(v) => v.report_source_info(),
-            TypeRef::Namespace(v) => v.report_source_info(),
-            TypeRef::Constraint(v) => v.report_source_info(),
-            TypeRef::Pattern(v) => v.report_source_info(),
-            TypeRef::Lazy(v) => v.report_source_info(),
-            TypeRef::SubOf(v) => v.report_source_info(),
-        }
+        typeref_dispatch!(self, report_source_info)
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
     pub fn clone_data(self) -> Type<T> {
         match self {
-            TypeRef::Sequence(v) => Type::<T>::Sequence(v.clone()),
-            TypeRef::Float(v) => Type::<T>::Float(v.clone()),
-            TypeRef::FloatValue(v) => Type::<T>::FloatValue(v.clone()),
-            TypeRef::Char(v) => Type::<T>::Char(v.clone()),
-            TypeRef::CharValue(v) => Type::<T>::CharValue(v.clone()),
-            TypeRef::Any(v) => Type::<T>::Any(v.clone()),
-            TypeRef::All(v) => Type::<T>::All(v.clone()),
-            TypeRef::FixPoint(v) => Type::<T>::FixPoint(v.clone()),
-            TypeRef::Invoke(v) => Type::<T>::Invoke(v.clone()),
-            TypeRef::Variable(v) => Type::<T>::Variable(v.clone()),
-            TypeRef::Closure(v) => Type::<T>::Closure(v.clone()),
-            TypeRef::Opcode(v) => Type::<T>::Opcode(v.clone()),
-            TypeRef::Namespace(v) => Type::<T>::Namespace(v.clone()),
-            TypeRef::Constraint(v) => Type::<T>::Constraint(v.clone()),
-            TypeRef::Pattern(v) => Type::<T>::Pattern(v.clone()),
-            TypeRef::Lazy(v) => Type::<T>::Lazy(v.clone()),
-            TypeRef::SubOf(v) => Type::<T>::SubOf(v.clone()),
+            TypeRef::Sequence(v) => Type::Sequence(v.clone()),
+            TypeRef::Float(v) => Type::Float(v.clone()),
+            TypeRef::FloatValue(v) => Type::FloatValue(v.clone()),
+            TypeRef::Char(v) => Type::Char(v.clone()),
+            TypeRef::CharValue(v) => Type::CharValue(v.clone()),
+            TypeRef::Any(v) => Type::Any(v.clone()),
+            TypeRef::All(v) => Type::All(v.clone()),
+            TypeRef::FixPoint(v) => Type::FixPoint(v.clone()),
+            TypeRef::Invoke(v) => Type::Invoke(v.clone()),
+            TypeRef::Variable(v) => Type::Variable(v.clone()),
+            TypeRef::Closure(v) => Type::Closure(v.clone()),
+            TypeRef::Opcode(v) => Type::Opcode(v.clone()),
+            TypeRef::Namespace(v) => Type::Namespace(v.clone()),
+            TypeRef::Constraint(v) => Type::Constraint(v.clone()),
+            TypeRef::Pattern(v) => Type::Pattern(v.clone()),
+            TypeRef::Lazy(v) => Type::Lazy(v.clone()),
+            TypeRef::SubOf(v) => Type::SubOf(v.clone()),
+            TypeRef::Lambda(v) => Type::Lambda(v.clone()),
         }
     }
 }
@@ -881,30 +848,6 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
     }
 }
 
-macro_rules! type_dispatch {
-    ($self:expr, $method:ident $(, $args:expr)*) => {
-        match $self {
-            Type::Sequence(v) => v.$method($($args),*),
-            Type::Float(v) => v.$method($($args),*),
-            Type::FloatValue(v) => v.$method($($args),*),
-            Type::Any(v) => v.$method($($args),*),
-            Type::All(v) => v.$method($($args),*),
-            Type::FixPoint(v) => v.$method($($args),*),
-            Type::Invoke(v) => v.$method($($args),*),
-            Type::Variable(v) => v.$method($($args),*),
-            Type::Closure(v) => v.$method($($args),*),
-            Type::Opcode(v) => v.$method($($args),*),
-            Type::Char(v) => v.$method($($args),*),
-            Type::CharValue(v) => v.$method($($args),*),
-            Type::Namespace(v) => v.$method($($args),*),
-            Type::Constraint(v) => v.$method($($args),*),
-            Type::Pattern(v) => v.$method($($args),*),
-            Type::Lazy(v) => v.$method($($args),*),
-            Type::SubOf(v) => v.$method($($args),*),
-        }
-    };
-}
-
 pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
     GCTraceable<T> + 'static + Sized
 {
@@ -1094,6 +1037,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
+            Type::Lambda(v) => TypeRef::Lambda(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -1128,6 +1072,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
+            Type::Lambda(v) => TypeRef::Lambda(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>

@@ -1,20 +1,21 @@
 let constraint maybe_pkg: any = import "maybe.mu";
 let constraint {
     int::(int: any) &
-    Lt::($"op#lt": any) &
-    Gt::($"op#gt": any)
+    Lt::($"op#lt": lambda) &
+    Gt::($"op#gt": lambda)
 } = import "int.mu";
-let constraint Just::(Just: any) = maybe_pkg;
+let constraint Just::(Just: lambda) = maybe_pkg;
 let constraint Nothing::(Nothing: any) = maybe_pkg;
+let constraint Any::(Any: any) = import "any.mu";
 
 // 颜色定义
 let constraint Red: any = Red::();
 let constraint Black: any = Black::();
-let constraint Color: any = (Red::() | Black::());
+let constraint Color: any = (Red | Black);
 
 // 红黑树定义
 // Tree: Empty | Node(color, key, value, left, right)
-let constraint Tree: any = constraint K: any => constraint V: any => rec tree: (
+let constraint Tree: lambda = constraint (K: any, V: any) => rec tree: (
     Empty::() | 
     Node::(Color, K, V, tree, tree)
 );
@@ -23,7 +24,7 @@ let constraint Tree: any = constraint K: any => constraint V: any => rec tree: (
 let constraint empty: any = Empty::();
 
 // 平衡函数 - 处理红黑树的4种违规情况
-let constraint balance: any = constraint t: any => 
+let constraint balance: lambda = constraint t: Tree(Any, Any) => 
     match t
         // 情况1: 左-左红红
         | constraint Node::(Black, z: any, zv: any, Node::(Red, y: any, yv: any, Node::(Red, x: any, xv: any, a: any, b: any), c: any), d: any) =>
@@ -42,7 +43,7 @@ let constraint balance: any = constraint t: any =>
         | panic;
 
 // 插入辅助函数
-let constraint insert_helper: any = constraint cmp: any => constraint tree: any => constraint key: any => constraint value: any => {
+let constraint insert_helper: lambda = constraint cmp: lambda => constraint tree: Tree(Any, Any) => constraint key: any => constraint value: any => {
     loop go: constraint t: any = tree;
     match t
         | assert Empty::() => Node::(Red, key, value, Empty::(), Empty::())
@@ -58,7 +59,7 @@ let constraint insert_helper: any = constraint cmp: any => constraint tree: any 
 };
 
 // 插入函数 - 确保根节点是黑色
-let constraint insert: any = constraint cmp: any => constraint tree: any => constraint key: any => constraint value: any => {
+let constraint insert: lambda = constraint cmp: lambda => constraint tree: Tree(Any, Any) => constraint key: any => constraint value: any => {
     let constraint result: any = insert_helper(cmp)(tree)(key)(value);
     match result
         | constraint Node::(_T: _, k: any, v: any, left: any, right: any) => Node::(Black, k, v, left, right)
@@ -67,7 +68,7 @@ let constraint insert: any = constraint cmp: any => constraint tree: any => cons
 };
 
 // 查找函数
-let constraint lookup: any = constraint cmp: any => constraint tree: any => constraint key: any => {
+let constraint lookup: lambda = constraint cmp: lambda => constraint tree: Tree(Any, Any) => constraint key: any => {
     loop go: constraint t: any = tree;
     match t
         | assert Empty::() => Nothing
@@ -83,7 +84,7 @@ let constraint lookup: any = constraint cmp: any => constraint tree: any => cons
 };
 
 // 检查键是否存在
-let constraint contains: any = constraint cmp: any => constraint tree: any => constraint key: any => {
+let constraint contains: lambda = constraint cmp: lambda => constraint tree: Tree(Any, Any) => constraint key: any => {
     match lookup(cmp)(tree)(key)
         | constraint Just::(_T: _) => true
         | assert Nothing::() => false
@@ -91,7 +92,7 @@ let constraint contains: any = constraint cmp: any => constraint tree: any => co
 };
 
 // 获取树的大小
-let constraint size: any = constraint tree: any => {
+let constraint size: lambda = constraint tree: Tree(Any, Any) => {
     loop go: constraint t: any = tree;
     match t
         | assert Empty::() => 0
@@ -100,7 +101,7 @@ let constraint size: any = constraint tree: any => {
 };
 
 // 中序遍历
-let constraint inorder: any = constraint tree: any => constraint f: any => {
+let constraint inorder: lambda = constraint tree: Tree(Any, Any) => constraint f: lambda => {
     loop go: constraint t: any = tree;
     match t
         | assert Empty::() => ()

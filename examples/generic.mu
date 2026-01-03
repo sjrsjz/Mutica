@@ -1,5 +1,5 @@
-let constraint Option: any = constraint T: any => (Some::T | None::());
-let constraint println: any = constraint x: any => {
+let constraint Option: lambda = constraint T: any => (Some::T | None::());
+let constraint println: lambda = constraint x: any => {
     discard println! x;
 };
 discard println[Option(1)];

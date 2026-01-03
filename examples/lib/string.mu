@@ -1,38 +1,38 @@
 let constraint list_pkg: any = import "list.mu";
 let constraint maybe_pkg: any = import "maybe.mu";
 let constraint {
-    List::(List: any) &
-    iter::(iter: any) &
-    len::(len: any) &
-    take::(take: any) &
-    drop::(drop: any)
+    List::(List: lambda) &
+    iter::(iter: lambda) &
+    len::(len: lambda) &
+    take::(take: lambda) &
+    drop::(drop: lambda)
 } = list_pkg;
-let constraint Just::(Just: any) = maybe_pkg;
+let constraint Just::(Just: lambda) = maybe_pkg;
 let constraint Nothing::(Nothing: any) = maybe_pkg;
 
 let constraint String: any = List(char);
 
-let constraint println: any = constraint s: String => {
+let constraint println: lambda = constraint s: String => {
     discard iter constraint c: char = s in {
         discard print!(c);
     };
     discard print!('\n');
 };
 
-let constraint print: any = constraint s: String => {
+let constraint print: lambda = constraint s: String => {
     iter constraint c: char = s in {
         discard print!(c);
     }
 };
 
-let constraint slice: any = constraint (s: String, start: nat, end: nat) => {
+let constraint slice: lambda = constraint (s: String, start: nat, end: nat) => {
     let constraint len: nat = len(s);
     if (start >= 0 && start <= len && end >= start && end <= len)
         then Just(take(drop(s)(start))(end - start))
         else Nothing
 };
 
-let constraint nat_to_string: any = 
+let constraint nat_to_string: lambda = 
     match
         | assert 0 => "0"
         | constraint n: nat => {

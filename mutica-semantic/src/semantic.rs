@@ -5,13 +5,13 @@ use mutica_compiler::parser::{
 use mutica_core::util::source_info::SourceFile;
 
 pub struct SourceMapping<'ast> {
-    mapping: Vec<Option<&'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>, // 按字节偏移存储对应的 AST 节点
+    mapping: Vec<Option<&'ast WithLocation<LinearTypeAst, FlowedMetaData>>>, // 按字节偏移存储对应的 AST 节点
 }
 
 impl<'ast> SourceMapping<'ast> {
     /// 从 AST 构建字节偏移到 AST 节点的映射
     pub fn from_ast(
-        ast: &'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
+        ast: &'ast WithLocation<LinearTypeAst, FlowedMetaData>,
         source_file: &SourceFile,
     ) -> Self {
         let mut mapping = Vec::new();
@@ -20,8 +20,8 @@ impl<'ast> SourceMapping<'ast> {
     }
 
     fn build_mapping(
-        node: &'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>,
-        mapping: &mut Vec<Option<&'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>>,
+        node: &'ast WithLocation<LinearTypeAst, FlowedMetaData>,
+        mapping: &mut Vec<Option<&'ast WithLocation<LinearTypeAst, FlowedMetaData>>>,
         source_file: &SourceFile,
     ) {
         // 按照字节偏移标记对应的 AST 节点
@@ -45,6 +45,7 @@ impl<'ast> SourceMapping<'ast> {
             }
             LinearTypeAst::Float => (),
             LinearTypeAst::Char => (),
+            LinearTypeAst::Lambda => (),
             LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
             LinearTypeAst::Variable(_) => (),
@@ -103,7 +104,7 @@ impl<'ast> SourceMapping<'ast> {
                 Self::build_mapping(g, mapping, source_file);
                 Self::build_mapping(expr, mapping, source_file);
             }
-            LinearTypeAst::Literal(expr) => {
+            LinearTypeAst::Lazy(expr) => {
                 Self::build_mapping(expr, mapping, source_file);
             }
             LinearTypeAst::SubOf { value } => {
@@ -121,14 +122,11 @@ impl<'ast> SourceMapping<'ast> {
     pub fn at(
         &self,
         byte_offset: usize,
-    ) -> Option<&'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>> {
+    ) -> Option<&'ast WithLocation<LinearTypeAst, FlowedMetaData>> {
         if byte_offset < self.mapping.len() { self.mapping[byte_offset] } else { None }
     }
 
-    pub fn get_reference(
-        &self,
-        byte_offset: usize,
-    ) -> Option<WithLocation<Option<&LinearTypeAst<'ast>>>> {
+    pub fn get_reference(&self, byte_offset: usize) -> Option<WithLocation<()>> {
         self.at(byte_offset).map(|node| node.payload().reference()).and_then(|r| r.cloned())
     }
 
@@ -177,9 +175,7 @@ impl<'ast> SourceMapping<'ast> {
         result
     }
 
-    pub fn mapping(
-        &self,
-    ) -> &Vec<Option<&'ast WithLocation<LinearTypeAst<'ast>, FlowedMetaData<'ast>>>> {
+    pub fn mapping(&self) -> &Vec<Option<&'ast WithLocation<LinearTypeAst, FlowedMetaData>>> {
         &self.mapping
     }
 }

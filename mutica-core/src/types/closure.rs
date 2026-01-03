@@ -3,7 +3,6 @@ use std::sync::Arc;
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
-    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, Environment, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
@@ -139,46 +138,48 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Closure(v) => {
-                    let (self_branches, _) = self.inner.as_ref();
-                    let (v_branches, _) = v.inner.as_ref();
+                TypeRef::Lambda(_) => Ok(ThreeValuedLogic::True),
+                // 我们实际上难以解决这种非柯里霍德华体系的函数类型的归属问题，因此这里不作考虑，下面的逻辑也是有严重问题的
+                // TypeRef::Closure(v) => {
+                //     let (self_branches, _) = self.inner.as_ref();
+                //     let (v_branches, _) = v.inner.as_ref();
 
-                    if self_branches.len() != v_branches.len() {
-                        return Ok(ThreeValuedLogic::False);
-                    }
+                //     if self_branches.len() != v_branches.len() {
+                //         return Ok(ThreeValuedLogic::False);
+                //     }
 
-                    let mut all = ThreeValuedLogic::True;
+                //     let mut all = ThreeValuedLogic::True;
 
-                    for (self_inner, other_inner) in self_branches.iter().zip(v_branches.iter()) {
-                        let mut pattern_ctx = TypeCheckContext::new(
-                            ctx.assumptions,
-                            None,
-                            ctx.lhs_env,
-                            ctx.rhs_env,
-                            ctx.collected,
-                        );
+                //     for (self_inner, other_inner) in self_branches.iter().zip(v_branches.iter()) {
+                //         let mut pattern_ctx = TypeCheckContext::new(
+                //             ctx.assumptions,
+                //             None,
+                //             ctx.lhs_env,
+                //             ctx.rhs_env,
+                //             ctx.collected,
+                //         );
 
-                        all &= test_true!(
-                            self_inner
-                                .expr
-                                .check(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
-                        );
+                //         all &= test_true!(
+                //             self_inner
+                //                 .expr
+                //                 .check(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
+                //         );
 
-                        let mut pattern_ctx = TypeCheckContext::new(
-                            ctx.assumptions,
-                            None,
-                            ctx.rhs_env,
-                            ctx.lhs_env,
-                            ctx.collected,
-                        );
-                        all &= test_true!(
-                            other_inner
-                                .pattern
-                                .check(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
-                        )
-                    }
-                    Ok(all)
-                }
+                //         let mut pattern_ctx = TypeCheckContext::new(
+                //             ctx.assumptions,
+                //             None,
+                //             ctx.rhs_env,
+                //             ctx.lhs_env,
+                //             ctx.collected,
+                //         );
+                //         all &= test_true!(
+                //             other_inner
+                //                 .pattern
+                //                 .check(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
+                //         )
+                //     }
+                //     Ok(all)
+                // }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -204,46 +205,46 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Closure(v) => {
-                    let (self_branches, _) = self.inner.as_ref();
-                    let (v_branches, _) = v.inner.as_ref();
+                // TypeRef::Closure(v) => {
+                //     let (self_branches, _) = self.inner.as_ref();
+                //     let (v_branches, _) = v.inner.as_ref();
 
-                    if self_branches.len() != v_branches.len() {
-                        return Ok(ThreeValuedLogic::False);
-                    }
+                //     if self_branches.len() != v_branches.len() {
+                //         return Ok(ThreeValuedLogic::False);
+                //     }
 
-                    let mut all = ThreeValuedLogic::True;
+                //     let mut all = ThreeValuedLogic::True;
 
-                    for (self_inner, other_inner) in self_branches.iter().zip(v_branches.iter()) {
-                        let mut pattern_ctx = TypeCheckContext::new(
-                            ctx.assumptions,
-                            None,
-                            ctx.lhs_env,
-                            ctx.rhs_env,
-                            ctx.collected,
-                        );
+                //     for (self_inner, other_inner) in self_branches.iter().zip(v_branches.iter()) {
+                //         let mut pattern_ctx = TypeCheckContext::new(
+                //             ctx.assumptions,
+                //             None,
+                //             ctx.lhs_env,
+                //             ctx.rhs_env,
+                //             ctx.collected,
+                //         );
 
-                        all &= test_true!(
-                            self_inner
-                                .expr
-                                .subof(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
-                        );
+                //         all &= test_true!(
+                //             self_inner
+                //                 .expr
+                //                 .subof(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
+                //         );
 
-                        let mut pattern_ctx = TypeCheckContext::new(
-                            ctx.assumptions,
-                            None,
-                            ctx.rhs_env,
-                            ctx.lhs_env,
-                            ctx.collected,
-                        );
-                        all &= test_true!(
-                            other_inner
-                                .pattern
-                                .subof(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
-                        )
-                    }
-                    Ok(all)
-                }
+                //         let mut pattern_ctx = TypeCheckContext::new(
+                //             ctx.assumptions,
+                //             None,
+                //             ctx.rhs_env,
+                //             ctx.lhs_env,
+                //             ctx.collected,
+                //         );
+                //         all &= test_true!(
+                //             other_inner
+                //                 .pattern
+                //                 .subof(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
+                //         )
+                //     }
+                //     Ok(all)
+                // }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })

@@ -8,11 +8,11 @@ let constraint {
 
 // Constructors for @ syntax
 // @return value; -> return(continuation)(value)
-let constraint return: any = constraint _k: any => constraint v: any => 
+let constraint return: any = constraint _k: lambda => constraint v: any => 
     constraint (success: any, _failure: any) => success(v);
 
 // @throw error; -> throw(continuation)(error)
-let constraint throw: any = constraint _k: any => constraint e: any => 
+let constraint throw: any = constraint _k: lambda => constraint e: any => 
     constraint (_success: any, failure: any) => failure(e);
 
 // Helper to wrap a raw value into a Result (if not using @ syntax)
@@ -23,24 +23,24 @@ let constraint to_throw: any = constraint e: any =>
     constraint (_success: any, failure: any) => failure(e);
 
 // Combinators
-let constraint map: any = constraint res: any => constraint f: any =>
+let constraint map: any = constraint res: lambda => constraint f: lambda =>
     constraint (success: any, failure: any) =>
         res(constraint v: any => success(f(v)), failure);
 
-let constraint map_err: any = constraint res: any => constraint f: any =>
+let constraint map_err: any = constraint res: lambda => constraint f: lambda =>
     constraint (success: any, failure: any) =>
         res(success, constraint e: any => failure(f(e)));
 
-let constraint and_then: any = constraint res: any => constraint f: any =>
+let constraint and_then: any = constraint res: lambda => constraint f: lambda =>
     constraint (success: any, failure: any) =>
         res(constraint v: any => f(v)(success, failure), failure);
 
-let constraint unwrap_or: any = constraint res: any => constraint default: any =>
+let constraint unwrap_or: any = constraint res: lambda => constraint default: any =>
     res(constraint v: any => v, constraint _e: any => default);
 
 // Execution / Extraction
 // try_catch takes a handler and a Result (the computation)
-let constraint try_catch: any = constraint handler: any => constraint res: any =>
+let constraint try_catch: any = constraint handler: lambda => constraint res: lambda =>
     res(constraint v: any => v, handler);
 
 

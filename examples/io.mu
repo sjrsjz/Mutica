@@ -1,5 +1,5 @@
-let constraint List: any = constraint T: any => rec list: (() | (T ~ list));
-let constraint print_chars: any = dyn_rec print_chars: constraint str: List(char) =>
+let constraint List: lambda = constraint T: any => rec list: (() | (T ~ list));
+let constraint print_chars: lambda = dyn_rec print_chars: constraint str: List(char) =>
     match str
         | assert () => ()
         | constraint (head: char ~ tail: any) => (discard print!(head); print_chars(tail))

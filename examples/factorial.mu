@@ -1,7 +1,7 @@
 // 阶乘和斐波那契数列示例
 
 // 普通递归阶乘
-let constraint factorial: any = 
+let constraint factorial: lambda = 
     dyn_rec fact: match
         | assert 0 => 1
         | assert 1 => 1
@@ -9,8 +9,8 @@ let constraint factorial: any =
         | panic;
 
 // 尾递归阶乘
-let constraint factorial_tail: any = constraint n: nat => [
-        let constraint helper: any = dyn_rec h: constraint acc: nat => match 
+let constraint factorial_tail: lambda = constraint n: nat => [
+        let constraint helper: lambda = dyn_rec h: constraint acc: nat => match 
             | assert 0 => acc
             | assert 1 => acc
             | constraint n: nat => h(acc * n)(n - 1)
@@ -19,7 +19,7 @@ let constraint factorial_tail: any = constraint n: nat => [
     ];
 
 // 斐波那契数列
-let constraint fibonacci: any = 
+let constraint fibonacci: lambda = 
     dyn_rec fib: match 
         | assert 0 => 0
         | assert 1 => 1
@@ -27,8 +27,8 @@ let constraint fibonacci: any =
         | panic;
 
 // 尾递归斐波那契
-let constraint fibonacci_tail: any = constraint n: nat => [
-    let constraint helper: any = dyn_rec helper: constraint a: nat => constraint b: nat => match
+let constraint fibonacci_tail: lambda = constraint n: nat => [
+    let constraint helper: lambda = dyn_rec helper: constraint a: nat => constraint b: nat => match
             | assert 0 => a
             | constraint n: nat => helper(b)(a + b)(n - 1)
             | panic;

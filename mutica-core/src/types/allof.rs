@@ -92,6 +92,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
                     }
                     Ok(matched)
                 }
+                // _ => {
+                //     let mut matched = ThreeValuedLogic::False;
+                //     let first =
+                //         self.types.first().expect("CRITICAL: AllOf must have at least one type");
+
+                //     // 验证LHS是单例类型
+                //     // 这是因为 check 不是子类型语义，而是验证某个类型是否是某个类型的实例
+                //     // 而实例一般要求LHS是单例类型，至于RHS为通配符的情况，可以通过Constraint的空约束来实现
+                //     let mut unique = ThreeValuedLogic::True;
+                //     for (i, sub) in self.types.iter().enumerate() {
+                //         matched |= sub.check(other, &mut inner_ctx)?;
+                //         if i > 0 {
+                //             unique &= test_true!(first.equals(
+                //                 sub.as_ref_dispatcher(),
+                //                 inner_ctx.lhs_env,
+                //                 inner_ctx.lhs_env
+                //             )?);
+                //         }
+                //     }
+                //     Ok(matched & unique)
+                // }
             }
         })
     }
@@ -148,14 +169,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                .with_message(format!("Type 'All<...>' at {}", filepath))
+                .with_message(format!("All<...> type at {}", filepath))
                 .with_label(
-                    ariadne::Label::new((filepath, span)).with_message("All<...> defined here"),
+                    ariadne::Label::new((filepath, span)).with_message("All<...> type defined here"),
                 )
                 .finish()
         } else {
             ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                .with_message("Type 'All<...>' has no source location")
+                .with_message("All<...> type has no source location")
                 .with_label(
                     ariadne::Label::new(("<unknown>".to_string(), 0..0))
                         .with_message("Location unknown"),

@@ -116,8 +116,8 @@ extend $"op#gte": match
     | assert (0, Negative::[(), ..()]) => true
     | assert (0, 0) => true
     | panic;
-let constraint Positive: any = constraint (x: [(), ..()]) => Positive::x;
-let constraint Negative: any = constraint (x: [(), ..()]) => Negative::x;
+let constraint Positive: lambda = constraint (x: [(), ..()]) => Positive::x;
+let constraint Negative: lambda = constraint (x: [(), ..()]) => Negative::x;
 let constraint Zero: any = 0;
 extend $"op#neg": match
     | constraint Positive::(x: [(), ..()]) => Negative::x

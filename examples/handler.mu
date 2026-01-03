@@ -1,4 +1,4 @@
-let constraint handler: any = match
+let constraint handler: lambda = match
     | assert GetA::() => 42
     | assert GetB::() => 84
     | panic;

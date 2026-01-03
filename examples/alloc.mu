@@ -1,19 +1,21 @@
 let constraint string_pkg: any = import "lib/string.mu";
 let constraint {
     String::(String: any) &
-    println::(println: any)
+    println::(println: lambda)
 } = string_pkg;
 
-let constraint get: any = match | panic;
-let constraint set: any = match | panic;
+let constraint get: lambda = match | panic;
+let constraint set: lambda = match | panic;
+
+let constraint Pointer: any = (nat, nat);
 
 extend get: constraint ClassA::(self: any) => constraint () => {
-    let constraint data::(v: any) = self;
+    let constraint data::(v: Pointer) = self;
     get!(v)
 };
 
 extend set: constraint ClassA::(self: any) => constraint value: String => {
-    set!((let constraint data::(v: any) = self; v), value)
+    set!((let constraint data::(v: Pointer) = self; v), value)
 };
 
 
@@ -23,7 +25,7 @@ let constraint classA: any = constraint v: String => constraint f: any => {
     };
     let constraint result: any = f(obj);
     discard dealloc!(
-        let constraint ClassA::data::(v: any) = obj;
+        let constraint ClassA::data::(v: Pointer) = obj;
         v
     );
     result    

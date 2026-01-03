@@ -10,6 +10,7 @@ use std::num::NonZero;
 use std::sync::Arc;
 use crate::parser::ast::GenericPattern;
 use crate::parser::with_loc;
+use crate::parser::with_no_loc;
 grammar(source: &Arc<SourceFile>, colors: &mut Vec<TokenColor>);
 
 
@@ -40,6 +41,7 @@ extern {
         "Nat"           => LexerToken::Nat,
         "Char"          => LexerToken::Char,
         "Float"         => LexerToken::Float,
+        "Lambda"        => LexerToken::Lambda,
         "True"          => LexerToken::True,
         "False"         => LexerToken::False,
         "Any"           => LexerToken::Any,
@@ -120,7 +122,7 @@ Ident: String = {
     }
 };
 
-IdentAsMarco: String = {
+IdentAsMacro: String = {
     <l:@L> <s:"Ident"> <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Macro);
         s
@@ -147,82 +149,83 @@ CharLiteral: char = {
 
 // --- Token nonterminals: centralize coloring logic ---
 
-NatTok: () = <l:@L> "Nat" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
-FloatTok: () = <l:@L> "Float" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
-CharTok: () = <l:@L> "Char" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
-TrueTok: () = <l:@L> "True" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
-FalseTok: () = <l:@L> "False" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
-AnyTok: () = <l:@L> "Any" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
-WildcardTok: () = <l:@L> "Wildcard" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Type); () };
+NatTok: () = <l:@L> "Nat" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+FloatTok: () = <l:@L> "Float" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+CharTok: () = <l:@L> "Char" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+LambdaTok: () = <l:@L> "Lambda" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+TrueTok: () = <l:@L> "True" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+FalseTok: () = <l:@L> "False" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+AnyTok: () = <l:@L> "Any" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+WildcardTok: () = <l:@L> "Wildcard" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 
 // Individual keyword tokens (keeps locations simple and centralizes coloring)
-LetTok: () = <l:@L> "Let" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-WithTok: () = <l:@L> "With" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-WhereTok: () = <l:@L> "Where" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-ExistTok: () = <l:@L> "Exist" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-AssertTok: () = <l:@L> "Assert" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-MatchTok: () = <l:@L> "Match" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-RecTok: () = <l:@L> "Rec" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-DynamicRecTok: () = <l:@L> "DynamicRec" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-LoopTok: () = <l:@L> "Loop" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-PanicTok: () = <l:@L> "Panic" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-DiscardTok: () = <l:@L> "Discard" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-ImportTok: () = <l:@L> "Import" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-IfTok: () = <l:@L> "If" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-ThenTok: () = <l:@L> "Then" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-ElseTok: () = <l:@L> "Else" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-RotTok: () = <l:@L> "Rot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-HandleTok: () = <l:@L> "Handle" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-SubOfTok: () = <l:@L> "SubOf" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-ForTok: () = <l:@L> "For" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-InTok: () = <l:@L> "In" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-ExtendTok: () = <l:@L> "Extend" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-AsTok: () = <l:@L> "As" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-ConstraintTok: () = <l:@L> "Constraint" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-LazyTok: () = <l:@L> "Lazy" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
+LetTok: () = <l:@L> "Let" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+WithTok: () = <l:@L> "With" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+WhereTok: () = <l:@L> "Where" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+ExistTok: () = <l:@L> "Exist" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+AssertTok: () = <l:@L> "Assert" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+MatchTok: () = <l:@L> "Match" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+RecTok: () = <l:@L> "Rec" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+DynamicRecTok: () = <l:@L> "DynamicRec" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+LoopTok: () = <l:@L> "Loop" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+PanicTok: () = <l:@L> "Panic" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+DiscardTok: () = <l:@L> "Discard" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+ImportTok: () = <l:@L> "Import" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+IfTok: () = <l:@L> "If" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+ThenTok: () = <l:@L> "Then" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+ElseTok: () = <l:@L> "Else" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+RotTok: () = <l:@L> "Rot" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+HandleTok: () = <l:@L> "Handle" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+SubOfTok: () = <l:@L> "SubOf" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+ForTok: () = <l:@L> "For" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+InTok: () = <l:@L> "In" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+ExtendTok: () = <l:@L> "Extend" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+AsTok: () = <l:@L> "As" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+ConstraintTok: () = <l:@L> "Constraint" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+LazyTok: () = <l:@L> "Lazy" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 
 // Individual operator tokens with centralized coloring
-DotTok: () = <l:@L> "Dot" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-DoubleColonTok: () = <l:@L> "DoubleColon" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-AtTok: () = <l:@L> "At" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-PipeTok: () = <l:@L> "Pipe" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-DoublePipeTok: () = <l:@L> "DoublePipe" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-BangTok: () = <l:@L> "Bang" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-ColonTok: () = <l:@L> "Colon" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-TildeTok: () = <l:@L> "Tilde" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-AmpersandTok: () = <l:@L> "Ampersand" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-DoubleAmpersandTok: () = <l:@L> "DoubleAmpersand" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-EqTok: () = <l:@L> "Eq" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-NeqTok: () = <l:@L> "Neq" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-LtTok: () = <l:@L> "Lt" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-LteTok: () = <l:@L> "Lte" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-GtTok: () = <l:@L> "Gt" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-GteTok: () = <l:@L> "Gte" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-IsTok: () = <l:@L> "Is" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Keyword); () };
-PlusTok: () = <l:@L> "Plus" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-MinusTok: () = <l:@L> "Minus" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-StarTok: () = <l:@L> "Star" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-SlashTok: () = <l:@L> "Slash" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-PercentTok: () = <l:@L> "Percent" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-AssignTok: () = <l:@L> "Assign" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-PipeGreaterThanTok: () = <l:@L> "PipeGreaterThan" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-ArrowTok: () = <l:@L> "Arrow" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-FatArrowTok: () = <l:@L> "FatArrow" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-DoubleArrowTok: () = <l:@L> "DoubleArrow" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-RangeTok: () = <l:@L> "Range" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-HashTok: () = <l:@L> "Hash" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-BackslashTok: () = <l:@L> "Backslash" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
-DollarTok: () = <l:@L> "Dollar" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Operator); () };
+DotTok: () = <l:@L> "Dot" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+DoubleColonTok: () = <l:@L> "DoubleColon" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+AtTok: () = <l:@L> "At" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+PipeTok: () = <l:@L> "Pipe" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+DoublePipeTok: () = <l:@L> "DoublePipe" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+BangTok: () = <l:@L> "Bang" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+ColonTok: () = <l:@L> "Colon" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+TildeTok: () = <l:@L> "Tilde" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+AmpersandTok: () = <l:@L> "Ampersand" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+DoubleAmpersandTok: () = <l:@L> "DoubleAmpersand" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+EqTok: () = <l:@L> "Eq" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+NeqTok: () = <l:@L> "Neq" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+LtTok: () = <l:@L> "Lt" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+LteTok: () = <l:@L> "Lte" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+GtTok: () = <l:@L> "Gt" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+GteTok: () = <l:@L> "Gte" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+IsTok: () = <l:@L> "Is" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+PlusTok: () = <l:@L> "Plus" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+MinusTok: () = <l:@L> "Minus" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+StarTok: () = <l:@L> "Star" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+SlashTok: () = <l:@L> "Slash" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+PercentTok: () = <l:@L> "Percent" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+AssignTok: () = <l:@L> "Assign" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+PipeGreaterThanTok: () = <l:@L> "PipeGreaterThan" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+ArrowTok: () = <l:@L> "Arrow" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+FatArrowTok: () = <l:@L> "FatArrow" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+DoubleArrowTok: () = <l:@L> "DoubleArrow" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+RangeTok: () = <l:@L> "Range" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+HashTok: () = <l:@L> "Hash" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+BackslashTok: () = <l:@L> "Backslash" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+DollarTok: () = <l:@L> "Dollar" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
 
 // Punctuation tokens
-LParenTok: () = <l:@L> "LParen" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
-RParenTok: () = <l:@L> "RParen" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
-LBracketTok: () = <l:@L> "LBracket" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
-RBracketTok: () = <l:@L> "RBracket" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
-LBraceTok: () = <l:@L> "LBrace" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
-RBraceTok: () = <l:@L> "RBrace" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
-CommaTok: () = <l:@L> "Comma" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
-SemicolonTok: () = <l:@L> "Semicolon" <r:@R> => { TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation); () };
+LParenTok: () = <l:@L> "LParen" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
+RParenTok: () = <l:@L> "RParen" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
+LBracketTok: () = <l:@L> "LBracket" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
+RBracketTok: () = <l:@L> "RBracket" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
+LBraceTok: () = <l:@L> "LBrace" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
+RBraceTok: () = <l:@L> "RBrace" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
+CommaTok: () = <l:@L> "Comma" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
+SemicolonTok: () = <l:@L> "Semicolon" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Punctuation);
 
 // --- End token nonterminals ---
 
@@ -234,6 +237,7 @@ AtomType: WithLocation<TypeAst> = {
     }, source, l..r),
     <l:@L> FloatTok <r:@R> => with_loc(TypeAst::Float, source, l..r),
     <l:@L> CharTok <r:@R> => with_loc(TypeAst::Char, source, l..r),
+    <l:@L> LambdaTok <r:@R> => with_loc(TypeAst::Lambda, source, l..r),
     <l:@L> TrueTok <r:@R> => with_loc(TypeAst::Variable(with_loc("op#true".to_string(), source, l..r)), source, l..r),
     <l:@L> FalseTok <r:@R> => with_loc(TypeAst::Variable(with_loc("op#false".to_string(), source, l..r)), source, l..r),
     <l:@L> AnyTok <r:@R> => with_loc(TypeAst::Wildcard, source, l..r),
@@ -315,7 +319,7 @@ SubOf: WithLocation<TypeAst> = {
 
 CpsApply: WithLocation<TypeAst> = {
     // #var arg
-    <l:@L> HashTok <var: IdentAsMarco> <r:@R> <arg: Primary>  => {
+    <l:@L> HashTok <var: IdentAsMacro> <r:@R> <arg: Factor>  => {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Variable(with_loc(var, source, l..r)), source, l..r)),
             arg: Box::new(arg),
@@ -349,29 +353,29 @@ Apply: WithLocation<TypeAst> = {
 }
 
 IfElse: WithLocation<TypeAst> = {
-    <l:@L> IfTok <cond: Primary?> ThenTok <then_branch: Primary> ElseTok <else_branch: Primary> <r:@R> => {
+    <l:@L> IfTok <cond: Primary?> <inner_l: @L> ThenTok <then_branch: Primary> ElseTok <else_branch: Primary> <inner_r:@R> <r:@R> => {
         match cond {
             Some(c) => with_loc(TypeAst::Apply {
                 func: Box::new(with_loc(TypeAst::Match {
                     branches: vec![
                         (GenericPattern::Standard {
                             vars: vec![],
-                            pattern: with_loc(TypeAst::Variable(with_loc("op#false".to_string(), source, l..r)), source, l..r),
+                            pattern: with_no_loc(TypeAst::Variable(with_no_loc("op#false".to_string()))),
                             constraint: (
-                                with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                                with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                                with_no_loc(TypeAst::Tuple(vec![])),
+                                with_no_loc(TypeAst::Tuple(vec![]))
                             ),
                         }, else_branch),
                         (GenericPattern::Standard {
                             vars: vec![],
-                            pattern: with_loc(TypeAst::Variable(with_loc("op#true".to_string(), source, l..r)), source, l..r),
+                            pattern: with_no_loc(TypeAst::Variable(with_no_loc("op#true".to_string()))),
                             constraint: (
-                                with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                                with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                                with_no_loc(TypeAst::Tuple(vec![])),
+                                with_no_loc(TypeAst::Tuple(vec![]))
                             ),
                         }, then_branch),
                     ],
-                }, source, l..r)),
+                }, source, inner_l..inner_r)),
                 arg: Box::new(c),
                 auto_cps: true,
             }, source, l..r),
@@ -379,18 +383,18 @@ IfElse: WithLocation<TypeAst> = {
                 branches: vec![
                     (GenericPattern::Standard {
                         vars: vec![],
-                        pattern: with_loc(TypeAst::Variable(with_loc("op#false".to_string(), source, l..r)), source, l..r),
+                        pattern: with_no_loc(TypeAst::Variable(with_no_loc("op#false".to_string()))),
                         constraint: (
-                            with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                            with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                            with_no_loc(TypeAst::Tuple(vec![])),
+                            with_no_loc(TypeAst::Tuple(vec![]))
                         ),
                     }, else_branch),
                     (GenericPattern::Standard {
                         vars: vec![],
-                        pattern: with_loc(TypeAst::Variable(with_loc("op#true".to_string(), source, l..r)), source, l..r),
+                        pattern: with_no_loc(TypeAst::Variable(with_no_loc("op#true".to_string()))),
                         constraint: (
-                            with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                            with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                            with_no_loc(TypeAst::Tuple(vec![])),
+                            with_no_loc(TypeAst::Tuple(vec![]))
                         ),
                     }, then_branch),
                 ],
@@ -400,12 +404,12 @@ IfElse: WithLocation<TypeAst> = {
 }
 
 Match: WithLocation<TypeAst> = {
-    <l:@L> MatchTok <value: Primary?> <branches: MatchBranch*> PipeTok PanicTok? <r:@R> => {
+    <l:@L> MatchTok <value: Primary?> <inner_l:@L> <branches: MatchBranch*> <inner_r:@R> PipeTok PanicTok? <r:@R> => {
         match value {
             Some(v) => with_loc(TypeAst::Apply {
                 func: Box::new(with_loc(TypeAst::Match {
                     branches: branches,
-                }, source, l..r)),
+                }, source, inner_l..inner_r)),
                 arg: Box::new(v),
                 auto_cps: true,
             }, source, l..r),
@@ -417,17 +421,17 @@ Match: WithLocation<TypeAst> = {
 }
 
 ForIn: WithLocation<TypeAst> = {
-    <l:@L> ForTok <binding: Binding> InTok <expr: Primary> <r:@R> => {
+    <l:@L> ForTok <inner_l:@L> <binding: Binding> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
         let (branch, value) = binding;
         with_loc(TypeAst::Apply {
             func: Box::new(value),
             arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
-            }, source, l..r)),
+            }, source, inner_l..inner_r)),
             auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <f_l:@L> <func_var: IdentAsMarco> <f_r:@R> <binding: Binding> InTok <expr: Primary> <r:@R> => {
+    <l:@L> <f_l:@L> <func_var: IdentAsMacro> <f_r:@R> <inner_l:@L> <binding: Binding> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
         let (branch, value) = binding;
         // func_var(value)(pattern=>expr)
         with_loc(TypeAst::Apply {
@@ -441,7 +445,7 @@ ForIn: WithLocation<TypeAst> = {
             }, source, l..r)),
             arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
-            }, source, l..r)),
+            }, source, inner_l..inner_r)),
             auto_cps: true,
         }, source, l..r)
     },
@@ -525,9 +529,9 @@ Comma<T>: Vec<T> = {
 CommaSep: () = <l:@L> CommaTok+ <r:@R> => ();
 
 
-Literal: WithLocation<TypeAst> = {
+Lazy: WithLocation<TypeAst> = {
     <l:@L> LazyTok <t: Primary> <r:@R> => {
-        with_loc(TypeAst::Literal(Box::new(t)), source, l..r)
+        with_loc(TypeAst::Lazy(Box::new(t)), source, l..r)
     },
 }
 
@@ -558,13 +562,13 @@ Generic: GenericPattern = {
             constraint: (f, g),
         }
     },
-    <l:@L> AssertTok <expr: Calculate> <r:@R> => {
+    AssertTok <expr: Calculate> => {
         GenericPattern::Standard {
             vars: vec![],
             pattern: expr,
             constraint: (
-                with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                with_no_loc(TypeAst::Tuple(vec![])),
+                with_no_loc(TypeAst::Tuple(vec![]))
             ),
         }
     },
@@ -582,7 +586,7 @@ Constraint: WithLocation<TypeAst> = {
 }
 
 Primary: WithLocation<TypeAst> = {
-    <l: Literal> => l,
+    <l: Lazy> => l,
     <r: RecursiveGen> => r,
     <c: Constraint> => c,
     <m: Match> => m,
@@ -590,7 +594,6 @@ Primary: WithLocation<TypeAst> = {
     <f: ForIn> => f,
     <i: IfElse> => i,
     <c: Calculate> => c,
-    <c: CpsApply> => c,
     ! => {
         let err: ErrorRecovery<usize, LexerToken, LexicalError> = <>;
         let (l, r) = calculate_full_error_span(&err);
@@ -613,6 +616,7 @@ Factor: WithLocation<TypeAst> = {
         }, source, l..r)
     },
     <bind: AutoBind> => bind,
+    <c: CpsApply> => c,
     <a: Apply> => a,
 }
 
@@ -673,10 +677,10 @@ AndsSep: () = <l:@L> AmpersandTok+ <r:@R> => ();
 Calculate: WithLocation<TypeAst> = { Or };
 
 Or: WithLocation<TypeAst> = {
-    <l:@L> <left: Or> DoublePipeTok <right: And> <r:@R> => {
+    <l:@L> <left: Or> <op_l:@L> DoublePipeTok <op_r:@R> <right: And> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#or".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#or".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
@@ -684,10 +688,10 @@ Or: WithLocation<TypeAst> = {
 }
 
 And: WithLocation<TypeAst> = {
-    <l:@L> <left: And> DoubleAmpersandTok <right: Compare> <r:@R> => {
+    <l:@L> <left: And> <op_l:@L> DoubleAmpersandTok <op_r:@R> <right: Compare> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#and".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#and".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
@@ -707,38 +711,38 @@ Compare: WithLocation<TypeAst> = {
             right: Box::new(right),
         }, source, l..r)
     },
-    <l:@L> <left: Compare> LtTok <right: AddSub> <r:@R> => {
+    <l:@L> <left: Compare> <op_l:@L> LtTok <op_r:@R> <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#lt".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#lt".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <left: Compare> LteTok <right: AddSub> <r:@R> => {
+    <l:@L> <left: Compare> <op_l:@L> LteTok <op_r:@R> <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#lte".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#lte".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <left: Compare> GtTok <right: AddSub> <r:@R> => {
+    <l:@L> <left: Compare> <op_l:@L> GtTok <op_r:@R> <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#gt".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#gt".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <left: Compare> GteTok <right: AddSub> <r:@R> => {
+    <l:@L> <left: Compare> <op_l:@L> GteTok <op_r:@R> <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#gte".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#gte".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <left: Compare> IsTok <right: AddSub> <r:@R> => {
+    <l:@L> <left: Compare> <op_l:@L> IsTok <op_r:@R> <right: AddSub> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#is".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#is".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
@@ -748,15 +752,15 @@ Compare: WithLocation<TypeAst> = {
 AddSub: WithLocation<TypeAst> = {
     <l:@L> <left: AddSub> <op_l:@L> PlusTok <op_r:@R> <right: Mod> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#add".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#add".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <left: AddSub> MinusTok <right: Mod> <r:@R> => {
+    <l:@L> <left: AddSub> <op_l:@L> MinusTok <op_r:@R> <right: Mod> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#sub".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#sub".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
@@ -764,10 +768,10 @@ AddSub: WithLocation<TypeAst> = {
 }
 
 Mod: WithLocation<TypeAst> = {
-    <l:@L> <left: Mod> PercentTok <right: MulDiv> <r:@R> => {
+    <l:@L> <left: Mod> <op_l:@L> PercentTok <op_r:@R> <right: MulDiv> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#mod".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#mod".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
@@ -775,17 +779,17 @@ Mod: WithLocation<TypeAst> = {
 }
 
 MulDiv: WithLocation<TypeAst> = {
-    <l:@L> <left: MulDiv> StarTok <right: Factor> <r:@R> => {
+    <l:@L> <left: MulDiv> <op_l:@L> StarTok <op_r:@R> <right: Factor> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#mul".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#mul".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <left: MulDiv> SlashTok <right: Factor> <r:@R> => {
+    <l:@L> <left: MulDiv> <op_l:@L> SlashTok <op_r:@R> <right: Factor> <r:@R> => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#div".to_string(), source, l..r)), source, l..r)),
-            arg: Box::new(with_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#div".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
             auto_cps: true,
         }, source, l..r)
     },
@@ -802,7 +806,7 @@ Let: (GenericPattern, WithLocation<TypeAst>) = {
 }
 
 CustomLet: (WithLocation<String>, GenericPattern, WithLocation<TypeAst>) = {
-    <l:@L> <func: IdentAsMarco> <r:@R> <binding: Binding> SemicolonTok => {
+    <l:@L> <func: IdentAsMacro> <r:@R> <binding: Binding> SemicolonTok => {
         (with_loc(func, source, l..r), binding.0, binding.1)
     }
 }
@@ -816,7 +820,7 @@ LetWithoutValue: WithLocation<TypeAst> = {
 }
 
 CustomLetWithoutValue: WithLocation<TypeAst> = {
-    <l:@L> <f_l:@L> <custom_func: IdentAsMarco> <f_r:@R> <branch: Generic> SemicolonTok <expr: Type> <r:@R> => {
+    <l:@L> <f_l:@L> <custom_func: IdentAsMacro> <f_r:@R> <inner_l:@L> <branch: Generic> SemicolonTok <expr: Type> <inner_r:@R> <r:@R> => {
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(
                 TypeAst::Variable(with_loc(custom_func, source, f_l..f_r)),
@@ -824,7 +828,7 @@ CustomLetWithoutValue: WithLocation<TypeAst> = {
             )),
             arg: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(branch, expr)],
-            }, source, l..r)),
+            }, source, inner_l..inner_r)),
             auto_cps: true,
         }, source, l..r)
     },
@@ -851,7 +855,7 @@ Discard: WithLocation<TypeAst> = {
 }
 
 CustomDiscard: (WithLocation<String>, WithLocation<TypeAst>) = {
-    <l:@L> AtTok <var: IdentAsMarco> <r:@R> <e: Type> SemicolonTok => {
+    <l:@L> AtTok <var: IdentAsMacro> <r:@R> <e: Type> SemicolonTok => {
         (
             with_loc(var, source, l..r),
             e
@@ -899,22 +903,21 @@ Line: WithLocation<TypeAst> = {
     <l:@L> <extend_expr: ExtendDef> <e: Type> <r:@R> => {
         let branch = GenericPattern::Standard {
             vars: vec![extend_expr.0.clone()],
-            pattern: extend_expr.0.clone().map(|var| TypeAst::Variable(with_loc(var, source, l..r))),
+            pattern: extend_expr.0.clone().map(|var| TypeAst::Variable(extend_expr.0.clone())),
             constraint: (
-                with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                with_no_loc(TypeAst::Tuple(vec![])),
+                with_no_loc(TypeAst::Tuple(vec![]))
             ),
         };
         let binding_value = with_loc(
             TypeAst::Apply {
-                func: Box::new(with_loc(
-                    TypeAst::Variable(with_loc("op#add".to_string(), source, l..r)),
-                    source, l..r
+                func: Box::new(with_no_loc(
+                    TypeAst::Variable(with_no_loc("op#add".to_string())),
                 )),
-                arg: Box::new(with_loc(TypeAst::Tuple(vec![
+                arg: Box::new(with_no_loc(TypeAst::Tuple(vec![
                     (extend_expr.1, NonZero::new(1).unwrap()),
-                    (extend_expr.0.clone().map(|var| TypeAst::Variable(with_loc(var, source, l..r))), NonZero::new(1).unwrap()),
-                ]), source, l..r)),
+                    (extend_expr.0.clone().map(|var| TypeAst::Variable(extend_expr.0.clone())), NonZero::new(1).unwrap()),
+                ]))),
                 auto_cps: true,
             },
             source, l..r
@@ -930,10 +933,10 @@ Line: WithLocation<TypeAst> = {
     <l:@L> <discard_expr: Discard> <e: Type> <r:@R> => {
         let branch = GenericPattern::Standard {
             vars: vec![],
-            pattern: with_loc(TypeAst::DiscardPattern, source, l..r),
+            pattern: with_no_loc(TypeAst::DiscardPattern),
             constraint: (
-                with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                with_no_loc(TypeAst::Tuple(vec![])),
+                with_no_loc(TypeAst::Tuple(vec![]))
             ),
         };
         with_loc(TypeAst::Apply {
@@ -949,10 +952,10 @@ Line: WithLocation<TypeAst> = {
         let func_span = custom_func.location().map(|loc| loc.span().clone()).unwrap_or(l..r);
         let branch = GenericPattern::Standard {
             vars: vec![],
-            pattern: with_loc(TypeAst::DiscardPattern, source, l..r),
+            pattern: with_no_loc(TypeAst::DiscardPattern),
             constraint: (
-                with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                with_no_loc(TypeAst::Tuple(vec![])),
+                with_no_loc(TypeAst::Tuple(vec![]))
             ),
         };
         // custom_func_var(pattern=>expr)(value)
@@ -1005,17 +1008,14 @@ HandleWith: WithLocation<TypeAst> = {
             closure: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(GenericPattern::Standard {
                     vars: vec![],
-                    pattern: with_loc(TypeAst::DiscardPattern, source, l..r),
+                    pattern: with_no_loc(TypeAst::DiscardPattern),
                     constraint: (
-                        with_loc(TypeAst::Tuple(vec![]), source, l..r),
-                        with_loc(TypeAst::Tuple(vec![]), source, l..r)
+                        with_no_loc(TypeAst::Tuple(vec![])),
+                        with_no_loc(TypeAst::Tuple(vec![]))
                     ),
                 }, expr)],
             }, source, l..r)),
-            init_val: Box::new(
-                with_loc(TypeAst::DiscardPattern,
-                source, l..r)
-            ),
+            init_val: Box::new(with_no_loc(TypeAst::DiscardPattern)),
             handler: Box::new(handler),
         }, source, l..r)
     },

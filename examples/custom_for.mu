@@ -1,16 +1,16 @@
 let constraint {
     String::(String: any) &
-    println::(println: any) &
-    nat_to_string::(nat_to_string: any)
+    println::(println: lambda) &
+    nat_to_string::(nat_to_string: lambda)
 } = import "lib/string.mu";
 let constraint {
-    iter::(iter: any)
+    iter::(iter: lambda)
 } = import "lib/list.mu";
 let constraint {
-    while::(while: any)
+    while::(while: lambda)
 } = import "lib/controlflow.mu";
 let constraint {
-    Just::(Just: any) &
+    Just::(Just: lambda) &
     Nothing::(Nothing: any)
 } = import "lib/maybe.mu";
 

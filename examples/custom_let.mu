@@ -1,11 +1,11 @@
 let constraint {
     String::(String: any) &
-    println::(println: any) &
-    nat_to_string::(nat_to_string: any) &
-    print::(print: any)
+    println::(println: lambda) &
+    nat_to_string::(nat_to_string: lambda) &
+    print::(print: lambda)
 } = import "lib/string.mu";
 
-let constraint debug_let: any = constraint f: any => constraint v: any => {
+let constraint debug_let: lambda = constraint f: lambda => constraint v: any => {
     discard print("Debug let:");
     discard print! v;
     discard print! '\n';

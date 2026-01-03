@@ -2,13 +2,13 @@ let constraint list_pkg: any = import "list.mu";
 let constraint Any::(Any: any) = import "any.mu";
 let constraint {
     List::(List: any) &
-    cons::(cons: any) &
-    len::(len: any) &
-    drop::(drop: any) &
-    take::(take: any)
+    cons::(cons: lambda) &
+    len::(len: lambda) &
+    drop::(drop: lambda) &
+    take::(take: lambda)
 } = list_pkg;
 // 归并两个已排序的列表
-let constraint merge: any = constraint (cmp: any, lst1: List(Any), lst2: List(Any)) => {
+let constraint merge: lambda = constraint (cmp: lambda, lst1: List(Any), lst2: List(Any)) => {
     loop merge_go: constraint t: any = (lst1, lst2);
     match t
         | constraint ((), l2: any) => l2
@@ -21,8 +21,8 @@ let constraint merge: any = constraint (cmp: any, lst1: List(Any), lst2: List(An
 };
 
 // 将列表分为两半
-let constraint split: any = constraint lst: List(Any) => {
-    let constraint len: any = len lst;
+let constraint split: lambda = constraint lst: List(Any) => {
+    let constraint len: nat = len lst;
     let constraint mid: nat = len / 2;
     let constraint first_half: any = take lst mid;
     let constraint second_half: any = drop lst mid;
@@ -30,7 +30,7 @@ let constraint split: any = constraint lst: List(Any) => {
 };
 
 // 归并排序主函数
-let constraint merge_sort: any = constraint cmp: any => constraint lst: List(Any) =>  {
+let constraint merge_sort: lambda = constraint cmp: lambda => constraint lst: List(Any) =>  {
     loop go: constraint t: any = lst;
     match t
         | assert () => ()
@@ -46,14 +46,14 @@ let constraint merge_sort: any = constraint cmp: any => constraint lst: List(Any
 
 
 // 快速排序
-let constraint quick_sort: any = constraint cmp: any => constraint lst: List(Any) => {
+let constraint quick_sort: lambda = constraint cmp: lambda => constraint lst: List(Any) => {
     loop go: constraint t: any = lst;
     match t
         | assert () => ()
         | constraint (v: any ~ ()) => v
         | constraint (pivot: any ~ rest: any) => {
             // 分区函数
-            let constraint partition: any = constraint l: List(Any) => {
+            let constraint partition: lambda = constraint l: List(Any) => {
                 loop part: constraint pt: any = (l, (), ());
                 let constraint (lst_p: any, smaller: any, larger: any) = pt;
                 match lst_p
@@ -77,9 +77,9 @@ let constraint quick_sort: any = constraint cmp: any => constraint lst: List(Any
 };
 
 // 插入排序
-let constraint insert_sort: any = constraint cmp: any => constraint lst: List(Any) => {
+let constraint insert_sort: lambda = constraint cmp: lambda => constraint lst: List(Any) => {
     // 将元素插入已排序列表
-    let constraint insert: any = constraint (x: any, sorted: List(Any)) => {
+    let constraint insert: lambda = constraint (x: any, sorted: List(Any)) => {
         loop go: constraint t: any = sorted;
         match t
             | assert () => cons(x, ())

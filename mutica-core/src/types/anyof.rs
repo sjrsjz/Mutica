@@ -166,14 +166,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                .with_message(format!("Type 'Any<...>' at {}", filepath))
+                .with_message(format!("Any<...> type at {}", filepath))
                 .with_label(
-                    ariadne::Label::new((filepath, span)).with_message("Any<...> defined here"),
+                    ariadne::Label::new((filepath, span)).with_message("Any<...> type defined here"),
                 )
                 .finish()
         } else {
             ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                .with_message("Type 'Any<...>' has no source location")
+                .with_message("Any<...> type has no source location")
                 .with_label(
                     ariadne::Label::new(("<unknown>".to_string(), 0..0))
                         .with_message("Location unknown"),

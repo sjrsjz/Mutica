@@ -1,4 +1,4 @@
-let constraint throw_panic: any = match
+let constraint throw_panic: lambda = match
     | constraint v: any => {
         let assert () = Panic::v;
     }

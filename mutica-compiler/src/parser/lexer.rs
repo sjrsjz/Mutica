@@ -195,6 +195,8 @@ pub enum LexerToken {
     Float,
     #[token("char")]
     Char,
+    #[token("lambda")]
+    Lambda,
     #[token("true")]
     True,
     #[token("false")]

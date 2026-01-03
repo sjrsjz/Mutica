@@ -43,6 +43,10 @@ pub fn with_loc<T>(
     WithLocation::new(value, Some(SourceLocation::new(src.clone(), range)).as_ref())
 }
 
+pub fn with_no_loc<T>(value: T) -> WithLocation<T> {
+    WithLocation::new(value, None::<&SourceLocation>)
+}
+
 /// Calculate the full error span including all dropped tokens
 /// Returns (byte_start, byte_end) tuple
 pub fn calculate_full_error_span(
@@ -88,20 +92,20 @@ pub fn calculate_full_error_span(
 }
 
 #[derive(Debug, Clone)]
-pub enum ParseError<'ast> {
-    UseBeforeDeclaration(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>),
-    RedeclaredCaptureValue(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>),
-    UnusedVariable(WithLocation<LinearTypeAst<'ast>>, Vec<WithLocation<String>>),
-    AmbiguousPattern(WithLocation<LinearTypeAst<'ast>>),
-    PatternOutOfParameterDefinition(WithLocation<LinearTypeAst<'ast>>),
-    MissingBranch(WithLocation<LinearTypeAst<'ast>>),
-    OutgoingFixPointReference(WithLocation<LinearTypeAst<'ast>>, WithLocation<String>, usize),
+pub enum ParseError {
+    UseBeforeDeclaration(WithLocation<LinearTypeAst>, WithLocation<String>),
+    RedeclaredCaptureValue(WithLocation<LinearTypeAst>, WithLocation<String>),
+    UnusedVariable(WithLocation<LinearTypeAst>, Vec<WithLocation<String>>),
+    AmbiguousPattern(WithLocation<LinearTypeAst>),
+    PatternOutOfParameterDefinition(WithLocation<LinearTypeAst>),
+    MissingBranch(WithLocation<LinearTypeAst>),
+    OutgoingFixPointReference(WithLocation<LinearTypeAst>, WithLocation<String>, usize),
     WildcardOutOfConstraint(WithLocation<BasicTypeAst>),
     AstNotDesugared(WithLocation<BasicTypeAst>),
     InternalError(String),
 }
 
-impl<'ast> ParseError<'ast> {
+impl ParseError {
     pub fn is_warning(&self) -> bool {
         matches!(self, ParseError::UnusedVariable(_, _))
     }
@@ -1043,6 +1047,7 @@ pub fn inject_std_library(
                 ),
                 BasicTypeAst::Float => std_ast,
                 BasicTypeAst::Char => std_ast,
+                BasicTypeAst::Lambda => std_ast,
                 BasicTypeAst::Wildcard => std_ast,
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
@@ -1167,8 +1172,8 @@ pub fn inject_std_library(
                     ),
                     loc.as_ref(),
                 ),
-                BasicTypeAst::Literal(v) => WithLocation::new(
-                    BasicTypeAst::Literal(replace_placeholder(*v, ast).into()),
+                BasicTypeAst::Lazy(v) => WithLocation::new(
+                    BasicTypeAst::Lazy(replace_placeholder(*v, ast).into()),
                     loc.as_ref(),
                 ),
                 BasicTypeAst::SubOf { value } => WithLocation::new(
