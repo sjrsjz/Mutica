@@ -20,7 +20,7 @@ Mutica is an experimental, statically-typed functional programming language feat
 - 🎭 **Advanced Pattern Matching**: Sophisticated destructuring with exhaustive pattern matching and type-safe guards.
 - 📦 **Label-based Namespaces**: Type isolation through labels, enabling algebraic data types like `Maybe` and `Either`.
 - 💫 **Effect Handlers**: Built-in support for algebraic effects through `perform!` and `handle...with` constructs.
-- 🛡️ **Meta-level Type Operators**: Unique operators like `eq`, `rot`, and `subof` that manipulate constraint validation at the type level.
+- 🛡️ **Meta-level Type Operators**: Unique operators like `sub` and `constraint` that manipulate constraint validation at the type level.
 - 📚 **Module System**: Import-based modular code organization with `import` statements.
 - ♻️ **Automatic Garbage Collection**: Employs `arc-gc` with cycle detection for efficient memory management.
 
@@ -55,37 +55,37 @@ cargo run -- version
 
 ```mutica
 // Integer
-let x: int = 42;
+let constraint x: nat = 42;
 
 // Character
-let c: char = 'A';
+let constraint c: char = 'A';
 
 // Tuple
-let pair: (int, int) = (1, 2);
+let constraint pair: (nat, nat) = (1, 2);
 
 // AnyOf Type
-let value: (int | char) = 42;
+let constraint value: (nat | char) = 42;
 
 // AllOf Type (used for records/structs)
-let point: { x::int & y::int } = { x::1 & y::2 };
+let constraint point: { x::nat & y::nat } = { x::1 & y::2 };
 
 // Top Type (any)
-let anything: any = 42; // `any` is the supertype of all conventional types
-let _ = 42;             // An underscore can be used directly to assert a type constraint
+let constraint anything: any = 42; // `any` is the supertype of all conventional types
+let constraint anything: _ = 42;             // An underscore can be used directly to assert a type constraint
 ```
 
 ### Function Definitions
 
 ```mutica
 // A function that accepts an integer
-let add_one: any = (x: int) => x + 1; // `=>` defines a function
+let constraint add_one: any = (x: nat) => x + 1; // `=>` defines a function
 
-// A recursive function using `rec` with pattern matching
-let fib: any = rec f: match
-    | eq 0 => 0
-    | eq 1 => 1
-    | n: int => f(n - 1) + f(n - 2)
-    | panic; // Asserts that the match is exhaustive for the input `n: int`
+// A recursive function using `dyn_rec` with pattern matching
+let constraint fib: any = dyn_rec f: match
+    | assert 0 => 0
+    | assert 1 => 1
+    | constraint n: nat => f(n - 1) + f(n - 2)
+    | panic; // Asserts that the match is exhaustive for the input `n: nat`
 ```
 
 ### Constraint Checks (`is`)
@@ -94,27 +94,27 @@ The `is` operator is not traditional subtyping, but a check to see if a type ful
 
 ```mutica
 // A value fulfills the constraint of its general type
-1 is int                           // true
+1 is nat                           // true
 
 // A more specific record fulfills the constraint of a more general one
-{ x::1 & y::2 } is { x::int }      // true
+{ x::1 & y::2 } is x::nat      // true
 ```
 
 ### Namespaces and ADTs
 
 ```mutica
 // Define labeled constructors
-let Just: any = T: any => Just::T;
-let Nothing: any = Nothing::();
+let constraint Just: any = constraint T: any => Just::T;
+let constraint Nothing: any = Nothing::();
 
 // Define the Maybe type using a union
-let Maybe: any = T: any => (Just T | Nothing);
+let constraint Maybe: any = constraint T: any => (Just T | Nothing);
 
 // Use pattern matching on labeled types
-let map: any = v: Maybe(any) => f: any => 
+let constraint map: any = constraint v: Maybe(any) => constraint f: lambda => 
     match v
-        | Just::(x: any) => Just(f(x))
-        | Nothing::() => Nothing
+        | constraint Just::(x: any) => Just(f(x))
+        | assert Nothing::() => Nothing
         | panic;
 ```
 
@@ -122,27 +122,27 @@ let map: any = v: Maybe(any) => f: any =>
 
 ```mutica
 // Use intersection types to simulate a struct
-let Point: any = (x: int, y: int, z: int) => { x::x & y::y & z::z };
+let constraint Point: any = (x: nat, y: nat, z: nat) => { x::x & y::y & z::z };
 
-let p: any = Point(1, 2, 3);
+let constraint p: any = Point(1, 2, 3);
 
 // Deconstructuring
-let { x::(x: int) & z::(z: int) } = p;
+let constraint { x::(x: nat) & z::(z: nat) } = p;
 ```
 
 ### Effect Handlers
 
 ```mutica
 // Define effect handlers
-let handler: any = match
-    | GetA::() => 42
-    | GetB::() => 84
+let constraint handler: any = match
+    | assert GetA::() => 42
+    | assert GetB::() => 84
     | panic;
 
 // Use effects with handlers
-handle z: int = 1 with handler;
-let x: int = perform! GetA::();
-let y: int = perform! GetB::();
+handle constraint z: nat = 1 with handler;
+let constraint x: nat = perform! GetA::();
+let constraint y: nat = perform! GetB::();
 x, y, z  // Results: 42, 84, 1
 ```
 
@@ -150,30 +150,29 @@ x, y, z  // Results: 42, 84, 1
 
 ```mutica
 // Import from another file
-let pkg: any = import "lib/maybe.mu";
-
+let constraint pkg: any = import "lib/maybe.mu";
 // Destructure imported values
-let {
+let constraint {
     Just::(Just: any) &
     Nothing::(Nothing: any) &
     map::(map: any)
 } = pkg;
 
 // Use imported functions
-let v1: any = Just(41);
-map(v1)(x: int => x + 1)  // Results: Just(42)
+let constraint v1: any = Just(41);
+map(v1)(x: nat => x + 1)  // Results: Just(42)
 ```
 
 ### UFCS
 
 ```mutica
-let {
+let constraint {
     Just::(Just: any) &
     map::(map: any)
 } = import "lib/maybe.mu";
 // Using UFCS to call functions as methods
-let v1: any = Just(41);
-v1.map(x: int => x + 1)  // Results: Just(42)
+let constraint v1: any = Just(41);
+v1.map(x: nat => x + 1)  // Results: Just(42)
 ```
 
 ## 🎯 Example Programs
@@ -181,10 +180,10 @@ v1.map(x: int => x + 1)  // Results: Just(42)
 ### Fibonacci
 
 ```mutica
-let fib: any = rec f: match
-    | eq 0 => 0
-    | eq 1 => 1
-    | n: int => f(n - 1) + f(n - 2)
+let constraint fib: any = dyn_rec f: match
+    | assert 0 => 0
+    | assert 1 => 1
+    | constraint n: nat => f(n - 1) + f(n - 2)
     | panic;
 
 fib(10) // Computes the 10th Fibonacci number
@@ -193,14 +192,37 @@ fib(10) // Computes the 10th Fibonacci number
 ### IO Example
 
 ```mutica
-let List: any = (T: any) => rec list: (() | T @ list);
-let print_chars: any = rec print_chars: str: List(char) =>
+let constraint List: any = constraint T: any => rec list: (() | (T ~ list));
+let constraint print_chars: any = dyn_rec print_chars: constraint str: List(char) =>
     match str
-        | () => ()
-        | (head: char) @ (tail: any) => (discard print!(head); print_chars(tail))
+        | assert () => ()
+        | constraint (head: char ~ tail: any) => {
+            discard print!(head);
+            print_chars(tail)
+        }
         | panic;
 
 print_chars("Hello, world!\n")
+```
+
+### Custom CPS
+
+```mutica
+let constraint println::(println: lambda) = import "lib/string.mu";
+let constraint Pointer: any = (nat, nat);
+let constraint alloc: lambda = constraint f: lambda => constraint v: any => {
+    // RAII automatic memory management
+    let constraint pointer: Pointer = alloc! v;
+    let constraint result: any = f pointer;
+    discard dealloc! pointer;
+    result
+};
+
+let constraint my_str: Pointer = #alloc "Hello, World!";
+discard println! my_str; // (0, 0) (represents as (Unit, Unit) internally)
+discard println(get! my_str);
+discard set!(my_str, "Goodbye, World!");
+discard println(get! my_str);
 ```
 
 ## 🏗️ Architecture
@@ -229,8 +251,7 @@ The Mutica implementation is organized into multiple crates:
 3.  **Linearization**: AST is linearized to explicit control flow representation
 4.  **Flow Analysis**: Variable definedness and usage validation with warnings/errors
 5.  **Type Building**: AST is converted into coinductive `Type` representation
-6.  **Reduction**: Types are reduced to normal form through the constraint system
-7.  **Execution**: Linear scheduler evaluates the reduced type with effect handling
+6.  **Execution**: Linear scheduler evaluates the reduced type with effect handling
 
 ## 🤝 Contributing
 
