@@ -8,7 +8,9 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, anyof::AnyOf, unify::EnvironmentView,
+        TypeRef,
+        anyof::AnyOf,
+        unify::{EnvironmentStack, EnvironmentView},
     },
     util::{
         collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -316,11 +318,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
         }
 
         let mut absorbed: SmallVec<[bool; 8]> = smallvec![false; collected.len()];
+        let mut assumptions = smallvec![];
+        let mut collected_pattern = EnvironmentStack::new();
+        let mut context =
+            TypeCheckContext::new(&mut assumptions, None, env, env, &mut collected_pattern);
 
         for i in 0..collected.len() {
+            for j in 0..i {
+                if absorbed[j] {
+                    continue;
+                }
+                if let ThreeValuedLogic::True =
+                    collected[j].subof(collected[i].as_ref_dispatcher(), &mut context)?
+                {
+                    absorbed[i] = true;
+                    break;
+                }
+            }
+            if absorbed[i] {
+                continue;
+            }
             for j in (i + 1)..collected.len() {
                 if let ThreeValuedLogic::True =
-                    collected[i].equals(collected[j].as_ref_dispatcher(), env, env)?
+                    collected[j].subof(collected[i].as_ref_dispatcher(), &mut context)?
                 {
                     absorbed[i] = true;
                     break;
