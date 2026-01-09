@@ -6,4 +6,4 @@ let constraint {
 } = pkg;
 let constraint v1: any = Just(41);
 let constraint v2: any = Nothing;
-map(v1)(constraint x: nat => x + 1), map(v2)(constraint x: nat => x + 1)
+v1.map(constraint x: nat => x + 1), v2.map(constraint x: nat => x + 1)

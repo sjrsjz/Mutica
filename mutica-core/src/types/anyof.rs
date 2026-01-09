@@ -8,7 +8,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, unify::EnvironmentView,
+        TypeRef, allof::AllOf, unify::EnvironmentView,
     },
     util::{
         collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -89,8 +89,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
 
                 _ => {
                     let mut found = ThreeValuedLogic::True;
-                    let first =
-                        self.types.first().expect("CRITICAL: AnyOf must have at least one type");
+                    if self.types.is_empty() {
+                        // Any<> 属于非单例，直接False
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    let first = self.types.first().unwrap();
 
                     // 验证LHS是单例类型
                     // 这是因为 check 不是子类型语义，而是验证某个类型是否是某个类型的实例
@@ -168,7 +171,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
                 .with_message(format!("Any<...> type at {}", filepath))
                 .with_label(
-                    ariadne::Label::new((filepath, span)).with_message("Any<...> type defined here"),
+                    ariadne::Label::new((filepath, span))
+                        .with_message("Any<...> type defined here"),
                 )
                 .finish()
         } else {
@@ -254,19 +258,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AnyOf<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
     #[allow(clippy::new_ret_no_self)]
-    // pub fn new<I, X>(types: I, source_info: Option<Arc<SourceLocation>>) -> Type<T>
-    // where
-    //     I: IntoIterator<Item = X>,
-    //     X: AsDispatcher<Type<T>, T>,
-    // {
-    //     let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
-    //     match collected.len() {
-    //         0 => panic!("CRITICAL: AnyOf requires at least one type"),
-    //         1 => collected.into_iter().next().unwrap(),
-    //         _ => Self { types: Arc::from(collected), source_info }.dispatch(),
-    //     }
-    // }
-    #[allow(clippy::new_ret_no_self)]
     pub fn new<I, X>(
         types: I,
         source_info: Option<Arc<SourceLocation>>,
@@ -279,14 +270,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
         fn collect<T: GcAllocObject<T, Inner = Type<T>>>(
             collected: &mut SmallVec<[Type<T>; 8]>,
             path: &mut FastCycleDetector<TaggedPtr<()>>,
+            is_unknown: &mut bool,
             x: Type<T>,
         ) -> Result<(), TypeError<Type<T>, T>> {
+            if *is_unknown {
+                return Ok(());
+            }
             if x.map(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
                 Ok(match t {
-                    TypeRef::Any(allof) => {
-                        for sub in allof.types.iter() {
-                            collect(collected, path, sub.clone())?;
+                    TypeRef::Any(anyof) => {
+                        for sub in anyof.types.iter() {
+                            collect(collected, path, is_unknown, sub.clone())?;
                         }
+                        false
+                    }
+                    TypeRef::All(allof) if allof.types().is_empty() => {
+                        // 空 AllOf<> 为 Top 类型，与 Top 求 Any 结果为 Top，这个逻辑去掉后仍能在语义上成立，但为了规范化类型，保留此逻辑
+                        *is_unknown = true;
                         false
                     }
                     _ => true,
@@ -300,8 +300,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
         }
         let mut collected = SmallVec::new();
 
+        let mut is_unknown = false;
         for t in types.into_iter() {
-            collect(&mut collected, &mut FastCycleDetector::new(), t.into_dispatcher())?;
+            if is_unknown {
+                break;
+            }
+            collect(
+                &mut collected,
+                &mut FastCycleDetector::new(),
+                &mut is_unknown,
+                t.into_dispatcher(),
+            )?;
+        }
+        if is_unknown {
+            return Ok(AllOf::unknown(source_info));
         }
 
         let mut absorbed: SmallVec<[bool; 8]> = smallvec![false; collected.len()];
@@ -324,7 +336,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
             }
         }
         let new_type = match result.len() {
-            0 => panic!("CRITICAL: AnyOf requires at least one type after simplification"),
             1 => result.into_iter().next().unwrap(),
             _ => AnyOf { types: Arc::from(result), source_info }.dispatch(),
         };
@@ -333,5 +344,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
 
     pub fn types(&self) -> &[Type<T>] {
         &self.types
+    }
+
+    pub fn never(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        AnyOf { types: Arc::from([]), source_info }.dispatch()
     }
 }

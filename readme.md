@@ -2,16 +2,16 @@
 
 <div align="center">
 
-**An experimental, statically-typed functional programming language with advanced coinductive type system.**
+**An experimental, structurally-typed functional programming language with advanced coinductive type system.**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) 
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org/)
 
 </div>
 
 ## 📖 Overview
 
-Mutica is an experimental, statically-typed functional programming language featuring an advanced **coinductive type system** for precise structural type checking. The language supports powerful pattern matching, effect handlers, and a rule-based constraint validation system that goes far beyond traditional subtyping.
+Mutica is an experimental, structurally-typed functional programming language featuring an advanced **coinductive type system** for precise structural type checking. The language supports powerful pattern matching, effect handlers, and a rule-based constraint validation system that goes far beyond traditional subtyping.
 
 ### Key Features
 
@@ -65,9 +65,11 @@ let constraint pair: (nat, nat) = (1, 2);
 
 // AnyOf Type
 let constraint value: (nat | char) = 42;
+let constraint bottom: any = never; // Bottom type
 
 // AllOf Type (used for records/structs)
 let constraint point: { x::nat & y::nat } = { x::1 & y::2 };
+let constraint top: any = unknown; // Top type
 
 // Top Type (any)
 let constraint anything: any = 42; // `any` is the supertype of all conventional types
@@ -246,12 +248,12 @@ The Mutica implementation is organized into multiple crates:
 
 ### Compilation Pipeline
 
-1.  **Parsing**: Source code is parsed into an Abstract Syntax Tree (AST) using LALRPOP
-2.  **Multi-file Building**: Import resolution and module system handling
-3.  **Linearization**: AST is linearized to explicit control flow representation
-4.  **Flow Analysis**: Variable definedness and usage validation with warnings/errors
-5.  **Type Building**: AST is converted into coinductive `Type` representation
-6.  **Execution**: Linear scheduler evaluates the reduced type with effect handling
+1. **Parsing**: Source code is parsed into an Abstract Syntax Tree (AST) using LALRPOP
+2. **Multi-file Building**: Import resolution and module system handling
+3. **Linearization**: AST is linearized to explicit control flow representation
+4. **Flow Analysis**: Variable definedness and usage validation with warnings/errors
+5. **Type Building**: AST is converted into coinductive `Type` representation
+6. **Execution**: Linear scheduler evaluates the reduced type with effect handling
 
 ## 🤝 Contributing
 

@@ -8,7 +8,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, unify::EnvironmentView,
+        TypeRef, anyof::AnyOf, unify::EnvironmentView,
     },
     util::{
         collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -91,28 +91,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
                         matched |= sub.check(other, &mut inner_ctx)?
                     }
                     Ok(matched)
-                }
-                // _ => {
-                //     let mut matched = ThreeValuedLogic::False;
-                //     let first =
-                //         self.types.first().expect("CRITICAL: AllOf must have at least one type");
+                } // _ => {
+                  //     let mut matched = ThreeValuedLogic::False;
+                  //     let first =
+                  //         self.types.first().expect("CRITICAL: AllOf must have at least one type");
 
-                //     // 验证LHS是单例类型
-                //     // 这是因为 check 不是子类型语义，而是验证某个类型是否是某个类型的实例
-                //     // 而实例一般要求LHS是单例类型，至于RHS为通配符的情况，可以通过Constraint的空约束来实现
-                //     let mut unique = ThreeValuedLogic::True;
-                //     for (i, sub) in self.types.iter().enumerate() {
-                //         matched |= sub.check(other, &mut inner_ctx)?;
-                //         if i > 0 {
-                //             unique &= test_true!(first.equals(
-                //                 sub.as_ref_dispatcher(),
-                //                 inner_ctx.lhs_env,
-                //                 inner_ctx.lhs_env
-                //             )?);
-                //         }
-                //     }
-                //     Ok(matched & unique)
-                // }
+                  //     // 验证LHS是单例类型
+                  //     // 这是因为 check 不是子类型语义，而是验证某个类型是否是某个类型的实例
+                  //     // 而实例一般要求LHS是单例类型，至于RHS为通配符的情况，可以通过Constraint的空约束来实现
+                  //     let mut unique = ThreeValuedLogic::True;
+                  //     for (i, sub) in self.types.iter().enumerate() {
+                  //         matched |= sub.check(other, &mut inner_ctx)?;
+                  //         if i > 0 {
+                  //             unique &= test_true!(first.equals(
+                  //                 sub.as_ref_dispatcher(),
+                  //                 inner_ctx.lhs_env,
+                  //                 inner_ctx.lhs_env
+                  //             )?);
+                  //         }
+                  //     }
+                  //     Ok(matched & unique)
+                  // }
             }
         })
     }
@@ -171,7 +170,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
                 .with_message(format!("All<...> type at {}", filepath))
                 .with_label(
-                    ariadne::Label::new((filepath, span)).with_message("All<...> type defined here"),
+                    ariadne::Label::new((filepath, span))
+                        .with_message("All<...> type defined here"),
                 )
                 .finish()
         } else {
@@ -256,21 +256,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AllOf<T> {
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
-    // /// 直接构造，不进行任何简化
-    // #[allow(clippy::new_ret_no_self)]
-    // pub fn new<I, X>(types: I, source_info: Option<Arc<SourceLocation>>) -> Type<T>
-    // where
-    //     I: IntoIterator<Item = X>,
-    //     X: AsDispatcher<Type<T>, T>,
-    // {
-    //     let collected: Vec<_> = types.into_iter().map(|t| t.into_dispatcher()).collect();
-    //     match collected.len() {
-    //         0 => panic!("AllOf requires at least one type"),
-    //         1 => collected.into_iter().next().unwrap(),
-    //         _ => Self { types: Arc::from(collected), source_info }.dispatch(),
-    //     }
-    // }
-
     #[allow(clippy::new_ret_no_self)]
     pub fn new<I, X>(
         types: I,
@@ -284,14 +269,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
         fn collect<T: GcAllocObject<T, Inner = Type<T>>>(
             collected: &mut SmallVec<[Type<T>; 8]>,
             path: &mut FastCycleDetector<TaggedPtr<()>>,
+            is_never: &mut bool,
             x: Type<T>,
         ) -> Result<(), TypeError<Type<T>, T>> {
+            if *is_never {
+                return Ok(());
+            }
             if x.map(path, |path, t| -> Result<bool, TypeError<Type<T>, T>> {
                 Ok(match t {
                     TypeRef::All(allof) => {
                         for sub in allof.types.iter() {
-                            collect(collected, path, sub.clone())?;
+                            collect(collected, path, is_never, sub.clone())?;
                         }
+                        false
+                    }
+                    TypeRef::Any(anyof) if anyof.types().is_empty() => {
+                        // 空 Any<> 表示 Bottom 类型，与 Bottom 求 All 结果仍为 Bottom，这个逻辑去掉后仍能在语义上成立，但为了规范化类型，保留此逻辑
+                        *is_never = true;
                         false
                     }
                     _ => true,
@@ -305,8 +299,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
         }
         let mut collected = SmallVec::new();
 
+        let mut is_never = false;
         for t in types.into_iter() {
-            collect(&mut collected, &mut FastCycleDetector::new(), t.into_dispatcher())?;
+            if is_never {
+                break;
+            }
+            collect(
+                &mut collected,
+                &mut FastCycleDetector::new(),
+                &mut is_never,
+                t.into_dispatcher(),
+            )?;
+        }
+        if is_never {
+            return Ok(AnyOf::never(source_info));
         }
 
         let mut absorbed: SmallVec<[bool; 8]> = smallvec![false; collected.len()];
@@ -329,7 +335,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
             }
         }
         let new_type = match result.len() {
-            0 => panic!("CRITICAL: AllOf requires at least one type after simplification"),
             1 => result.into_iter().next().unwrap(),
             _ => AllOf { types: Arc::from(result), source_info }.dispatch(),
         };
@@ -338,5 +343,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
 
     pub fn types(&self) -> &[Type<T>] {
         &self.types
+    }
+
+    pub fn unknown(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        AllOf { types: Arc::from([]), source_info }.dispatch()
     }
 }

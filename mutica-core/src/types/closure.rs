@@ -329,9 +329,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             }
         }
 
-        if self.branches().is_empty() {
-            return Err(TypeError::EmptyMatchArm(self.dispatch().into()));
-        }
         let expect_arg =
             self.branches().iter().map(|b| b.pattern.clone().into_dispatcher()).collect::<Vec<_>>();
         Err(TypeError::AssertFailed(

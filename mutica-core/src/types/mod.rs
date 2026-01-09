@@ -341,7 +341,6 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     UnboundEnvironmentVariable(Box<str>),
     GenericLayerOverflow(Box<U>),
     AssertFailed(Box<(U, U)>),
-    EmptyMatchArm(Box<U>),
     MissingContinuation(Box<U>),
     MissingPerformHandler(Box<U>),
     RuntimeError(Arc<dyn Error + Send + Sync>),
@@ -378,9 +377,6 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             }
             TypeError::GenericLayerOverflow(ty) => {
                 write!(f, "Generic layer overflow for type: {:?}", ty)
-            }
-            TypeError::EmptyMatchArm(ty) => {
-                write!(f, "Empty match arm for type: {:?}", ty)
             }
             TypeError::AssertFailed(types) => {
                 write!(f, "Assert failed: {:?} doesn't accept {:?}", types.0, types.1)
@@ -442,32 +438,6 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Type cannot be applied"),
-                        )
-                        .finish()
-                }
-            }
-            TypeError::EmptyMatchArm(ty) => {
-                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
-                if let Some(loc) = ty.source_info() {
-                    let span =
-                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
-                    let filepath = loc.source().filepath().to_string();
-                    let content = loc.source().content().to_string();
-                    sources.push((filepath.clone(), content));
-
-                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message(format!("Empty match arm for type: {}", ty_repr))
-                        .with_label(
-                            ariadne::Label::new((filepath, span))
-                                .with_message("This match arm is empty"),
-                        )
-                        .finish()
-                } else {
-                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message(format!("Empty match arm for type: {}", ty_repr))
-                        .with_label(
-                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
-                                .with_message("Empty match arm"),
                         )
                         .finish()
                 }

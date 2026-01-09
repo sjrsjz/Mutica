@@ -203,6 +203,10 @@ pub enum LexerToken {
     False,
     #[token("any")]
     Any,
+    #[token("unknown")]
+    Unknown,
+    #[token("never")]
+    Never,
     #[token("import")]
     Import,
     #[token("if")]

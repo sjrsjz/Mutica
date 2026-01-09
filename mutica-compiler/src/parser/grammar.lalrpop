@@ -45,6 +45,8 @@ extern {
         "True"          => LexerToken::True,
         "False"         => LexerToken::False,
         "Any"           => LexerToken::Any,
+        "Never"         => LexerToken::Never,
+        "Unknown"       => LexerToken::Unknown,
         "Import"        => LexerToken::Import,
         "If"            => LexerToken::If,
         "Then"          => LexerToken::Then,
@@ -156,6 +158,8 @@ LambdaTok: () = <l:@L> "Lambda" <r:@R> => TokenColor::fill_colors(colors, l..r, 
 TrueTok: () = <l:@L> "True" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 FalseTok: () = <l:@L> "False" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 AnyTok: () = <l:@L> "Any" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+NeverTok: () = <l:@L> "Never" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+UnknownTok: () = <l:@L> "Unknown" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 WildcardTok: () = <l:@L> "Wildcard" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 
 // Individual keyword tokens (keeps locations simple and centralizes coloring)
@@ -241,6 +245,8 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> TrueTok <r:@R> => with_loc(TypeAst::Variable(with_loc("op#true".to_string(), source, l..r)), source, l..r),
     <l:@L> FalseTok <r:@R> => with_loc(TypeAst::Variable(with_loc("op#false".to_string(), source, l..r)), source, l..r),
     <l:@L> AnyTok <r:@R> => with_loc(TypeAst::Wildcard, source, l..r),
+    <l:@L> NeverTok <r:@R> => with_loc(TypeAst::AnyOf(vec![]), source, l..r),
+    <l:@L> UnknownTok <r:@R> => with_loc(TypeAst::AllOf(vec![]), source, l..r),
     <l:@L> WildcardTok <r:@R> => with_loc(TypeAst::Wildcard, source, l..r),
     <l:@L> <f: Float> <r:@R> => with_loc(TypeAst::FloatLiteral(f), source, l..r),
     <l:@L> <n: Num> <r:@R> => {
