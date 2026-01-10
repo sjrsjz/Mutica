@@ -43,9 +43,11 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::Range { ty, .. } => {
                 Self::build_mapping(ty, mapping, source_file);
             }
+            LinearTypeAst::NaturalNumberSet => (),
             LinearTypeAst::Float => (),
             LinearTypeAst::Char => (),
             LinearTypeAst::Lambda => (),
+            LinearTypeAst::NaturalNumberLiteral(_) => (),
             LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
             LinearTypeAst::Variable(_) => (),
@@ -108,6 +110,9 @@ impl<'ast> SourceMapping<'ast> {
                 Self::build_mapping(expr, mapping, source_file);
             }
             LinearTypeAst::SubOf { value } => {
+                Self::build_mapping(value, mapping, source_file);
+            }
+            LinearTypeAst::Mutable { value } => {
                 Self::build_mapping(value, mapping, source_file);
             }
             LinearTypeAst::StaticFixPoint { expr, .. } => {

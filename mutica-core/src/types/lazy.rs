@@ -7,7 +7,10 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
         Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
     },
-    util::{arc_opt::ArcOpt, collector::CollectorExt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
+    util::{
+        arc_opt::ArcOpt, collector::CollectorExt, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
+    },
 };
 
 pub struct Lazy<T: GcAllocObject<T, Inner = Type<T>>> {

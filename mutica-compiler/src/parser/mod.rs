@@ -1021,8 +1021,7 @@ pub fn inject_std_library(
         | panic;
     let constraint $"op#neg": any = constraint (x: any) => __neg!(x);
     let constraint $"op#is": any = constraint (x: any, y: any) => __is!(x, y, true, false);
-    let constraint $"op#set": any = constraint (x: any, y: any) => __set!(x, y);
-    let constraint $"op#build_fixpoint": any = constraint (f: any) => __build_fixpoint!(f);
+    let constraint $"op#assign": any = constraint (x: any, y: any) => __assign!(x, y);
     $"<placeholder>"
     "##;
     let mut import_ast = HashMap::new();
@@ -1045,10 +1044,12 @@ pub fn inject_std_library(
                     BasicTypeAst::Range { ty: replace_placeholder(*ty, ast).into(), min, delta },
                     loc.as_ref(),
                 ),
+                BasicTypeAst::NaturalNumberSet => std_ast,
                 BasicTypeAst::Float => std_ast,
                 BasicTypeAst::Char => std_ast,
                 BasicTypeAst::Lambda => std_ast,
                 BasicTypeAst::Wildcard => std_ast,
+                BasicTypeAst::NaturalNumberLiteral(_) => std_ast,
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
                 BasicTypeAst::Tuple(items) => WithLocation::new(
@@ -1174,6 +1175,10 @@ pub fn inject_std_library(
                 ),
                 BasicTypeAst::Lazy(v) => WithLocation::new(
                     BasicTypeAst::Lazy(replace_placeholder(*v, ast).into()),
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::Mutable { value } => WithLocation::new(
+                    BasicTypeAst::Mutable { value: replace_placeholder(*value, ast).into() },
                     loc.as_ref(),
                 ),
                 BasicTypeAst::SubOf { value } => WithLocation::new(

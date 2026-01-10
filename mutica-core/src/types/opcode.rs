@@ -12,6 +12,7 @@ use crate::{
         fixpoint::FixPoint,
         float_value::FloatValue,
         invoke::Invoke,
+        natural_number::NaturalNumber,
         pattern::Pattern,
         sequence::Sequence,
         unify::{EnvironmentStack, EnvironmentVarState},
@@ -42,7 +43,8 @@ pub enum OpcodeKind {
     Greater,
     Is,
     Neg,
-    Set,
+    Assign,
+    SetFixPoint,
     BuildFixPoint,
     // I/O
     IO(Box<String>),
@@ -72,7 +74,8 @@ impl Clone for OpcodeKind {
             OpcodeKind::Greater => OpcodeKind::Greater,
             OpcodeKind::Is => OpcodeKind::Is,
             OpcodeKind::Neg => OpcodeKind::Neg,
-            OpcodeKind::Set => OpcodeKind::Set,
+            OpcodeKind::Assign => OpcodeKind::Assign,
+            OpcodeKind::SetFixPoint => OpcodeKind::SetFixPoint,
             OpcodeKind::BuildFixPoint => OpcodeKind::BuildFixPoint,
             OpcodeKind::IO(v) => OpcodeKind::IO(v.clone()),
             OpcodeKind::Pandom => OpcodeKind::Pandom,
@@ -134,7 +137,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     | (OpcodeKind::Greater, OpcodeKind::Opcode)
                     | (OpcodeKind::Is, OpcodeKind::Opcode)
                     | (OpcodeKind::Neg, OpcodeKind::Opcode)
-                    | (OpcodeKind::Set, OpcodeKind::Opcode)
+                    | (OpcodeKind::SetFixPoint, OpcodeKind::Opcode)
                     | (OpcodeKind::BuildFixPoint, OpcodeKind::Opcode)
                     | (OpcodeKind::IO(_), OpcodeKind::Opcode)
                     | (OpcodeKind::Pandom, OpcodeKind::Opcode) => Ok(ThreeValuedLogic::True),
@@ -176,7 +179,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     | (OpcodeKind::Greater, OpcodeKind::Greater)
                     | (OpcodeKind::Is, OpcodeKind::Is)
                     | (OpcodeKind::Neg, OpcodeKind::Neg)
-                    | (OpcodeKind::Set, OpcodeKind::Set)
+                    | (OpcodeKind::SetFixPoint, OpcodeKind::SetFixPoint)
                     | (OpcodeKind::BuildFixPoint, OpcodeKind::BuildFixPoint) => {
                         ThreeValuedLogic::True
                     }
@@ -197,10 +200,40 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     }
 
     fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        let self_clone = self.clone();
         ctx.arg
             .take(&mut FastCycleDetector::new(), |_, arg| match &self.kind {
                 OpcodeKind::Opcode => Err(TypeError::NonApplicableType(self.dispatch().into())),
-                OpcodeKind::Set => {
+                OpcodeKind::Assign => {
+                    if let Type::Sequence(tuple) = &arg && tuple.is_tuple(){
+                        if tuple.len() == 2 {
+                            let left = tuple.get_prefix_value(0).unwrap();
+                            let right = tuple.get_prefix_value(1).unwrap();
+                            left.map(&mut FastCycleDetector::new(), |_, left_val| {
+                                match left_val {
+                                    TypeRef::Mutable(var) => {
+                                        var.assign(right)?;
+                                        Ok(Sequence::unit(ctx.source_info.cloned()))
+                                    }
+                                    _ => Err(TypeError::TypeMismatch(
+                                        (left_val.clone_data().dispatch(), "Mutable".into()).into(),
+                                    )),
+                                }
+                            })?.unwrap_or(Err(TypeError::UnresolvableType(
+                                self.dispatch().into(),
+                            )))
+                        } else {
+                            Err(TypeError::TypeMismatch(
+                                (tuple.clone().dispatch(), "(Mutable, Any)".into()).into(),
+                            ))
+                        }
+                    } else {
+                        Err(TypeError::TypeMismatch(
+                            (arg, "Finite Sequence".into()).into(),
+                        ))
+                    }
+                }
+                OpcodeKind::SetFixPoint => {
                     if let Type::Sequence(tuple) = &arg && tuple.is_tuple(){
                         if tuple.len() == 2 {
                             let left = tuple.get_prefix_value(0).unwrap();
@@ -229,7 +262,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
                     let source_info = ctx.source_info.cloned();
                     let invoke = Invoke::new(
-                            Self { kind: OpcodeKind::Set, source_info: source_info.clone(), _phantom: std::marker::PhantomData }.dispatch(),
+                            Self { kind: OpcodeKind::SetFixPoint, source_info: source_info.clone(), _phantom: std::marker::PhantomData }.dispatch(),
                             Sequence::new_tuple(vec![place_holder.clone(), Variable::new_pattern("var#fixpoint".into(), source_info.clone())], source_info.clone()),
                             None::<Type<T>>,
                             None::<Type<T>>, source_info.clone());
@@ -300,13 +333,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                         if tuple.len() == 2 {
                             let left = tuple.get_prefix_value(0).unwrap();
                             let right = tuple.get_prefix_value(1).unwrap();
-                                    match (left, right) {
-                            (Type::Sequence(l), Type::Sequence(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(l.add(r, ctx.environment)?.dispatch()),
-                                OpcodeKind::Sub => Ok(l.sub(r, ctx.environment)?.dispatch()),
-                                OpcodeKind::Mul => Ok(l.mul(r, ctx.environment)?.dispatch()),
-                                OpcodeKind::Div => Ok(l.div(r, ctx.environment)?.dispatch()),
-                                OpcodeKind::Mod => Ok(l.mod_(r, ctx.environment)?.dispatch()),
+                        match (left, right) {
+                            (Type::NaturalNumber(l), Type::NaturalNumber(r)) => match &self.kind {
+                                OpcodeKind::Add => Ok(NaturalNumber::new(l.value().wrapping_add(r.value()), ctx.source_info.cloned())),
+                                OpcodeKind::Sub => Ok(NaturalNumber::new(l.value().wrapping_sub(r.value()), ctx.source_info.cloned())),
+                                OpcodeKind::Mul => Ok(NaturalNumber::new(l.value().wrapping_mul(r.value()), ctx.source_info.cloned())),
+                                OpcodeKind::Div => {
+                                    if r.value() == 0 {
+                                        Err(TypeError::TypeMismatch(
+                                            (r.clone().dispatch(), "Non-zero nature number".into()).into(),
+                                        ))
+                                    } else {
+                                        Ok(NaturalNumber::new(l.value() / r.value(), ctx.source_info.cloned()))
+                                    }
+                                }
+                                OpcodeKind::Mod => {
+                                    if r.value() == 0 {
+                                        Err(TypeError::TypeMismatch(
+                                            (r.clone().dispatch(), "Non-zero nature number".into()).into(),
+                                        ))
+                                    } else {
+                                        Ok(NaturalNumber::new(l.value() % r.value(), ctx.source_info.cloned()))
+                                    }
+                                }
                                 _ => unreachable!(),
                             },
                             (Type::FloatValue(l), Type::FloatValue(r)) => match &self.kind {
@@ -332,6 +381,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     }
                                 }
                                 _ => unreachable!(),
+                            },
+                            (Type::Sequence(l), Type::Sequence(r)) => match &self.kind {
+                                OpcodeKind::Add => Ok(l.add(r, ctx.environment)?.dispatch()),
+                                _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                                    std::io::Error::other(
+                                        "Only 'Add' operation is supported for Sequence types",
+                                    ),
+                                ))),
                             },
                             (Type::Closure(l), Type::Closure(r)) => match &self.kind {
                                 OpcodeKind::Add => Ok(l.clone().impls(r.clone(), ctx.source_info.cloned())),
@@ -381,6 +438,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     };
                                     Ok(result.clone())
                                 }
+                                (Type::NaturalNumber(l), Type::NaturalNumber(r)) => {
+                                    let condition = match &self.kind {
+                                        OpcodeKind::Less => l.value() < r.value(),
+                                        OpcodeKind::Greater => l.value() > r.value(),
+                                        _ => unreachable!(),
+                                    };
+                                    let result = if condition {
+                                        true_branch
+                                    } else {
+                                        false_branch
+                                    };
+                                    Ok(result.clone())
+                                }
                                 (Type::FloatValue(l), Type::FloatValue(r)) => {
                                     let condition = match &self.kind {
                                         OpcodeKind::Less => l.value() < r.value(),
@@ -397,7 +467,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 (l, r) => Err(TypeError::TypeMismatch(
                                     (
                                         Sequence::new_tuple(vec![l, r], self.source_info.clone()),
-                                        "(Finite Sequence, Finite Sequence, Any, Any) | (FloatValue, FloatValue, Any, Any)".into()
+                                        "(Finite Sequence, Finite Sequence, Any, Any) | (FloatValue, FloatValue, Any, Any) | (NaturalNumber, NaturalNumber, Any, Any)".into()
                                     )
                                         .into(),
                                 )),
@@ -420,7 +490,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 OpcodeKind::Pandom => {
                     unreachable!()
                 }
-            })?.unwrap_or(Err(TypeError::UnresolvableType("Could not resolve argument".into())))
+            })?.unwrap_or(Err(TypeError::UnresolvableType(self_clone.dispatch().into())))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -467,8 +537,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
             OpcodeKind::Greater => "Greater".to_string(),
             OpcodeKind::Neg => "Neg".to_string(),
             OpcodeKind::Is => "Is".to_string(),
-            OpcodeKind::Set => "Set".to_string(),
-            OpcodeKind::BuildFixPoint => "InjectFixPointPlaceholder".to_string(),
+            OpcodeKind::Assign => "Assign".to_string(),
+            OpcodeKind::SetFixPoint => "SetFixPoint".to_string(),
+            OpcodeKind::BuildFixPoint => "BuildFixPoint".to_string(),
             OpcodeKind::IO(v) => format!("IO({})", v),
             OpcodeKind::Pandom => "Pandom".to_string(),
         }

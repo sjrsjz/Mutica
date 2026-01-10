@@ -233,6 +233,8 @@ pub enum LexerToken {
     Constraint,
     #[token("lazy")]
     Lazy,
+    #[token("mut")]
+    Mutable,
 
     #[token("->")]
     Arrow,
@@ -288,6 +290,8 @@ pub enum LexerToken {
     Percent,
     #[token("=")]
     Assign,
+    #[token(":=")]
+    ColonAssign,
     #[token(";")]
     Semicolon,
     #[token("#")]

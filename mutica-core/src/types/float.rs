@@ -6,10 +6,11 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeRef, float_value::FloatValue,
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
+        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -109,11 +110,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
         ctx.arg
             .take(&mut FastCycleDetector::new(), |_, arg| match arg {
                 Type::FloatValue(_) => Ok(arg),
+                Type::NaturalNumber(v) => {
+                    Ok(FloatValue::new(v.value() as f64, v.source_info().cloned()))
+                }
                 _ => Err(super::TypeError::TypeMismatch(
-                    (arg, "FloatValue or IntegerValue".into()).into(),
+                    (arg, "FloatValue | NaturalNumber".into()).into(),
                 )),
             })?
-            .unwrap_or(Err(TypeError::UnresolvableType("Could not resolve argument".into())))
+            .unwrap_or(Err(TypeError::UnresolvableType(self.dispatch().into())))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

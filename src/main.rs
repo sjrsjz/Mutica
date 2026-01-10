@@ -1,5 +1,11 @@
 use clap::{Parser, Subcommand};
-use std::{collections::HashMap, fs, path::PathBuf, process, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    process,
+    sync::{OnceLock, RwLock},
+};
 
 use mutica_compiler::{
     ariadne,
@@ -9,17 +15,13 @@ use mutica_compiler::{
     },
 };
 use mutica_core::{
-    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
-    scheduler::{self, ContinuationOrHandler, stack::Stack},
-    stacksafe::{set_minimum_stack_size, set_stack_allocation_size},
-    tokio,
-    types::{AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef},
-    util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
+    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable}, scheduler::{self, ContinuationOrHandler, stack::Stack}, stacksafe::{set_minimum_stack_size, set_stack_allocation_size}, tokio, types::{AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef}, util::{cycle_detector::FastCycleDetector, rootstack::RootStack}
 };
 
 // 定义一个用于GC堆分配的类型
-pub struct TypeGcOnceLock {
-    inner: OnceLock<Type<TypeGcOnceLock>>,
+pub enum TypeGcOnceLock {
+    Once(OnceLock<Type<TypeGcOnceLock>>),
+    Mutable(RwLock<Type<TypeGcOnceLock>>),
 }
 
 impl GcAllocObject<TypeGcOnceLock> for TypeGcOnceLock {
@@ -28,41 +30,134 @@ impl GcAllocObject<TypeGcOnceLock> for TypeGcOnceLock {
     /// 这是递归类型定义的第一步：创建一个"洞"，稍后填充.
     type Inner = Type<TypeGcOnceLock>;
 
-    fn new_placeholder() -> Self {
-        TypeGcOnceLock { inner: OnceLock::new() }
+    fn new_fixpoint_placeholder() -> Self {
+        TypeGcOnceLock::Once(OnceLock::new())
     }
 
-    fn get_value(&self) -> Option<&Self::Inner> {
-        self.inner.get()
+    fn new_mutable_slot(value: Self::Inner) -> Self
+    where
+        TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
+    {
+        TypeGcOnceLock::Mutable(RwLock::new(value))
     }
 
-    fn map_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
+    fn get_fixpoint_value(&self) -> Option<&Self::Inner>
+    where
+        TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
+    {
+        match self {
+            TypeGcOnceLock::Once(once_lock) => once_lock.get(),
+            TypeGcOnceLock::Mutable(_) => panic!("Not a fixpoint placeholder"),
+        }
+    }
+
+    fn get_mutable_value(&self) -> Option<Self::Inner>
+    where
+        TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
+    {
+        match self {
+            TypeGcOnceLock::Mutable(rw_lock) => match rw_lock.read() {
+                Ok(guard) => Some(guard.clone()),
+                Err(_) => None,
+            },
+            TypeGcOnceLock::Once(_) => panic!("Not a mutable slot"),
+        }
+    }
+
+    fn is_mutable_slot(&self) -> bool
+    where
+        TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
+    {
+        matches!(self, TypeGcOnceLock::Mutable(_))
+    }
+
+    fn set_fixpoint_value(
+        &self,
+        value: Self::Inner,
+    ) -> Result<(), TypeError<Self::Inner, TypeGcOnceLock>>
+    where
+        TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
+    {
+        match self {
+            TypeGcOnceLock::Once(once_lock) => {
+                once_lock.set(value).map_err(|_| TypeError::RedeclaredType)
+            }
+            TypeGcOnceLock::Mutable(_) => panic!("Not a fixpoint placeholder"),
+        }
+    }
+
+    fn set_mutable_value(
+        &self,
+        value: Self::Inner,
+    ) -> Result<(), TypeError<Self::Inner, TypeGcOnceLock>>
+    where
+        TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
+    {
+        match self {
+            TypeGcOnceLock::Mutable(rw_lock) => {
+                let mut guard = rw_lock.write().map_err(|_| TypeError::RedeclaredType)?;
+                *guard = value;
+                Ok(())
+            }
+            TypeGcOnceLock::Once(_) => panic!("Not a mutable slot"),
+        }
+    }
+
+    fn map_fixpoint_value<F, R>(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        f: F,
+    ) -> Option<R>
     where
         F: FnOnce(
             &mut FastCycleDetector<TaggedPtr<()>>,
             <Self::Inner as AsDispatcher<Self::Inner, TypeGcOnceLock>>::RefDispatcher<'_>,
         ) -> R,
-    {
-        self.get_value().map(|inner| f(path, inner.as_ref_dispatcher()))
-    }
-
-    fn set_value(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, TypeGcOnceLock>> {
-        self.inner.set(_value).map_err(|_| TypeError::RedeclaredType)
-    }
-
-    fn take_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, Self::Inner) -> R,
         TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
     {
-        self.get_value().map(|inner| f(path, inner.clone()))
+        match self {
+            TypeGcOnceLock::Once(once_lock) => {
+                once_lock.get().map(|inner| f(path, inner.as_ref_dispatcher()))
+            }
+            TypeGcOnceLock::Mutable(_) => panic!("Not a fixpoint placeholder"),
+        }
+    }
+
+    fn map_mutable_value<F, R>(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(
+            &mut FastCycleDetector<TaggedPtr<()>>,
+            <Self::Inner as AsDispatcher<Self::Inner, TypeGcOnceLock>>::RefDispatcher<'_>,
+        ) -> R,
+        TypeGcOnceLock: GcAllocObject<TypeGcOnceLock>,
+    {
+        match self {
+            TypeGcOnceLock::Mutable(rw_lock) => match rw_lock.read() {
+                Ok(guard) => Some(f(path, guard.as_ref_dispatcher())),
+                Err(_) => None,
+            },
+            TypeGcOnceLock::Once(_) => panic!("Not a mutable slot"),
+        }
     }
 }
 
 impl GCTraceable<TypeGcOnceLock> for TypeGcOnceLock {
     fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<TypeGcOnceLock>>) {
-        if let Some(t) = self.inner.get() {
-            t.collect(queue);
+        match self {
+            TypeGcOnceLock::Once(once_lock) => {
+                if let Some(inner) = once_lock.get() {
+                    inner.collect(queue);
+                }
+            }
+            TypeGcOnceLock::Mutable(rw_lock) => {
+                if let Ok(guard) = rw_lock.read() {
+                    guard.collect(queue);
+                }
+            }
         }
     }
 }

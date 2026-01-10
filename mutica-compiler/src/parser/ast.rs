@@ -19,7 +19,10 @@ use mutica_core::types::float_value::FloatValue;
 use mutica_core::types::invoke::Invoke;
 use mutica_core::types::lambda::Lambda;
 use mutica_core::types::lazy::Lazy;
+use mutica_core::types::mutable::Mutable;
 use mutica_core::types::namespace::Namespace;
+use mutica_core::types::natural_number::NaturalNumber;
+use mutica_core::types::natural_number_set::NaturalNumberSet;
 use mutica_core::types::opcode::{Opcode, OpcodeKind};
 use mutica_core::types::sequence::Sequence;
 use mutica_core::types::subof::SubOf;
@@ -44,7 +47,8 @@ pub enum AtomicOpcode {
     Greater,
     Is,
     Neg,
-    Set,
+    Assign,
+    SetFixPoint,
     BuildFixPoint,
     IO(String),
 }
@@ -87,11 +91,13 @@ pub enum TypeAst {
         min: usize,
         delta: Option<usize>,
     },
+    NaturalNumberSet,
     Float,
     Char,
     Lambda,
     Wildcard,
     DiscardPattern,
+    NaturalNumberLiteral(usize),
     FloatLiteral(f64),
     CharLiteral(char),
     Variable(WithLocation<String>),
@@ -156,6 +162,9 @@ pub enum TypeAst {
     },
     Generic(Box<GenericPattern>),
     Lazy(Box<WithLocation<TypeAst>>),
+    Mutable {
+        value: Box<WithLocation<TypeAst>>,
+    },
     SubOf {
         value: Box<WithLocation<TypeAst>>,
     },
@@ -170,11 +179,13 @@ impl Clone for TypeAst {
             TypeAst::Range { ty, min, delta } => {
                 TypeAst::Range { ty: ty.clone(), min: *min, delta: *delta }
             }
+            TypeAst::NaturalNumberSet => TypeAst::NaturalNumberSet,
             TypeAst::Float => TypeAst::Float,
             TypeAst::Char => TypeAst::Char,
             TypeAst::Lambda => TypeAst::Lambda,
             TypeAst::Wildcard => TypeAst::Wildcard,
             TypeAst::DiscardPattern => TypeAst::DiscardPattern,
+            TypeAst::NaturalNumberLiteral(n) => TypeAst::NaturalNumberLiteral(*n),
             TypeAst::FloatLiteral(f) => TypeAst::FloatLiteral(*f),
             TypeAst::CharLiteral(c) => TypeAst::CharLiteral(*c),
             TypeAst::Variable(s) => TypeAst::Variable(s.clone()),
@@ -220,6 +231,7 @@ impl Clone for TypeAst {
             }
             TypeAst::Generic(g) => TypeAst::Generic(g.clone()),
             TypeAst::Lazy(l) => TypeAst::Lazy(l.clone()),
+            TypeAst::Mutable { value } => TypeAst::Mutable { value: value.clone() },
             TypeAst::SubOf { value } => TypeAst::SubOf { value: value.clone() },
         }
     }
@@ -244,10 +256,12 @@ pub enum BasicTypeAst {
         min: usize,
         delta: Option<usize>,
     },
+    NaturalNumberSet,
     Float,
     Char,
     Lambda,
     Wildcard,
+    NaturalNumberLiteral(usize),
     FloatLiteral(f64),
     CharLiteral(char),
     Variable(WithLocation<String>),
@@ -288,6 +302,9 @@ pub enum BasicTypeAst {
     },
     Generic(Box<BasicGenericPattern>),
     Lazy(Box<WithLocation<BasicTypeAst>>),
+    Mutable {
+        value: Box<WithLocation<BasicTypeAst>>,
+    },
     SubOf {
         value: Box<WithLocation<BasicTypeAst>>,
     },
@@ -304,10 +321,12 @@ impl Clone for BasicTypeAst {
             BasicTypeAst::Range { ty, min, delta } => {
                 BasicTypeAst::Range { ty: ty.clone(), min: *min, delta: *delta }
             }
+            BasicTypeAst::NaturalNumberSet => BasicTypeAst::NaturalNumberSet,
             BasicTypeAst::Float => BasicTypeAst::Float,
             BasicTypeAst::Char => BasicTypeAst::Char,
             BasicTypeAst::Wildcard => BasicTypeAst::Wildcard,
             BasicTypeAst::Lambda => BasicTypeAst::Lambda,
+            BasicTypeAst::NaturalNumberLiteral(n) => BasicTypeAst::NaturalNumberLiteral(*n),
             BasicTypeAst::FloatLiteral(f) => BasicTypeAst::FloatLiteral(*f),
             BasicTypeAst::CharLiteral(c) => BasicTypeAst::CharLiteral(*c),
             BasicTypeAst::Variable(s) => BasicTypeAst::Variable(s.clone()),
@@ -344,6 +363,7 @@ impl Clone for BasicTypeAst {
             }
             BasicTypeAst::Generic(g) => BasicTypeAst::Generic(g.clone()),
             BasicTypeAst::Lazy(l) => BasicTypeAst::Lazy(l.clone()),
+            BasicTypeAst::Mutable { value } => BasicTypeAst::Mutable { value: value.clone() },
             BasicTypeAst::SubOf { value } => BasicTypeAst::SubOf { value: value.clone() },
             BasicTypeAst::StaticFixPoint { param_name, expr } => {
                 BasicTypeAst::StaticFixPoint { param_name: param_name.clone(), expr: expr.clone() }
@@ -847,6 +867,13 @@ impl BasicTypeAst {
                 let (new_inner, binds) = inner.auto_bind();
                 (WithLocation::new(BasicTypeAst::Lazy(Box::new(new_inner)), loc), binds)
             }
+            BasicTypeAst::Mutable { value } => {
+                let (new_value, binds) = value.auto_bind();
+                (
+                    WithLocation::new(BasicTypeAst::Mutable { value: Box::new(new_value) }, loc),
+                    binds,
+                )
+            }
             BasicTypeAst::SubOf { value } => {
                 let (new_value, binds) = value.auto_bind();
                 (WithLocation::new(BasicTypeAst::SubOf { value: Box::new(new_value) }, loc), binds)
@@ -861,10 +888,12 @@ impl BasicTypeAst {
                     binds,
                 )
             }
-            BasicTypeAst::Float
+            BasicTypeAst::NaturalNumberSet
+            | BasicTypeAst::Float
             | BasicTypeAst::Char
             | BasicTypeAst::Lambda
             | BasicTypeAst::Wildcard
+            | BasicTypeAst::NaturalNumberLiteral(_)
             | BasicTypeAst::FloatLiteral(_)
             | BasicTypeAst::CharLiteral(_)
             | BasicTypeAst::Variable(_)
@@ -892,6 +921,9 @@ impl BasicTypeAst {
                     ),
                 )
             }
+            BasicTypeAst::NaturalNumberSet => {
+                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::NaturalNumberSet, loc))
+            }
             BasicTypeAst::Float => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Float, loc))
             }
@@ -908,6 +940,9 @@ impl BasicTypeAst {
                 ));
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Tuple(vec![]), loc))
             }
+            BasicTypeAst::NaturalNumberLiteral(v) => LinearizeResult::new_simple(
+                WithLocation::new(LinearTypeAst::NaturalNumberLiteral(*v), loc),
+            ),
             BasicTypeAst::FloatLiteral(v) => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::FloatLiteral(*v), loc))
             }
@@ -1127,6 +1162,11 @@ impl BasicTypeAst {
                 )),
                 loc,
             )),
+            BasicTypeAst::Mutable { value } => {
+                let value = value.linearize(ctx, errors, value.location());
+                let ty = LinearTypeAst::Mutable { value: Box::new(value.tail_type().clone()) };
+                LinearizeResult::new_with_binding(value.bindings, WithLocation::new(ty, loc))
+            }
             BasicTypeAst::SubOf { value } => {
                 let value = value.linearize(ctx, errors, value.location());
                 let ty = LinearTypeAst::SubOf { value: Box::new(value.tail_type().clone()) };
@@ -1191,9 +1231,11 @@ pub enum LinearTypeAst {
         min: usize,
         delta: Option<usize>,
     },
+    NaturalNumberSet,
     Char,
     Float,
     Lambda,
+    NaturalNumberLiteral(usize),
     FloatLiteral(f64),
     CharLiteral(char),
     Variable(WithLocation<String>), // None 表示续体
@@ -1241,6 +1283,9 @@ pub enum LinearTypeAst {
         )>,
     },
     Lazy(Box<WithLocation<LinearTypeAst, FlowedMetaData>>),
+    Mutable {
+        value: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
+    },
     SubOf {
         value: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
     },
@@ -1257,9 +1302,11 @@ impl Clone for LinearTypeAst {
             LinearTypeAst::Range { ty, min, delta } => {
                 LinearTypeAst::Range { ty: ty.clone(), min: *min, delta: *delta }
             }
+            LinearTypeAst::NaturalNumberSet => LinearTypeAst::NaturalNumberSet,
             LinearTypeAst::Char => LinearTypeAst::Char,
             LinearTypeAst::Float => LinearTypeAst::Float,
             LinearTypeAst::Lambda => LinearTypeAst::Lambda,
+            LinearTypeAst::NaturalNumberLiteral(n) => LinearTypeAst::NaturalNumberLiteral(*n),
             LinearTypeAst::FloatLiteral(f) => LinearTypeAst::FloatLiteral(*f),
             LinearTypeAst::CharLiteral(c) => LinearTypeAst::CharLiteral(*c),
             LinearTypeAst::Variable(s) => LinearTypeAst::Variable(s.clone()),
@@ -1294,6 +1341,7 @@ impl Clone for LinearTypeAst {
                 constraint: constraint.clone(),
             },
             LinearTypeAst::Lazy(l) => LinearTypeAst::Lazy(l.clone()),
+            LinearTypeAst::Mutable { value } => LinearTypeAst::Mutable { value: value.clone() },
             LinearTypeAst::SubOf { value } => LinearTypeAst::SubOf { value: value.clone() },
             LinearTypeAst::StaticFixPoint { param_name, expr } => {
                 LinearTypeAst::StaticFixPoint { param_name: param_name.clone(), expr: expr.clone() }
@@ -1322,11 +1370,15 @@ impl TypeAst {
                 },
                 loc,
             ),
+            TypeAst::NaturalNumberSet => WithLocation::new(BasicTypeAst::NaturalNumberSet, loc),
             TypeAst::Float => WithLocation::new(BasicTypeAst::Float, loc),
             TypeAst::Char => WithLocation::new(BasicTypeAst::Char, loc),
             TypeAst::Lambda => WithLocation::new(BasicTypeAst::Lambda, loc),
             TypeAst::Wildcard => WithLocation::new(BasicTypeAst::Wildcard, loc),
             TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // discard 只允许丢弃unit
+            TypeAst::NaturalNumberLiteral(v) => {
+                WithLocation::new(BasicTypeAst::NaturalNumberLiteral(*v), loc)
+            }
             TypeAst::FloatLiteral(v) => WithLocation::new(BasicTypeAst::FloatLiteral(*v), loc),
             TypeAst::CharLiteral(v) => WithLocation::new(BasicTypeAst::CharLiteral(*v), loc),
             TypeAst::Variable(name) => WithLocation::new(BasicTypeAst::Variable(name.clone()), loc),
@@ -1742,9 +1794,13 @@ impl TypeAst {
                 ),
             },
             TypeAst::Lazy(inner) => WithLocation::new(
-                BasicTypeAst::Lazy(Box::new(
-                    inner.into_basic(multifile_builder, inner.location()),
-                )),
+                BasicTypeAst::Lazy(Box::new(inner.into_basic(multifile_builder, inner.location()))),
+                loc,
+            ),
+            TypeAst::Mutable { value } => WithLocation::new(
+                BasicTypeAst::Mutable {
+                    value: Box::new(value.into_basic(multifile_builder, value.location())),
+                },
                 loc,
             ),
             TypeAst::Import(import_path) => {
@@ -1789,10 +1845,12 @@ impl TypeAst {
                 errors.push(span.clone());
             }
             TypeAst::Float
+            | TypeAst::NaturalNumberSet
             | TypeAst::Char
             | TypeAst::Lambda
             | TypeAst::Wildcard
             | TypeAst::DiscardPattern
+            | TypeAst::NaturalNumberLiteral(_)
             | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
             | TypeAst::Variable(_)
@@ -1875,6 +1933,9 @@ impl TypeAst {
             TypeAst::Lazy(inner) => {
                 inner.collect_errors(errors);
             }
+            TypeAst::Mutable { value } => {
+                value.collect_errors(errors);
+            }
             TypeAst::Cons { head, tail } => {
                 for (elem, _) in head {
                     elem.collect_errors(errors);
@@ -1901,10 +1962,12 @@ impl TypeAst {
         ast.map(|ast| match ast {
             TypeAst::ParseError(_) => TypeAst::Wildcard,
             TypeAst::Float
+            | TypeAst::NaturalNumberSet
             | TypeAst::Char
             | TypeAst::Lambda
             | TypeAst::Wildcard
             | TypeAst::DiscardPattern
+            | TypeAst::NaturalNumberLiteral(_)
             | TypeAst::FloatLiteral(_)
             | TypeAst::CharLiteral(_)
             | TypeAst::Variable(_)
@@ -2000,6 +2063,9 @@ impl TypeAst {
                 }
             }),
             TypeAst::Lazy(inner) => TypeAst::Lazy(Box::new(Self::sanitize(*inner))),
+            TypeAst::Mutable { value } => {
+                TypeAst::Mutable { value: Box::new(Self::sanitize(*value)) }
+            }
             TypeAst::SubOf { value } => TypeAst::SubOf { value: Box::new(Self::sanitize(*value)) },
             TypeAst::StaticFixPoint { param_name, expr } => {
                 TypeAst::StaticFixPoint { param_name, expr: Box::new(Self::sanitize(*expr)) }
@@ -2100,6 +2166,10 @@ impl LinearTypeAst {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
+            LinearTypeAst::NaturalNumberSet => FlowResult::simple(
+                WithLocation::new(LinearTypeAst::NaturalNumberSet, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            ),
             LinearTypeAst::Float => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Float, loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
@@ -2110,6 +2180,10 @@ impl LinearTypeAst {
             ),
             LinearTypeAst::Lambda => FlowResult::simple(
                 WithLocation::new(LinearTypeAst::Lambda, loc)
+                    .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
+            ),
+            LinearTypeAst::NaturalNumberLiteral(v) => FlowResult::simple(
+                WithLocation::new(LinearTypeAst::NaturalNumberLiteral(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
             LinearTypeAst::FloatLiteral(v) => FlowResult::simple(
@@ -2533,6 +2607,17 @@ impl LinearTypeAst {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
+            LinearTypeAst::Mutable { value } => {
+                let value_res = value.flow(ctx, value.location(), errors);
+                FlowResult::complex(
+                    WithLocation::new(
+                        LinearTypeAst::Mutable { value: Box::new(value_res.ty) },
+                        loc,
+                    ),
+                    value_res.captures,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
             LinearTypeAst::SubOf { value } => {
                 let value_res = value.flow(ctx, value.location(), errors);
                 FlowResult::complex(
@@ -2602,12 +2687,18 @@ impl LinearTypeAst {
                     Sequence::nature_number(*min, ty_result.ty.clone(), loc.cloned().map(Arc::new))
                 }))
             }
+            LinearTypeAst::NaturalNumberSet => {
+                Ok(BuildResult::simple(NaturalNumberSet::new(loc.cloned().map(Arc::new))))
+            }
             LinearTypeAst::Float => Ok(BuildResult::simple(Float::new(loc.cloned().map(Arc::new)))),
             LinearTypeAst::Char => {
                 Ok(BuildResult::simple(Character::new(loc.cloned().map(Arc::new))))
             }
             LinearTypeAst::Lambda => {
                 Ok(BuildResult::simple(Lambda::new(loc.cloned().map(Arc::new))))
+            }
+            LinearTypeAst::NaturalNumberLiteral(v) => {
+                Ok(BuildResult::simple(NaturalNumber::new(*v, loc.cloned().map(Arc::new))))
             }
             LinearTypeAst::FloatLiteral(v) => {
                 Ok(BuildResult::simple(FloatValue::new(*v, loc.cloned().map(Arc::new))))
@@ -2814,7 +2905,8 @@ impl LinearTypeAst {
                     AtomicOpcode::Greater => OpcodeKind::Greater,
                     AtomicOpcode::Neg => OpcodeKind::Neg,
                     AtomicOpcode::Is => OpcodeKind::Is,
-                    AtomicOpcode::Set => OpcodeKind::Set,
+                    AtomicOpcode::Assign => OpcodeKind::Assign,
+                    AtomicOpcode::SetFixPoint => OpcodeKind::SetFixPoint,
                     AtomicOpcode::BuildFixPoint => OpcodeKind::BuildFixPoint,
                     AtomicOpcode::IO(v) => OpcodeKind::IO(v.clone().into()),
                 },
@@ -2851,6 +2943,15 @@ impl LinearTypeAst {
             LinearTypeAst::Lazy(inner) => {
                 let inner_type = inner.to_type(ctx, gc, roots, inner.location())?;
                 Ok(BuildResult::simple(Lazy::new(&inner_type.ty, loc.cloned().map(Arc::new))))
+            }
+            LinearTypeAst::Mutable { value } => {
+                let value_type = value.to_type(ctx, gc, roots, value.location())?;
+                Ok(BuildResult::simple(Mutable::new(
+                    &value_type.ty,
+                    loc.cloned().map(Arc::new),
+                    gc,
+                    roots,
+                )))
             }
             LinearTypeAst::SubOf { value } => {
                 let value_type = value.to_type(ctx, gc, roots, value.location())?;

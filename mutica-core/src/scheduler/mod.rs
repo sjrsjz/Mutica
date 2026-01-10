@@ -11,13 +11,12 @@ use crate::{
         TypeError, TypeRef,
         character_value::CharacterValue,
         invoke::{Invoke, InvokeCountinuationStyle},
+        natural_number::NaturalNumber,
         sequence::Sequence,
         unify::{Environment, EnvironmentVarState},
     },
     util::{
-        allocator::{Id, IdAllocator},
-        cycle_detector::FastCycleDetector,
-        rootstack::RootStack,
+        allocator::IdAllocator, cycle_detector::FastCycleDetector, rootstack::RootStack,
         source_info::SourceLocation,
     },
 };
@@ -63,7 +62,7 @@ pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
     outer_io_handler: Option<AsyncIoHandler<T>>,
     cont_stack: Stack<ContinuationOrHandler<T>>,
     current_type: Option<Type<T>>,
-    allocated_types: IdAllocator<Type<T>>,
+    _allocated_types: IdAllocator<Type<T>>,
     roots: RootStack<Type<T>, T>,
 }
 
@@ -75,7 +74,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             outer_io_handler,
             cont_stack: Stack::new(),
             current_type: Some(initial_type),
-            allocated_types: IdAllocator::new(),
+            _allocated_types: IdAllocator::new(),
             roots,
         }
     }
@@ -150,18 +149,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 // 类型结构描述相关
                 "tuple_len" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
-                        TypeRef::Sequence(v) => Ok(Some(Sequence::nature_number(
-                            v.len(),
-                            Sequence::unit(source_info.cloned()),
-                            source_info.cloned(),
-                        ))),
+                        TypeRef::Sequence(v) => {
+                            Ok(Some(NaturalNumber::new(v.len(), source_info.cloned())))
+                        }
                         _ => Err(TypeError::TypeMismatch(
                             (arg.clone_data(), "Tuple | List".into()).into(),
                         )),
                     })?
-                    .unwrap_or(Err(TypeError::UnresolvableType(
-                        "Could not resolve tuple_len argument".into(),
-                    ))),
+                    .unwrap_or(Err(TypeError::UnresolvableType(arg.clone().dispatch().into()))),
                 "as_tuple" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
                         TypeRef::Sequence(_) => Ok(Some(arg.clone_data())),
@@ -180,170 +175,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             Ok(Some(Sequence::new_tuple(elements, source_info.cloned())))
                         }
                         _ => Err(TypeError::TypeMismatch(
-                            (arg.clone_data(), "Tuple | List | AnyOf | AllOf".into())
-                                .into(),
+                            (arg.clone_data(), "Tuple | List | AnyOf | AllOf".into()).into(),
                         )),
                     })?
-                    .unwrap_or(Err(TypeError::UnresolvableType(
-                        "Could not resolve as_tuple argument".into(),
-                    ))),
-                // 可变状态相关
-                "alloc" => {
-                    let id = self.allocated_types.alloc(arg.clone());
-                    Ok(Some(Sequence::new_tuple(
-                        vec![
-                            Sequence::nature_number(
-                                id.index(),
-                                Sequence::unit(source_info.cloned()),
-                                source_info.cloned(),
-                            ),
-                            Sequence::nature_number(
-                                id.generation(),
-                                Sequence::unit(source_info.cloned()),
-                                source_info.cloned(),
-                            ),
-                        ],
-                        source_info.cloned(),
-                    )))
-                }
-                "dealloc" => arg
-                    .map(&mut FastCycleDetector::new(), |_, arg| {
-                        if let TypeRef::Sequence(tuple) = arg {
-                            if tuple.len() != 2 {
-                                return Err(TypeError::TypeMismatch(
-                                    (arg.clone_data(), "Tuple of length 2".into()).into(),
-                                ));
-                            }
-                            let index_ty = tuple.get_prefix_value(0).unwrap();
-                            let generation_ty = tuple.get_prefix_value(1).unwrap();
-                            if let (Type::Sequence(index_iv), Type::Sequence(gen_iv)) =
-                                (index_ty, generation_ty)
-                            {
-                                let index = index_iv.len();
-                                let generation = gen_iv.len();
-                                self.allocated_types.dealloc(Id::from_parts(index, generation));
-                                Ok(Some(Sequence::unit(source_info.cloned())))
-                            } else {
-                                Err(TypeError::TypeMismatch(
-                                    (arg.clone_data(), "Tuple of two IntegerValues".into()).into(),
-                                ))
-                            }
-                        } else {
-                            Err(TypeError::TypeMismatch((arg.clone_data(), "Tuple".into()).into()))
-                        }
-                    })?
-                    .unwrap_or(Err(TypeError::UnresolvableType(
-                        "Could not resolve dealloc argument".into(),
-                    ))),
-                "get" => arg
-                    .map(&mut FastCycleDetector::new(), |_, arg| {
-                        if let TypeRef::Sequence(tuple) = arg {
-                            if tuple.len() != 2 {
-                                return Err(TypeError::TypeMismatch(
-                                    (arg.clone_data(), "Tuple of length 2".into()).into(),
-                                ));
-                            }
-                            let index_ty = tuple.get_prefix_value(0).unwrap();
-                            let generation_ty = tuple.get_prefix_value(1).unwrap();
-                            if let (Type::Sequence(index_iv), Type::Sequence(gen_iv)) =
-                                (index_ty, generation_ty)
-                            {
-                                let index = index_iv.len();
-                                let generation = gen_iv.len();
-                                let id = Id::from_parts(index, generation);
-                                match self.allocated_types.get(id) {
-                                    Some(v) => Ok(Some(v.clone())),
-                                    None => {
-                                        Err(TypeError::RuntimeError(Arc::new(std::io::Error::new(
-                                            std::io::ErrorKind::NotFound,
-                                            format!("No value found for allocated id {:?}", id),
-                                        ))))
-                                    }
-                                }
-                            } else {
-                                Err(TypeError::TypeMismatch(
-                                    (arg.clone_data(), "Tuple of two IntegerValues".into()).into(),
-                                ))
-                            }
-                        } else {
-                            Err(TypeError::TypeMismatch((arg.clone_data(), "Tuple".into()).into()))
-                        }
-                    })?
-                    .unwrap_or(Err(TypeError::UnresolvableType(
-                        "Could not resolve get argument".into(),
-                    ))),
-                "set" => arg
-                    .map(&mut FastCycleDetector::new(), |_, arg| {
-                        if let TypeRef::Sequence(tuple) = arg {
-                            if tuple.len() != 2 {
-                                return Err(TypeError::TypeMismatch(
-                                    (arg.clone_data(), "Tuple of length 2".into()).into(),
-                                ));
-                            }
-                            let id_ty = tuple.get_prefix_value(0).unwrap();
-                            let value_ty = tuple.get_prefix_value(1).unwrap();
-                            id_ty
-                                .map(&mut FastCycleDetector::new(), |_, id_ty| {
-                                    if let TypeRef::Sequence(id_tup) = id_ty {
-                                        if id_tup.len() != 2 {
-                                            return Err(TypeError::TypeMismatch(
-                                                (id_ty.clone_data(), "Tuple of length 2".into())
-                                                    .into(),
-                                            ));
-                                        }
-                                        let index_ty = id_tup.get_prefix_value(0).unwrap();
-                                        let generation_ty = id_tup.get_prefix_value(1).unwrap();
-                                        if let (Type::Sequence(index_iv), Type::Sequence(gen_iv)) =
-                                            (index_ty, generation_ty)
-                                        {
-                                            let index = index_iv.len();
-                                            let generation = gen_iv.len();
-                                            let id = Id::from_parts(index, generation);
-                                            match self.allocated_types.get_mut(id) {
-                                                Some(v) => {
-                                                    *v = value_ty.clone();
-                                                    Ok(Some(Sequence::unit(source_info.cloned())))
-                                                }
-                                                None => Err(TypeError::RuntimeError(Arc::new(
-                                                    std::io::Error::new(
-                                                        std::io::ErrorKind::NotFound,
-                                                        format!(
-                                                            "No value found for allocated id {:?}",
-                                                            id
-                                                        ),
-                                                    ),
-                                                ))),
-                                            }
-                                        } else {
-                                            Err(TypeError::TypeMismatch(
-                                                (
-                                                    id_ty.clone_data(),
-                                                    "Tuple of two IntegerValues".into(),
-                                                )
-                                                    .into(),
-                                            ))
-                                        }
-                                    } else {
-                                        Err(TypeError::TypeMismatch(
-                                            (id_ty.clone_data(), "Tuple".into()).into(),
-                                        ))
-                                    }
-                                })?
-                                .unwrap_or(Err(TypeError::UnresolvableType(
-                                    "Could not resolve id in set argument".into(),
-                                )))
-                        } else {
-                            Err(TypeError::TypeMismatch((arg.clone_data(), "Tuple".into()).into()))
-                        }
-                    })?
-                    .unwrap_or(Err(TypeError::UnresolvableType(
-                        "Could not resolve set argument".into(),
-                    ))),
+                    .unwrap_or(Err(TypeError::UnresolvableType(arg.clone().dispatch().into()))),
 
                 _ => Ok(None),
             }
         })?
-        .unwrap_or(Err(TypeError::UnresolvableType("Could not resolve set argument".into())))
+        .unwrap_or(Err(TypeError::UnresolvableType(f.clone().dispatch().into())))
     }
 
     pub async fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
@@ -580,7 +420,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         if let Some(current) = &self.current_type {
             self.roots.attach(current);
         }
-        for ty in self.allocated_types.iter().flatten() {
+        for ty in self._allocated_types.iter().flatten() {
             self.roots.attach(ty);
         }
     }
@@ -593,8 +433,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         self.current_type.as_ref().expect("Current type is None")
     }
 
+    #[deprecated]
     pub fn allocated_types(&self) -> &IdAllocator<Type<T>> {
-        &self.allocated_types
+        &self._allocated_types
     }
 
     pub fn roots(&self) -> &RootStack<Type<T>, T> {

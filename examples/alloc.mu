@@ -7,28 +7,23 @@ let constraint {
 let constraint get: lambda = match | panic;
 let constraint set: lambda = match | panic;
 
-let constraint Pointer: any = (nat, nat);
-
 extend get: constraint ClassA::(self: any) => constraint () => {
-    let constraint data::(v: Pointer) = self;
-    get!(v)
+    let constraint data::(mut v: any) = self;
+    v
 };
 
 extend set: constraint ClassA::(self: any) => constraint value: String => {
-    set!((let constraint data::(v: Pointer) = self; v), value)
+    let constraint data::(v: any) = self;
+    discard v := value;
 };
 
 
 let constraint classA: any = constraint v: String => constraint f: any => {
     let constraint obj: any = ClassA::{
-        data::(alloc! v)
+        data::(mut v)
     };
     let constraint result: any = f(obj);
-    discard dealloc!(
-        let constraint ClassA::data::(v: Pointer) = obj;
-        v
-    );
-    result    
+    result
 };
 
 classA "Hello, world!" {

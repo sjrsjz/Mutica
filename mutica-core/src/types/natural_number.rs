@@ -14,13 +14,12 @@ use crate::{
     },
 };
 
-pub struct CharacterValue<T: GcAllocObject<T, Inner = Type<T>>> {
-    value: char,
+pub struct NaturalNumber<T: GcAllocObject<T, Inner = Type<T>>> {
+    value: usize,
     source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<T>,
 }
-
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for NaturalNumber<T> {
     fn clone(&self) -> Self {
         Self {
             value: self.value,
@@ -30,27 +29,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for CharacterValue<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for NaturalNumber<T> {
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for NaturalNumber<T> {}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for NaturalNumber<T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
         Self: 'a;
     fn as_ref_dispatcher(&self) -> Self::RefDispatcher<'_> {
-        TypeRef::<T>::CharValue(self)
+        TypeRef::<T>::NaturalNumber(self)
     }
 
     fn into_dispatcher(self) -> Type<T> {
-        Type::<T>::CharValue(self)
+        Type::<T>::NaturalNumber(self)
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for CharacterValue<T> {}
-
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for NaturalNumber<T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -73,7 +72,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Char(_) => Ok(ThreeValuedLogic::True),
+                TypeRef::NaturalNumberSet(_) => Ok(ThreeValuedLogic::True),
+                TypeRef::NaturalNumber(v) => Ok((self.value == v.value).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -99,8 +99,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                // 由于CharacterValue和Character是不同的类型类，它们没有子类型关系，因此这里不进行特判，直接返回False
-                TypeRef::CharValue(v) => Ok((self.value == v.value).into()),
+                TypeRef::NaturalNumber(v) => Ok((self.value == v.value).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -126,15 +125,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                .with_message(format!("Character value {:?} at {}", self.value, filepath))
+                .with_message(format!("NaturalNumber value {} at {}", self.value, filepath))
                 .with_label(
                     ariadne::Label::new((filepath, span))
-                        .with_message(format!("Character value {:?} defined here", self.value)),
+                        .with_message(format!("NaturalNumber value {} defined here", self.value)),
                 )
                 .finish()
         } else {
             ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                .with_message(format!("Character value {:?} has no source location", self.value))
+                .with_message(format!("NaturalNumber value {} has no source location", self.value))
                 .with_label(
                     ariadne::Label::new(("<unknown>".to_string(), 0..0))
                         .with_message("Location unknown"),
@@ -144,17 +143,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for NaturalNumber<T> {
     fn represent(
-        &self,
-        _path: &mut FastCycleDetector<TaggedPtr<()>>,
-        _depth: usize,
-        _max_depth: usize,
-    ) -> String {
-        format!("{:?}", self.value)
-    }
-
-    fn display(
         &self,
         _path: &mut FastCycleDetector<TaggedPtr<()>>,
         _depth: usize,
@@ -164,13 +154,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for CharacterValue<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> NaturalNumber<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(value: char, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        CharacterValue { value, source_info, _phantom: std::marker::PhantomData }.dispatch()
+    pub fn new(value: usize, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        NaturalNumber { value, source_info, _phantom: std::marker::PhantomData }.dispatch()
     }
 
-    pub fn value(&self) -> char {
+    pub fn value(&self) -> usize {
         self.value
     }
 }

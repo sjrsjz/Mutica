@@ -10,7 +10,8 @@ use crate::{
         TypeRef,
     },
     util::{
-        arc_opt::ArcOpt, collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
+        arc_opt::ArcOpt, collector::CollectorExt, cycle_detector::FastCycleDetector,
+        source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
     },
 };
 

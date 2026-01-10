@@ -8,7 +8,9 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, allof::AllOf, unify::{EnvironmentStack, EnvironmentView},
+        TypeRef,
+        allof::AllOf,
+        unify::{EnvironmentStack, EnvironmentView},
     },
     util::{
         collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,

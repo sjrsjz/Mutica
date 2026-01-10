@@ -14,7 +14,8 @@ use crate::{
         TypeRef,
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic
+        collector::CollectorExt, cycle_detector::FastCycleDetector, rootstack::RootStack,
+        source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -77,8 +78,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     {
         self.reference
             .upgrade()
-            .ok_or(TypeError::UnresolvableType("Reference is dead".into()))
-            .map(|inner: GCArc<T>| inner.as_ref().map_value(path, f))
+            .ok_or(TypeError::UnresolvableType(self.clone().dispatch().into()))
+            .map(|inner: GCArc<T>| inner.as_ref().map_fixpoint_value(path, f))
     }
 
     pub fn take<F, R>(
@@ -91,8 +92,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     {
         self.reference
             .upgrade()
-            .ok_or(TypeError::UnresolvableType("Reference is dead".into()))
-            .map(|inner: GCArc<T>| inner.as_ref().take_value(path, f))
+            .ok_or(TypeError::UnresolvableType(self.clone().dispatch().into()))
+            .map(|inner: GCArc<T>| {
+                inner.as_ref().get_fixpoint_value().map(|inner| f(path, inner.clone()))
+            })
     }
 }
 
@@ -113,7 +116,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         roots: &mut RootStack<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
-        let pointer = gc.create(T::new_placeholder());
+        let pointer = gc.create(T::new_fixpoint_placeholder());
         let fix_point = FixPoint { reference: pointer.as_weak(), source_info };
         roots.push(pointer);
         Type::FixPoint(fix_point)
@@ -130,9 +133,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     pub fn set<V: AsDispatcher<Type<T>, T>>(&self, t: V) -> Result<(), TypeError<Type<T>, T>> {
         if let Some(inner) = self.reference.upgrade() {
             let t = t.into_dispatcher();
-            inner.as_ref().set_value(t).map(|_| ())
+            inner.as_ref().set_fixpoint_value(t).map(|_| ())
         } else {
-            Err(TypeError::UnresolvableType("Reference is dead".into()))
+            Err(TypeError::UnresolvableType(self.clone().dispatch().into()))
         }
     }
 
@@ -185,7 +188,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
 
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
-                        let inner = match inner.as_ref().get_value() {
+                        let inner = match inner.as_ref().get_fixpoint_value() {
                             Some(t) => t,
                             None => return Ok(ThreeValuedLogic::Unknown), // 未初始化
                         };
@@ -204,7 +207,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         inner_ctx.assumptions.pop();
                         result
                     }
-                    None => Err(TypeError::UnresolvableType("Reference is dead".into())),
+                    None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
                 },
             }
         })
@@ -237,7 +240,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
 
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
-                        let inner = match inner.as_ref().get_value() {
+                        let inner = match inner.as_ref().get_fixpoint_value() {
                             Some(t) => t,
                             None => return Ok(ThreeValuedLogic::Unknown), // 未初始化（实际上这个可能需要更精细的处理）
                         };
@@ -256,7 +259,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         inner_ctx.assumptions.pop();
                         result
                     }
-                    None => Err(TypeError::UnresolvableType("Reference is dead".into())),
+                    None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
                 },
             }
         })
@@ -268,7 +271,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
             Some(inner) => {
-                let inner_type = match inner.as_ref().get_value() {
+                let inner_type = match inner.as_ref().get_fixpoint_value() {
                     Some(t) => t,
                     None => return Ok(self.dispatch()), // 未初始化
                 };
@@ -293,7 +296,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     result
                 }
             }
-            None => Err(TypeError::UnresolvableType("Reference is dead".into())),
+            None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
         }
     }
 
@@ -301,10 +304,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         match self.reference.upgrade() {
             Some(inner) => inner
                 .as_ref()
-                .get_value()
-                .ok_or(TypeError::UnresolvableType("Reference is dead".into()))
+                .get_fixpoint_value()
+                .ok_or(TypeError::UnresolvableType(self.clone().dispatch().into()))
                 .and_then(|t| t.clone().invoke(ctx)),
-            None => Err(TypeError::UnresolvableType("Reference is dead".into())),
+            None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
         }
     }
 
@@ -351,13 +354,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             );
             match self.reference.upgrade() {
                 Some(inner) => other.check(
-                    match inner.as_ref().get_value() {
+                    match inner.as_ref().get_fixpoint_value() {
                         Some(t) => t.as_ref_dispatcher(),
                         None => return Ok(ThreeValuedLogic::Unknown), // 未初始化
                     },
                     &mut inner_ctx,
                 ),
-                None => Err(TypeError::UnresolvableType("Reference is dead".into())),
+                None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
             }
         })
     }
@@ -378,13 +381,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             );
             match self.reference.upgrade() {
                 Some(inner) => other.subof(
-                    match inner.as_ref().get_value() {
+                    match inner.as_ref().get_fixpoint_value() {
                         Some(t) => t.as_ref_dispatcher(),
                         None => return Ok(ThreeValuedLogic::Unknown), // 未初始化
                     },
                     &mut inner_ctx,
                 ),
-                None => Err(TypeError::UnresolvableType("Reference is dead".into())),
+                None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
             }
         })
     }
@@ -409,16 +412,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<T> {
             return "...".to_string();
         }
         match self.reference.upgrade() {
-            Some(inner) => match inner.as_ref().get_value() {
+            Some(inner) => match inner.as_ref().get_fixpoint_value() {
                 Some(t) => match path
                     .with_guard(t.tagged_ptr(), |path| t.represent(path, depth, max_depth))
                 {
                     Some(s) => format!("μ.{:?} {}", t as *const _ as *const (), s),
                     None => format!("{:?}", t as *const _ as *const ()),
                 },
-                None => "!UninitializedFixPoint".to_string(), // 未初始化
+                None => "FixPoint<!EmptySlot>".to_string(), // 未初始化
             },
-            None => "!InvalidFixPoint".to_string(), // reference is dead
+            None => "FixPoint<!DanglingPointer>".to_string(), // reference is dead
         }
     }
 }

@@ -60,6 +60,7 @@ extern {
         "As"            => LexerToken::As,
         "Constraint"    => LexerToken::Constraint,
         "Lazy"          => LexerToken::Lazy,
+        "Mutable"       => LexerToken::Mutable,
 
         "Arrow"         => LexerToken::Arrow,
         "FatArrow"      => LexerToken::FatArrow,
@@ -88,6 +89,7 @@ extern {
         "Slash"         => LexerToken::Slash,
         "Percent"       => LexerToken::Percent,
         "Assign"        => LexerToken::Assign,
+        "ColonAssign"   => LexerToken::ColonAssign,
         "Semicolon"     => LexerToken::Semicolon,
         "Hash"          => LexerToken::Hash,
         "Backslash"     => LexerToken::Backslash,
@@ -187,6 +189,7 @@ ExtendTok: () = <l:@L> "Extend" <r:@R> => TokenColor::fill_colors(colors, l..r, 
 AsTok: () = <l:@L> "As" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 ConstraintTok: () = <l:@L> "Constraint" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 LazyTok: () = <l:@L> "Lazy" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+MutableTok: () = <l:@L> "Mutable" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 
 // Individual operator tokens with centralized coloring
 DotTok: () = <l:@L> "Dot" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
@@ -212,6 +215,7 @@ StarTok: () = <l:@L> "Star" <r:@R> => TokenColor::fill_colors(colors, l..r, Toke
 SlashTok: () = <l:@L> "Slash" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
 PercentTok: () = <l:@L> "Percent" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
 AssignTok: () = <l:@L> "Assign" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
+ColonAssignTok: () = <l:@L> "ColonAssign" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
 PipeGreaterThanTok: () = <l:@L> "PipeGreaterThan" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
 ArrowTok: () = <l:@L> "Arrow" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
 FatArrowTok: () = <l:@L> "FatArrow" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
@@ -235,10 +239,7 @@ SemicolonTok: () = <l:@L> "Semicolon" <r:@R> => TokenColor::fill_colors(colors, 
 
 
 AtomType: WithLocation<TypeAst> = {
-   <l:@L> NatTok <r:@R> => with_loc(TypeAst::List {
-        head: vec![],
-        tail: Box::new(with_loc(TypeAst::Tuple(vec![]), source, l..r)),
-    }, source, l..r),
+    <l:@L> NatTok <r:@R> => with_loc(TypeAst::NaturalNumberSet, source, l..r),
     <l:@L> FloatTok <r:@R> => with_loc(TypeAst::Float, source, l..r),
     <l:@L> CharTok <r:@R> => with_loc(TypeAst::Char, source, l..r),
     <l:@L> LambdaTok <r:@R> => with_loc(TypeAst::Lambda, source, l..r),
@@ -249,14 +250,7 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> UnknownTok <r:@R> => with_loc(TypeAst::AllOf(vec![]), source, l..r),
     <l:@L> WildcardTok <r:@R> => with_loc(TypeAst::Wildcard, source, l..r),
     <l:@L> <f: Float> <r:@R> => with_loc(TypeAst::FloatLiteral(f), source, l..r),
-    <l:@L> <n: Num> <r:@R> => {
-        if n == 0 {
-            with_loc(TypeAst::Tuple(vec![]), source, l..r)
-        } else {
-            let unit = with_loc(TypeAst::Tuple(vec![]), source, l..r);
-            with_loc(TypeAst::Tuple(vec![(unit, NonZero::new(n).unwrap())]), source, l..r)
-        }
-    },
+    <l:@L> <n: Num> <r:@R> => with_loc(TypeAst::NaturalNumberLiteral(n), source, l..r),
     <l:@L> <id: Ident> <r:@R> => with_loc(TypeAst::Variable(with_loc(id, source, l..r)), source, l..r),
     <l:@L> <c: CharLiteral> <r:@R> => with_loc(TypeAst::CharLiteral(c), source, l..r),
     <l:@L> <s: StringLiteral> <r:@R> => {
@@ -276,8 +270,9 @@ AtomType: WithLocation<TypeAst> = {
             "__is" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Is),
             "__opcode" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Opcode),
             "__neg" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Neg),
+            "__assign" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Assign),
             "__build_fixpoint" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::BuildFixPoint),
-            "__set" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Set),
+            "__set_fixpoint" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::SetFixPoint),
             _ => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)),
         };
         with_loc(op, source, l..r)
@@ -621,6 +616,11 @@ Factor: WithLocation<TypeAst> = {
             auto_cps: true,
         }, source, l..r)
     },
+    <l:@L> MutableTok <t: Factor> <r:@R> => {
+        with_loc(TypeAst::Mutable {
+            value: Box::new(t),
+        }, source, l..r)
+    },
     <bind: AutoBind> => bind,
     <c: CpsApply> => c,
     <a: Apply> => a,
@@ -680,7 +680,18 @@ Ands<T>: Vec<T> = {
 AndsSep: () = <l:@L> AmpersandTok+ <r:@R> => ();
 
 
-Calculate: WithLocation<TypeAst> = { Or };
+Calculate: WithLocation<TypeAst> = { AssignValue };
+
+AssignValue: WithLocation<TypeAst> = {
+    <l:@L> <left: Or> <op_l:@L> ColonAssignTok <op_r:@R> <right: And> <r:@R> => {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#assign".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
+            auto_cps: true,
+        }, source, l..r)
+    },
+    <t: Or> => t,
+}
 
 Or: WithLocation<TypeAst> = {
     <l:@L> <left: Or> <op_l:@L> DoublePipeTok <op_r:@R> <right: And> <r:@R> => {

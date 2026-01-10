@@ -12,7 +12,10 @@ pub mod float_value;
 pub mod invoke;
 pub mod lambda;
 pub mod lazy;
+pub mod mutable;
 pub mod namespace;
+pub mod natural_number;
+pub mod natural_number_set;
 pub mod opcode;
 pub mod pattern;
 pub mod sequence;
@@ -41,6 +44,9 @@ macro_rules! type_dispatch {
             Type::Lazy(v) => v.$method($($args),*),
             Type::SubOf(v) => v.$method($($args),*),
             Type::Lambda(v) => v.$method($($args),*),
+            Type::Mutable(v) => v.$method($($args),*),
+            Type::NaturalNumber(v) => v.$method($($args),*),
+            Type::NaturalNumberSet (v) => v.$method($($args),*),
         }
     };
 }
@@ -66,6 +72,9 @@ macro_rules! typeref_dispatch {
             TypeRef::Lazy(v) => v.$method($($args),*),
             TypeRef::SubOf(v) => v.$method($($args),*),
             TypeRef::Lambda(v) => v.$method($($args),*),
+            TypeRef::Mutable(v) => v.$method($($args),*),
+            TypeRef::NaturalNumber(v) => v.$method($($args),*),
+            TypeRef::NaturalNumberSet (v) => v.$method($($args),*),
         }
     };
 }
@@ -94,7 +103,10 @@ use crate::{
         invoke::Invoke,
         lambda::Lambda,
         lazy::Lazy,
+        mutable::Mutable,
         namespace::Namespace,
+        natural_number::NaturalNumber,
+        natural_number_set::NaturalNumberSet,
         opcode::Opcode,
         pattern::Pattern,
         sequence::Sequence,
@@ -134,6 +146,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Lazy(v) => Type::Lazy(v.clone()),
             Type::SubOf(v) => Type::SubOf(v.clone()),
             Type::Lambda(v) => Type::Lambda(v.clone()),
+            Type::Mutable(v) => Type::Mutable(v.clone()),
+            Type::NaturalNumber(v) => Type::NaturalNumber(v.clone()),
+            Type::NaturalNumberSet(v) => Type::NaturalNumberSet(v.clone()),
         }
     }
 }
@@ -175,6 +190,12 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     SubOf(SubOf<T>),
     // 函数类型（仅仅只是粗略的表示）
     Lambda(Lambda<T>),
+    // 可变类型
+    Mutable(Mutable<T>),
+    // 自然数类型
+    NaturalNumber(NaturalNumber<T>),
+    // 自然数集合类型
+    NaturalNumberSet(NaturalNumberSet<T>),
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
@@ -196,6 +217,9 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Lazy(&'a Lazy<T>),
     SubOf(&'a SubOf<T>),
     Lambda(&'a Lambda<T>),
+    Mutable(&'a Mutable<T>),
+    NaturalNumber(&'a NaturalNumber<T>),
+    NaturalNumberSet(&'a NaturalNumberSet<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
@@ -277,6 +301,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Lazy(v) => Type::Lazy(v.clone()),
             TypeRef::SubOf(v) => Type::SubOf(v.clone()),
             TypeRef::Lambda(v) => Type::Lambda(v.clone()),
+            TypeRef::Mutable(v) => Type::Mutable(v.clone()),
+            TypeRef::NaturalNumber(v) => Type::NaturalNumber(v.clone()),
+            TypeRef::NaturalNumberSet(v) => Type::NaturalNumberSet(v.clone()),
         }
     }
 }
@@ -331,7 +358,7 @@ impl TypeErrorReport {
 
 #[derive(Clone, Error)]
 pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    UnresolvableType(Box<str>),
+    UnresolvableType(Box<U>),
     InfiniteRecursion,
     RedeclaredType,
     NonApplicableType(Box<U>),
@@ -355,8 +382,8 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
 impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display for TypeError<U, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeError::UnresolvableType(msg) => {
-                write!(f, "Unresolvable type: {}", msg)
+            TypeError::UnresolvableType(ty) => {
+                write!(f, "Unresolvable type: {:?}", ty)
             }
             TypeError::InfiniteRecursion => write!(f, "Infinite recursion"),
             TypeError::RedeclaredType => write!(f, "Type redeclared"),
@@ -713,16 +740,33 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .finish()
                 }
             }
-            // For errors without type information, create a generic report
-            TypeError::UnresolvableType(msg) => {
-                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                    .with_message(format!("Unresolvable type: {}", msg))
-                    .with_label(
-                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
-                            .with_message(msg.as_ref()),
-                    )
-                    .finish()
+            TypeError::UnresolvableType(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
+                if let Some(loc) = ty.source_info() {
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
+                    let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message(format!("Unresolvable type: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("Type could not be resolved here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message(format!("Unresolvable type: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Type unresolvable"),
+                        )
+                        .finish()
+                }
             }
+            // For errors without type information, create a generic report
             TypeError::InfiniteRecursion => {
                 ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
                     .with_message("Infinite recursion detected")
@@ -824,31 +868,85 @@ pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
     type Inner: CoinductiveType<Self::Inner, T>
     where
         T: GcAllocObject<T>;
-    fn new_placeholder() -> Self;
-
-    fn get_value(&self) -> Option<&Self::Inner>
+    fn new_fixpoint_placeholder() -> Self;
+    fn new_mutable_slot(value: Self::Inner) -> Self
+    where
+        T: GcAllocObject<T>;
+    fn is_mutable_slot(&self) -> bool
     where
         T: GcAllocObject<T>;
 
-    fn set_value(&self, _value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
+    fn get_fixpoint_value(&self) -> Option<&Self::Inner>
+    where
+        T: GcAllocObject<T>;
+    fn get_mutable_value(&self) -> Option<Self::Inner>
     where
         T: GcAllocObject<T>;
 
-    fn map_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
+    // fn get_value(&self) -> Option<&Self::Inner>
+    // where
+    //     T: GcAllocObject<T>,
+    // {
+    //     if self.is_mutable_slot() { self.get_mutable_value() } else { self.get_fixpoint_value() }
+    // }
+
+    fn set_fixpoint_value(&self, value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
+    where
+        T: GcAllocObject<T>;
+
+    fn set_mutable_value(&self, value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
+    where
+        T: GcAllocObject<T>;
+
+    // fn set_value(&self, value: Self::Inner) -> Result<(), TypeError<Self::Inner, T>>
+    // where
+    //     T: GcAllocObject<T>,
+    // {
+    //     if self.is_mutable_slot() {
+    //         self.set_mutable_value(value)
+    //     } else {
+    //         self.set_fixpoint_value(value)
+    //     }
+    // }
+
+    fn map_fixpoint_value<F, R>(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        f: F,
+    ) -> Option<R>
     where
         F: FnOnce(
             &mut FastCycleDetector<TaggedPtr<()>>,
             <Self::Inner as AsDispatcher<Self::Inner, T>>::RefDispatcher<'_>,
         ) -> R,
-        T: GcAllocObject<T>,
-    {
-        self.get_value().map(|inner| f(path, inner.as_ref_dispatcher()))
-    }
-
-    fn take_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut FastCycleDetector<TaggedPtr<()>>, Self::Inner) -> R,
         T: GcAllocObject<T>;
+
+    fn map_mutable_value<F, R>(
+        &self,
+        path: &mut FastCycleDetector<TaggedPtr<()>>,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(
+            &mut FastCycleDetector<TaggedPtr<()>>,
+            <Self::Inner as AsDispatcher<Self::Inner, T>>::RefDispatcher<'_>,
+        ) -> R,
+        T: GcAllocObject<T>;
+
+    // fn map_value<F, R>(&self, path: &mut FastCycleDetector<TaggedPtr<()>>, f: F) -> Option<R>
+    // where
+    //     F: FnOnce(
+    //         &mut FastCycleDetector<TaggedPtr<()>>,
+    //         <Self::Inner as AsDispatcher<Self::Inner, T>>::RefDispatcher<'_>,
+    //     ) -> R,
+    //     T: GcAllocObject<T>,
+    // {
+    //     if self.is_mutable_slot() {
+    //         self.map_mutable_value(path, f)
+    //     } else {
+    //         self.map_fixpoint_value(path, f)
+    //     }
+    // }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Type<T> {
@@ -1008,6 +1106,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
             Type::Lambda(v) => TypeRef::Lambda(v),
+            Type::Mutable(v) => TypeRef::Mutable(v),
+            Type::NaturalNumber(v) => TypeRef::NaturalNumber(v),
+            Type::NaturalNumberSet(v) => TypeRef::NaturalNumberSet(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -1043,6 +1144,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
             Type::Lambda(v) => TypeRef::Lambda(v),
+            Type::Mutable(v) => TypeRef::Mutable(v),
+            Type::NaturalNumber(v) => TypeRef::NaturalNumber(v),
+            Type::NaturalNumberSet(v) => TypeRef::NaturalNumberSet(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
