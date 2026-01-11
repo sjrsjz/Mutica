@@ -246,15 +246,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new_context(bind_name: Arc<str>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Variable::ContextVariable { bind_name, source_info, _phantom: std::marker::PhantomData }
-            .dispatch()
+    pub fn new_context(
+        bind_name: impl Into<Arc<str>>,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
+        Variable::ContextVariable {
+            bind_name: bind_name.into(),
+            source_info,
+            _phantom: std::marker::PhantomData,
+        }
+        .dispatch()
     }
 
     #[allow(clippy::new_ret_no_self)]
-    pub fn new_pattern(bind_name: Arc<str>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Variable::PatternVariable { bind_name, source_info, _phantom: std::marker::PhantomData }
-            .dispatch()
+    pub fn new_pattern(
+        bind_name: impl Into<Arc<str>>,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
+        Variable::PatternVariable {
+            bind_name: bind_name.into(),
+            source_info,
+            _phantom: std::marker::PhantomData,
+        }
+        .dispatch()
     }
 
     pub fn bind_name(&self) -> &Arc<str> {

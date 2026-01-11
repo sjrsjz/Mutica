@@ -61,6 +61,7 @@ extern {
         "Constraint"    => LexerToken::Constraint,
         "Lazy"          => LexerToken::Lazy,
         "Mutable"       => LexerToken::Mutable,
+        "Delay"         => LexerToken::Delay,
 
         "Arrow"         => LexerToken::Arrow,
         "FatArrow"      => LexerToken::FatArrow,
@@ -190,6 +191,7 @@ AsTok: () = <l:@L> "As" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenCol
 ConstraintTok: () = <l:@L> "Constraint" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 LazyTok: () = <l:@L> "Lazy" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 MutableTok: () = <l:@L> "Mutable" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+DelayTok: () = <l:@L> "Delay" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 
 // Individual operator tokens with centralized coloring
 DotTok: () = <l:@L> "Dot" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Operator);
@@ -298,6 +300,27 @@ Term: WithLocation<TypeAst> = {
     <sub: SubOf> => sub,
     <np: Namespace> => np,
     <a: AtomType> => a,
+    <d: Delay> => d,
+}
+
+
+Delay: WithLocation<TypeAst> = {
+    <l:@L> DelayTok <t: Term> <r:@R> => {
+        // delay T  ==  assert () => T
+        with_loc(TypeAst::Match {
+            branches: vec![(
+                GenericPattern::Standard {
+                    vars: vec![],
+                    pattern: with_no_loc(TypeAst::Tuple(vec![])),
+                    constraint: (
+                        with_no_loc(TypeAst::Tuple(vec![])),
+                        with_no_loc(TypeAst::Tuple(vec![]))
+                    ),
+                },
+                t,
+            )],
+        }, source, l..r)
+    },
 }
 
 Namespace: WithLocation<TypeAst> = {

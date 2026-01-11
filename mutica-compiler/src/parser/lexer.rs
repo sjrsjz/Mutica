@@ -235,6 +235,8 @@ pub enum LexerToken {
     Lazy,
     #[token("mut")]
     Mutable,
+    #[token("delay")]
+    Delay,
 
     #[token("->")]
     Arrow,

@@ -373,8 +373,6 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     RuntimeError(Arc<dyn Error + Send + Sync>),
     OtherError(Box<str>),
     Perform(Box<U>),
-    Break(Box<U>),
-    Resume(Box<U>),
     #[doc(hidden)]
     Pandom(std::marker::PhantomData<V>),
 }
@@ -416,8 +414,6 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             }
             TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
             TypeError::Perform(ty) => write!(f, "Perform raised: {:?}", ty),
-            TypeError::Break(ty) => write!(f, "Break raised: {:?}", ty),
-            TypeError::Resume(ty) => write!(f, "Resume raised: {:?}", ty),
             TypeError::OtherError(msg) => write!(f, "Other error: {}", msg),
             TypeError::Pandom(_) => write!(f, "Pandom error (hidden)"),
         }
@@ -685,57 +681,6 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Effect raised"),
-                        )
-                        .finish()
-                }
-            }
-            TypeError::Break(ty) => {
-                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
-                if let Some(loc) = ty.source_info() {
-                    let span =
-                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
-                    let filepath = loc.source().filepath().to_string();
-                    let content = loc.source().content().to_string();
-                    sources.push((filepath.clone(), content));
-
-                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message(format!("Break raised: {}", ty_repr))
-                        .with_label(
-                            ariadne::Label::new((filepath, span)).with_message("Break raised here"),
-                        )
-                        .finish()
-                } else {
-                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message(format!("Break raised: {}", ty_repr))
-                        .with_label(
-                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
-                                .with_message("Break raised"),
-                        )
-                        .finish()
-                }
-            }
-            TypeError::Resume(ty) => {
-                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
-                if let Some(loc) = ty.source_info() {
-                    let span =
-                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
-                    let filepath = loc.source().filepath().to_string();
-                    let content = loc.source().content().to_string();
-                    sources.push((filepath.clone(), content));
-
-                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
-                        .with_message(format!("Resume raised: {}", ty_repr))
-                        .with_label(
-                            ariadne::Label::new((filepath, span))
-                                .with_message("Resume raised here"),
-                        )
-                        .finish()
-                } else {
-                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                        .with_message(format!("Resume raised: {}", ty_repr))
-                        .with_label(
-                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
-                                .with_message("Resume raised"),
                         )
                         .finish()
                 }

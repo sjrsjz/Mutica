@@ -5,6 +5,24 @@ let constraint {
 
 let constraint deref: lambda = constraint mut T: any => T;
 
+discard println("Simple `while` loop example:");
+discard {
+    let constraint while: lambda = constraint condition: lambda => constraint body: lambda => {
+        loop go: assert () = ();
+        if condition() then {
+            discard body();
+            go()
+        } else ()
+    };
+
+    let constraint i: any = mut 0;
+    discard while delay (deref i < 10) delay {
+        discard println!(deref i);
+        i := deref i + 1
+    };
+    discard println("Final i: " + nat_to_string(deref i));
+};
+
 discard println("Mutable variable example:");
 discard {
 
@@ -32,24 +50,4 @@ discard {
 
     };
     discard println!(deref counter);
-};
-
-discard println("Simple `while` loop example:");
-discard {
-    let constraint while: lambda = constraint condition: lambda => constraint body: lambda => {
-        loop go: assert () = ();
-        if condition() then {
-            discard body();
-            go()
-        } else ()
-    };
-
-    let constraint i: any = mut 0;
-    discard while(constraint () => deref i < 10)(
-        constraint () => {
-            discard println!(deref i);
-            i := deref i + 1
-        }
-    );
-    discard println("Final i: " + nat_to_string(deref i));
 };

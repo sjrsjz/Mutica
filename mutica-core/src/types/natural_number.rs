@@ -99,6 +99,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
                 TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
+                TypeRef::NaturalNumberSet(_) => Ok(ThreeValuedLogic::True), // ((), (), ...) <: List<()>
                 TypeRef::NaturalNumber(v) => Ok((self.value == v.value).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }

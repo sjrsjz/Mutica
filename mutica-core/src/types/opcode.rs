@@ -6,16 +6,8 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
         ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
-        closure::Closure,
-        constraint::Constraint,
-        fixpoint::FixPoint,
-        float_value::FloatValue,
-        invoke::Invoke,
-        natural_number::NaturalNumber,
-        pattern::Pattern,
-        sequence::Sequence,
-        unify::{EnvironmentStack, EnvironmentVarState},
+        TypeRef, closure::Closure, fixpoint::FixPoint, float_value::FloatValue, invoke::Invoke,
+        natural_number::NaturalNumber, sequence::Sequence, unify::EnvironmentStack,
         variable::Variable,
     },
     util::{
@@ -260,19 +252,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 }
                 OpcodeKind::BuildFixPoint => {
                     let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
-                    let source_info = ctx.source_info.cloned();
                     let invoke = Invoke::new(
-                            Self { kind: OpcodeKind::SetFixPoint, source_info: source_info.clone(), _phantom: std::marker::PhantomData }.dispatch(),
-                            Sequence::new_tuple(vec![place_holder.clone(), Variable::new_pattern("var#fixpoint".into(), source_info.clone())], source_info.clone()),
+                            Self::new(OpcodeKind::SetFixPoint, None).dispatch(),
+                            Sequence::new_tuple(vec![place_holder.clone(), Variable::new_pattern("var#fixpoint", None)], None),
                             None::<Type<T>>,
-                            None::<Type<T>>, source_info.clone());
+                            None::<Type<T>>,None);
 
-                    let call_back: Type<T> = Closure::new(
-                        vec![(Vec::<(&'static str, EnvironmentVarState<Type<T>, T>)>::new(), Constraint::new_constraint(vec!["var#fixpoint".to_string()], 
-                            Pattern::new(Arc::from("var#fixpoint"), source_info.clone()), 
-                            (Sequence::unit(None), Sequence::unit(None)), None),invoke)],
-                        source_info.clone(),
-                    );
+                    let call_back: Type<T> = Closure::lazy(None, "var#fixpoint", invoke);
                     Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>, ctx.source_info.cloned()))
                 }
                 OpcodeKind::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(

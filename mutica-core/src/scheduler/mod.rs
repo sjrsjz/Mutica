@@ -10,10 +10,12 @@ use crate::{
         AsDispatcher, CoinductiveType, GcAllocObject, InvokeContext, Representable, Type,
         TypeError, TypeRef,
         character_value::CharacterValue,
+        closure::Closure,
         invoke::{Invoke, InvokeCountinuationStyle},
         natural_number::NaturalNumber,
         sequence::Sequence,
         unify::{Environment, EnvironmentVarState},
+        variable::Variable,
     },
     util::{
         allocator::IdAllocator, cycle_detector::FastCycleDetector, rootstack::RootStack,
@@ -144,8 +146,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                 }
                 // 代数效应相关
                 "perform" => Err(TypeError::Perform(arg.clone().into())),
-                "break" => Err(TypeError::Break(arg.clone().into())),
-                "resume" => Err(TypeError::Resume(arg.clone().into())),
                 // 类型结构描述相关
                 "tuple_len" => arg
                     .map(&mut FastCycleDetector::new(), |_, arg| match arg {
@@ -210,113 +210,43 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             let io_result = match io_result {
                 Ok(v) => v,
                 Err(TypeError::Perform(v)) => {
-                    let view = self.cont_stack.view();
-                    let (perform_handler, index) = match find_last_perform_handler(&view) {
-                        Some(handler) => handler,
-                        None => {
-                            return Err(TypeError::MissingPerformHandler(Box::new(func)));
-                        }
-                    };
-                    let perform_invoke = Invoke::new(
-                        perform_handler.clone(),
-                        *v,
-                        None::<Type<T>>,
-                        None::<Type<T>>,
-                        source_info.clone(),
-                    );
-                    match continuation_style {
-                        InvokeCountinuationStyle::TailCall => (),
-                        InvokeCountinuationStyle::WithContinuation(v) => {
-                            self.cont_stack.push(ContinuationOrHandler::Continuation(v))
-                        }
-                        InvokeCountinuationStyle::WithPerformHandler(v) => {
-                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(v));
-                        }
-                        InvokeCountinuationStyle::WithBoth(a, b) => {
-                            self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(b));
-                        }
-                    }
-                    self.cont_stack.fork(index); // 踢掉perform handler及其上面的frame
-                    self.current_type = Some(perform_invoke);
-                    return Ok(true);
-                }
-                Err(TypeError::Break(v)) => {
-                    // 找到最近的Perform Handler并删除它以及其上面的所有continuation
-                    loop {
+                    let perform_handler = loop {
                         match self.cont_stack.pop_and_auto_defork() {
                             Some(ContinuationOrHandler::Continuation(_)) => continue,
-                            Some(ContinuationOrHandler::PerformHandler(_)) => break,
+                            Some(ContinuationOrHandler::PerformHandler(handler)) => break handler,
                             None => {
                                 return Err(TypeError::MissingPerformHandler(Box::new(func)));
                             }
                         }
-                    }
-                    // 然后找到最近的Continuation
-                    let continuation = loop {
-                        match self.cont_stack.pop_and_auto_defork() {
-                            Some(ContinuationOrHandler::Continuation(v)) => {
-                                break Some(v);
-                            }
-                            Some(ContinuationOrHandler::PerformHandler(_)) => continue,
-                            None => break None,
-                        }
                     };
-                    match continuation_style {
-                        InvokeCountinuationStyle::TailCall => (),
-                        InvokeCountinuationStyle::WithContinuation(v) => {
-                            self.cont_stack.push(ContinuationOrHandler::Continuation(v))
-                        }
-                        InvokeCountinuationStyle::WithPerformHandler(v) => {
-                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(v));
-                        }
-                        InvokeCountinuationStyle::WithBoth(a, b) => {
-                            self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(b));
-                        }
-                    }
-                    let break_invoke = match continuation {
-                        Some(continuation) => Invoke::new(
-                            continuation,
-                            *v,
-                            None::<Type<T>>,
-                            None::<Type<T>>,
-                            source_info.clone(),
-                        ),
-                        None => *v,
-                    };
-                    self.current_type = Some(break_invoke);
-                    return Ok(true);
-                }
-                Err(TypeError::Resume(v)) => {
-                    match continuation_style {
-                        InvokeCountinuationStyle::TailCall => (),
-                        InvokeCountinuationStyle::WithContinuation(v) => {
-                            self.cont_stack.push(ContinuationOrHandler::Continuation(v))
-                        }
-                        InvokeCountinuationStyle::WithPerformHandler(v) => {
-                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(v));
-                        }
-                        InvokeCountinuationStyle::WithBoth(a, b) => {
-                            self.cont_stack.push(ContinuationOrHandler::Continuation(a));
-                            self.cont_stack.push(ContinuationOrHandler::PerformHandler(b));
-                        }
-                    }
-                    let view = match self.cont_stack.skip_frames(1) {
-                        Some(view) => view,
-                        None => {
-                            return Err(TypeError::RuntimeError(Arc::new(std::io::Error::other(
-                                "No continuation to resume",
-                            ))));
-                        }
-                    };
-                    let cont = find_last_continuation(&view).map(|(v, _)| v.clone());
-                    self.cont_stack.fork_frame(view.len(), view.frame_index());
-                    if let Some(v) = cont {
-                        self.cont_stack.push(ContinuationOrHandler::Continuation(v));
-                    }
 
-                    self.current_type = Some(*v);
+                    let (continuation, handler) = match continuation_style {
+                        InvokeCountinuationStyle::TailCall => (Closure::identity(None), None),
+                        InvokeCountinuationStyle::WithContinuation(v) => (v, None),
+                        InvokeCountinuationStyle::WithPerformHandler(h) => {
+                            (Closure::identity(None), Some(h))
+                        }
+                        InvokeCountinuationStyle::WithBoth(c, h) => (c, Some(h)),
+                    };
+
+                    let perform_invoke = Invoke::new(
+                        perform_handler.clone(),
+                        continuation,
+                        Some(Closure::lazy(
+                            None,
+                            Arc::from("var#continuation"),
+                            Invoke::new(
+                                Variable::new_pattern("var#continuation", None),
+                                *v,
+                                None::<Type<T>>,
+                                handler,
+                                None,
+                            ),
+                        )),
+                        None::<Type<T>>,
+                        source_info.clone(),
+                    );
+                    self.current_type = Some(perform_invoke);
                     return Ok(true);
                 }
                 Err(e) => return Err(e),

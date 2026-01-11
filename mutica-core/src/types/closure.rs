@@ -9,7 +9,10 @@ use crate::{
         TypeCheckContext, TypeError, TypeRef,
         anyof::AnyOf,
         constraint::Constraint,
+        pattern::Pattern,
+        sequence::Sequence,
         unify::{EnvironmentStack, EnvironmentVarState, EnvironmentView},
+        variable::Variable,
     },
     util::{
         arc_opt::ArcOpt,
@@ -438,5 +441,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         new_branches.extend_from_slice(other.branches());
 
         Closure { inner: ArcOpt::new((new_branches, source_info)) }.into_dispatcher()
+    }
+
+    pub fn identity(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+        Self::lazy(source_info, "var#x", Variable::new_pattern("var#x", None))
+    }
+
+    pub fn lazy<S: Into<Arc<str>>, V: AsDispatcher<Type<T>, T>>(
+        source_info: Option<Arc<SourceLocation>>,
+        bind_name: S,
+        expr: V,
+    ) -> Type<T> {
+        let bind_name: Arc<str> = bind_name.into();
+        let branch = ClosureBranch {
+            captured_vars: Environment::default(),
+            pattern: Constraint::new_constraint(
+                vec![bind_name.to_string()],
+                Pattern::<T>::new(bind_name.clone(), None),
+                (Sequence::unit(None), Sequence::unit(None)),
+                None,
+            ),
+            expr: expr.into_dispatcher(),
+        };
+        Closure { inner: ArcOpt::new((vec![branch], source_info)) }.into_dispatcher()
     }
 }
