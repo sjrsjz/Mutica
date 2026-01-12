@@ -10,6 +10,14 @@ let constraint while: lambda = constraint init: any => constraint f: lambda => {
         | panic
 };
 
+let constraint while_condition: lambda = constraint condition: lambda => constraint body: lambda => {
+    loop go: assert () = ();
+    if condition() then {
+        discard body();
+        go()
+    } else ()
+};
+
 let constraint whilei: lambda = constraint init: any => constraint f: lambda => {
     loop go: constraint (state: any, i: nat) = (init, 0);
     match f(state, i)
@@ -17,6 +25,7 @@ let constraint whilei: lambda = constraint init: any => constraint f: lambda => 
         | assert Nothing => ()
         | panic
 };
+
 let constraint repeat: lambda = constraint n: nat => constraint f: lambda => {
     loop go: constraint i: nat = 0;
     match i
@@ -36,6 +45,7 @@ let constraint forever: lambda = constraint init: any => constraint f: lambda =>
 let constraint return: lambda = constraint _f: lambda => constraint v: any => v;
 
 while::while &
+while_condition::while_condition &
 whilei::whilei &
 repeat::repeat &
 forever::forever &

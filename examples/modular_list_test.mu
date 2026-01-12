@@ -6,6 +6,7 @@ let constraint {
     Range::(Range: any) &
     Exact::(Exact: any)
 } = list_pkg;
+discard println!(Modular(nat, 3, 1));
 
 // 测试 Modular(nat, 3, 1) - 长度为 1, 4, 7, 10, ...
 let constraint mod3_1_len1: any = (42,);

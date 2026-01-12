@@ -1,75 +1,71 @@
 let constraint maybe_pkg: any = import "maybe.mu";
 let constraint Any::(Any: any) = import "any.mu";
-let constraint throw_panic::(throw_panic: lambda) = import "panic.mu";
+let constraint while_condition::(while: lambda) = import "controlflow.mu";
+let constraint deref::($"op#not": lambda) = import "mutable.mu";
 
-let constraint List: lambda = constraint T: any => rec list: (() | (T ~ list));
+let constraint List: lambda = constraint T: any => (!..T);
 
 let constraint Greater: lambda = constraint (T: any, n: nat) => {
-    let constraint go: lambda = dyn_rec go: match
-        | assert 0 => List(T)
-        | constraint m: nat => {
-            if m > 0
-                then (T ~ go(m - 1))
-                else throw_panic("Invalid Greater: n must be >= 0")
-        }
-        | panic;
-    go(n)
+    let constraint prefix: any = mut ();
+    let constraint i: any = mut 0;
+    discard while delay (!i < n) delay {
+        discard prefix := !prefix + (T,);
+        i := !i + 1
+    };
+    !prefix + (!..T)
 };
 
 let constraint Range: lambda = constraint (T: any, min: nat, max: nat) => {
-    let constraint go: lambda = dyn_rec go: match
-        | assert (0, 0) => ()
-        | constraint (0, m: nat) => {
-            if m > 0
-                then (() | (T ~ go(0, m - 1)))
-                else throw_panic("Invalid Range: max must be > 0 in this branch")
-        }
-        | constraint (n: nat, m: nat) => {
-            if n > 0 then {
-                if m >= n
-                    then (T ~ go(n - 1, m - 1))
-                    else throw_panic("Invalid Range: max must be >= min")
-            }
-            else throw_panic("Invalid Range: min must be >= 0")
-        }
-        | panic;
-    go(min, max)
+    let constraint tuple: any = mut ();
+    let constraint final: any = mut never;
+    let constraint i: any = mut 0;
+    discard while delay (!i < max) delay {
+        discard if !i >= min then {
+            final := (!final | !tuple) 
+        } else ();
+        discard tuple := !tuple + (T,);
+        i := !i + 1
+    };
+    !final
 };
 
 let constraint Exact: lambda = constraint (T: any, n: nat) => {
-    let constraint go: lambda = dyn_rec go: match
-        | assert 0 => ()
-        | constraint m: nat => {
-            if m > 0
-                then (T,) + go(m - 1)
-                else throw_panic("Cannot create Exact with negative length")
-        }
-        | panic;
-    go(n)
+    let constraint tuple: any = mut ();
+    let constraint i: any = mut 0;
+    discard while delay (!i < n) delay {
+        discard tuple := !tuple + (T,);
+        i := !i + 1
+    };
+    !tuple
 };
 
-let constraint Modular: lambda = constraint (T: any, a: nat, b: nat) => {
-    let constraint cycle: any = dyn_rec cycle: {
-        let constraint add_a: lambda = dyn_rec add_a: constraint (count: nat, tail_type: any) => match count
-            | assert 0 => tail_type
-            | constraint c: nat => {
-                if c > 0 
-                    then (T ~ add_a(c - 1, tail_type))
-                    else throw_panic("Invalid Modular: a must be > 0")
-            }
-            | panic;
-        (() | add_a(a, cycle))
-    };
-    
-    let constraint add_b: lambda = dyn_rec add_b: constraint (count: nat, tail_type: any) => match count
-        | assert 0 => tail_type
-        | constraint c: nat => {
-            if c >= 0 
-                then (T ~ add_b(c - 1, tail_type))
-                else throw_panic("Invalid Modular: b must be >= 0")
-            }
-        | panic;
-    add_b(b, cycle)
+let constraint Modular: lambda = constraint (T: any, range_len: nat, prefix_len: nat) => {
+    match range_len
+        | assert 0 => Exact(T, prefix_len)
+        | constraint _T: any => {
+            let constraint seq: any = dyn_rec tail: {
+                let constraint seq: any = mut (T ~ tail);
+                let constraint j: any = mut 1;
+                discard while delay (!j < range_len) delay {
+                    discard seq := (T,) + !seq;
+                    j := !j + 1
+                };
+                () | !seq
+            };
+            match prefix_len
+                | assert 0 => seq
+                | constraint _T: any => {
+                    let constraint final: any = mut (T ~ seq);
+                    let constraint i: any = mut 1;
+                    discard while delay (!i < prefix_len) delay {
+                        discard final := (T,) + !final;
+                        i := !i + 1
+                    };
+                    !final
+                }
+                | panic
+        }
+        | panic
 };
 
 let constraint Nil: any = ();
