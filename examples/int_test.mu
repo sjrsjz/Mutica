@@ -1,4 +1,4 @@
-let constraint {
+let {
     int::(int: any) &
     Positive::(Positive: lambda) &
     Negative::(Negative: lambda) &
@@ -13,8 +13,8 @@ let constraint {
     Gte::($"op#gte": lambda) &
     Neg::($"op#neg": lambda)
 } = import "lib/int.mu";
-let constraint a: int = Positive 5;
-let constraint b: int = Negative 3;
-let constraint c: int = 0;
+let a: int = Positive 5;
+let b: int = Negative 3;
+let c: int = 0;
 a + b, a - b, a * b, a / b, a % b, -a, a < b, a > b, a >= b, a <= b,
 a + c, b - c, c * a, c / a, c % a, -c, c < a, c > a, c >= a, c <= a

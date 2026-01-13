@@ -1,6 +1,6 @@
-let constraint throw_panic: lambda = match
-    | constraint v: any => {
-        let assert never = Panic::v;
+let throw_panic: lambda = match
+    | v: any => {
+        let never = Panic::v;
     }
     | panic;
 

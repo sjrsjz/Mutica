@@ -1,54 +1,54 @@
-let constraint maybe_pkg: any = import "maybe.mu";
-let constraint {
+let maybe_pkg: any = import "maybe.mu";
+let {
     int::(int: any) &
     Lt::($"op#lt": lambda) &
     Gt::($"op#gt": lambda)
 } = import "int.mu";
-let constraint Just::(Just: lambda) = maybe_pkg;
-let constraint Nothing::(Nothing: any) = maybe_pkg;
-let constraint Any::(Any: any) = import "any.mu";
+let Just::(Just: lambda) = maybe_pkg;
+let Nothing::(Nothing: any) = maybe_pkg;
+let Any::(Any: any) = import "any.mu";
 
 // 颜色定义
-let constraint Red: any = Red::();
-let constraint Black: any = Black::();
-let constraint Color: any = (Red | Black);
+let Red: any = Red::();
+let Black: any = Black::();
+let Color: any = (Red | Black);
 
 // 红黑树定义
 // Tree: Empty | Node(color, key, value, left, right)
-let constraint Tree: lambda = constraint (K: any, V: any) => rec tree: (
+let Tree: lambda = (K: any, V: any) => rec tree: (
     Empty::() | 
     Node::(Color, K, V, tree, tree)
 );
 
 // 创建空树
-let constraint empty: any = Empty::();
+let empty: any = Empty::();
 
 // 平衡函数 - 处理红黑树的4种违规情况
-let constraint balance: lambda = constraint t: Tree(Any, Any) => 
+let balance: lambda = t: Tree(Any, Any) => 
     match t
         // 情况1: 左-左红红
-        | constraint Node::(Black, z: any, zv: any, Node::(Red, y: any, yv: any, Node::(Red, x: any, xv: any, a: any, b: any), c: any), d: any) =>
+        | Node::(Black, z: any, zv: any, Node::(Red, y: any, yv: any, Node::(Red, x: any, xv: any, a: any, b: any), c: any), d: any) =>
             Node::(Red, y, yv, Node::(Black, x, xv, a, b), Node::(Black, z, zv, c, d))
         // 情况2: 左-右红红
-        | constraint Node::(Black, z: any, zv: any, Node::(Red, x: any, xv: any, a: any, Node::(Red, y: any, yv: any, b: any, c: any)), d: any) =>
+        | Node::(Black, z: any, zv: any, Node::(Red, x: any, xv: any, a: any, Node::(Red, y: any, yv: any, b: any, c: any)), d: any) =>
             Node::(Red, y, yv, Node::(Black, x, xv, a, b), Node::(Black, z, zv, c, d))
         // 情况3: 右-左红红
-        | constraint Node::(Black, x: any, xv: any, a: any, Node::(Red, z: any, zv: any, Node::(Red, y: any, yv: any, b: any, c: any), d: any)) =>
+        | Node::(Black, x: any, xv: any, a: any, Node::(Red, z: any, zv: any, Node::(Red, y: any, yv: any, b: any, c: any), d: any)) =>
             Node::(Red, y, yv, Node::(Black, x, xv, a, b), Node::(Black, z, zv, c, d))
         // 情况4: 右-右红红
-        | constraint Node::(Black, x: any, xv: any, a: any, Node::(Red, y: any, yv: any, b: any, Node::(Red, z: any, zv: any, c: any, d: any))) =>
+        | Node::(Black, x: any, xv: any, a: any, Node::(Red, y: any, yv: any, b: any, Node::(Red, z: any, zv: any, c: any, d: any))) =>
             Node::(Red, y, yv, Node::(Black, x, xv, a, b), Node::(Black, z, zv, c, d))
         // 其他情况保持不变
-        | constraint tree: any => tree
+        | tree: any => tree
         | panic;
 
 // 插入辅助函数
-let constraint insert_helper: lambda = constraint cmp: lambda => constraint tree: Tree(Any, Any) => constraint key: any => constraint value: any => {
-    loop go: constraint t: any = tree;
+let insert_helper: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => value: any => {
+    loop go: t: any = tree;
     match t
-        | assert Empty::() => Node::(Red, key, value, Empty::(), Empty::())
-        | constraint Node::(color: any, k: any, v: any, left: any, right: any) => {
-            let constraint cmp_result: int = cmp(key, k);
+        | Empty::() => Node::(Red, key, value, Empty::(), Empty::())
+        | Node::(color: any, k: any, v: any, left: any, right: any) => {
+            let cmp_result: int = cmp(key, k);
             if cmp_result < 0
                 then balance(Node::(color, k, v, go(left), right))
                 else if cmp_result > 0
@@ -59,21 +59,21 @@ let constraint insert_helper: lambda = constraint cmp: lambda => constraint tree
 };
 
 // 插入函数 - 确保根节点是黑色
-let constraint insert: lambda = constraint cmp: lambda => constraint tree: Tree(Any, Any) => constraint key: any => constraint value: any => {
-    let constraint result: any = insert_helper(cmp)(tree)(key)(value);
+let insert: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => value: any => {
+    let result: any = insert_helper(cmp)(tree)(key)(value);
     match result
-        | constraint Node::(_T: _, k: any, v: any, left: any, right: any) => Node::(Black, k, v, left, right)
-        | assert Empty::() => Empty::()  // 不应该发生
+        | Node::(_T: _, k: any, v: any, left: any, right: any) => Node::(Black, k, v, left, right)
+        | Empty::() => Empty::()  // 不应该发生
         | panic
 };
 
 // 查找函数
-let constraint lookup: lambda = constraint cmp: lambda => constraint tree: Tree(Any, Any) => constraint key: any => {
-    loop go: constraint t: any = tree;
+let lookup: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => {
+    loop go: t: any = tree;
     match t
-        | assert Empty::() => Nothing
-        | constraint Node::(_T: _, k: any, v: any, left: any, right: any) => {
-            let constraint cmp_result: int = cmp(key, k);
+        | Empty::() => Nothing
+        | Node::(_T: _, k: any, v: any, left: any, right: any) => {
+            let cmp_result: int = cmp(key, k);
             if cmp_result < 0
                 then go(left)
                 else if cmp_result > 0
@@ -84,28 +84,28 @@ let constraint lookup: lambda = constraint cmp: lambda => constraint tree: Tree(
 };
 
 // 检查键是否存在
-let constraint contains: lambda = constraint cmp: lambda => constraint tree: Tree(Any, Any) => constraint key: any => {
+let contains: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => {
     match lookup(cmp)(tree)(key)
-        | constraint Just::(_T: _) => true
-        | assert Nothing::() => false
+        | Just::(_T: _) => true
+        | Nothing::() => false
         | panic
 };
 
 // 获取树的大小
-let constraint size: lambda = constraint tree: Tree(Any, Any) => {
-    loop go: constraint t: any = tree;
+let size: lambda = tree: Tree(Any, Any) => {
+    loop go: t: any = tree;
     match t
-        | assert Empty::() => 0
-        | constraint Node::(_U: _, _V: _, _W: _, left: any, right: any) => 1 + go(left) + go(right)
+        | Empty::() => 0
+        | Node::(_U: _, _V: _, _W: _, left: any, right: any) => 1 + go(left) + go(right)
         | panic
 };
 
 // 中序遍历
-let constraint inorder: lambda = constraint tree: Tree(Any, Any) => constraint f: lambda => {
-    loop go: constraint t: any = tree;
+let inorder: lambda = tree: Tree(Any, Any) => f: lambda => {
+    loop go: t: any = tree;
     match t
-        | assert Empty::() => ()
-        | constraint Node::(_T: _, k: any, v: any, left: any, right: any) => {
+        | Empty::() => ()
+        | Node::(_T: _, k: any, v: any, left: any, right: any) => {
             discard go(left);
             discard f(k, v);
             go(right)

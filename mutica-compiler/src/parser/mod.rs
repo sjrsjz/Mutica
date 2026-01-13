@@ -701,6 +701,10 @@ where
         &self.value
     }
 
+    pub fn take_value(self) -> T {
+        self.value
+    }
+
     pub fn location(&self) -> Option<&SourceLocation> {
         self.location.as_ref()
     }

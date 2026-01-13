@@ -1,6 +1,6 @@
-let constraint String::(String: any) = import "lib/string.mu";
-let constraint Option: lambda = constraint T: any => (Some::T | None::());
-let constraint println: lambda = constraint x: any => {
+let String::(String: any) = import "lib/string.mu";
+let Option: lambda = T: any => (Some::T | None::());
+let println: lambda = x: any => {
     discard println! x;
 };
 discard println[Option(1)];

@@ -455,7 +455,7 @@ ForIn: WithLocation<TypeAst> = {
             auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <f_l:@L> <func_var: IdentAsMacro> <f_r:@R> <inner_l:@L> <binding: Binding> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
+    <l:@L> AtTok <f_l:@L> <func_var: IdentAsMacro> <f_r:@R> <inner_l:@L> <binding: Binding> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
         let (branch, value) = binding;
         // func_var(value)(pattern=>expr)
         with_loc(TypeAst::Apply {
@@ -476,7 +476,22 @@ ForIn: WithLocation<TypeAst> = {
 }
 
 FnDef: (GenericPattern, WithLocation<TypeAst>) = {
-    <branch: Generic> DoubleArrowTok <expr: Primary> => (branch, expr)
+    <branch: Generic> DoubleArrowTok <expr: Primary> => (branch, expr),
+    <pattern: Calculate> DoubleArrowTok <expr: Primary> => {
+        match pattern.value() {
+            TypeAst::Generic(generic_pattern) => {
+                (generic_pattern.as_ref().clone().into(), expr)
+            },
+            _ => {
+                (
+                    GenericPattern::AutoBind {
+                        pattern: pattern,
+                    },
+                    expr
+                )
+            }
+        }
+    }
 }
 
 MatchBranch: (GenericPattern, WithLocation<TypeAst>) = {
@@ -838,7 +853,22 @@ MulDiv: WithLocation<TypeAst> = {
 
 
 Binding: (GenericPattern, WithLocation<TypeAst>) = {
-    <branch: Generic> AssignTok <value: Type> => (branch, value)
+    // <branch: Generic> AssignTok <value: Type> => (branch, value)
+    <pattern: Primary> AssignTok <value: Type> => {
+        match pattern.value() {
+            TypeAst::Generic(generic_pattern) => {
+                (generic_pattern.as_ref().clone().into(), value)
+            },
+            _ => {
+                (
+                    GenericPattern::AutoBind {
+                        pattern: pattern,
+                    },
+                    value
+                )
+            }
+        }
+    }
 };
 
 Let: (GenericPattern, WithLocation<TypeAst>) = {
@@ -846,7 +876,7 @@ Let: (GenericPattern, WithLocation<TypeAst>) = {
 }
 
 CustomLet: (WithLocation<String>, GenericPattern, WithLocation<TypeAst>) = {
-    <l:@L> <func: IdentAsMacro> <r:@R> <binding: Binding> SemicolonTok => {
+    AtTok <l:@L> <func: IdentAsMacro> <r:@R> <binding: Binding> SemicolonTok => {
         (with_loc(func, source, l..r), binding.0, binding.1)
     }
 }
@@ -859,20 +889,20 @@ LetWithoutValue: WithLocation<TypeAst> = {
     },
 }
 
-CustomLetWithoutValue: WithLocation<TypeAst> = {
-    <l:@L> <f_l:@L> <custom_func: IdentAsMacro> <f_r:@R> <inner_l:@L> <branch: Generic> SemicolonTok <expr: Type> <inner_r:@R> <r:@R> => {
-        with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(
-                TypeAst::Variable(with_loc(custom_func, source, f_l..f_r)),
-                source, f_l..f_r
-            )),
-            arg: Box::new(with_loc(TypeAst::Match {
-                branches: vec![(branch, expr)],
-            }, source, inner_l..inner_r)),
-            auto_cps: true,
-        }, source, l..r)
-    },
-}
+// CustomLetWithoutValue: WithLocation<TypeAst> = {
+//     <l:@L> AtTok <f_l:@L> <custom_func: IdentAsMacro> <f_r:@R> <inner_l:@L> <branch: Generic> SemicolonTok <expr: Type> <inner_r:@R> <r:@R> => {
+//         with_loc(TypeAst::Apply {
+//             func: Box::new(with_loc(
+//                 TypeAst::Variable(with_loc(custom_func, source, f_l..f_r)),
+//                 source, f_l..f_r
+//             )),
+//             arg: Box::new(with_loc(TypeAst::Match {
+//                 branches: vec![(branch, expr)],
+//             }, source, inner_l..inner_r)),
+//             auto_cps: true,
+//         }, source, l..r)
+//     },
+// }
 
 
 ExtendDef: (WithLocation<String>, WithLocation<TypeAst>) = {
@@ -895,7 +925,7 @@ Discard: WithLocation<TypeAst> = {
 }
 
 CustomDiscard: (WithLocation<String>, WithLocation<TypeAst>) = {
-    <l:@L> AtTok <var: IdentAsMacro> <r:@R> <e: Type> SemicolonTok => {
+    AtTok <l:@L> <var: IdentAsMacro> <r:@R> <e: Type> SemicolonTok => {
         (
             with_loc(var, source, l..r),
             e
@@ -913,7 +943,7 @@ Recursive: (WithLocation<String>, GenericPattern, WithLocation<TypeAst>) = {
 
 Line: WithLocation<TypeAst> = {
     <let_without_value: LetWithoutValue> => let_without_value,
-    <custom_let_without_value: CustomLetWithoutValue> => custom_let_without_value,
+    //<custom_let_without_value: CustomLetWithoutValue> => custom_let_without_value, // conflicted
     <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
         let (branch, binding_value) = let_expr;
         with_loc(TypeAst::Apply {

@@ -1,20 +1,20 @@
-let constraint {
+let {
     String::(String: any) &
     println::(println: lambda) &
     nat_to_string::(nat_to_string: lambda)
 } = import "lib/string.mu";
-let constraint {
+let {
     iter::(iter: lambda)
 } = import "lib/list.mu";
-let constraint {
+let {
     while::(while: lambda)
 } = import "lib/controlflow.mu";
-let constraint {
+let {
     Just::(Just: lambda) &
     Nothing::(Nothing: any)
 } = import "lib/maybe.mu";
 
-discard iter constraint v: String = (
+discard @iter v: String = (
     "This is string 1",
     "This is string 2",
     "This is string 3"
@@ -22,12 +22,12 @@ discard iter constraint v: String = (
     discard println v;
 };
 
-discard while constraint n: nat = 0 in {
+discard @while n: nat = 0 in {
     match n < 5
-        | assert true => {
+        | true => {
             discard println( "While loop iteration: " + nat_to_string(n) );
             Just(n + 1)
         }
-        | assert false => Nothing
+        | false => Nothing
         | panic
 };

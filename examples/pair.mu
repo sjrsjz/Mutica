@@ -1,36 +1,36 @@
-let constraint Any::(Any: any) = import "lib/any.mu";
+let Any::(Any: any) = import "lib/any.mu";
 // 元组/配对操作示例
-let constraint Pair: any = constraint fst: any => constraint snd: any => Pair::(fst, snd);
+let Pair: any = fst: any => snd: any => Pair::(fst, snd);
 
 // 获取第一个元素
-let constraint fst: any = match
-    | constraint Pair::(first: any, _T: any) => first
+let fst: any = match
+    | Pair::(first: any, _T: any) => first
     | panic;
 
 // 获取第二个元素
-let constraint snd: any = match 
-    | constraint Pair::(_T: any, second: any) => second
+let snd: any = match 
+    | Pair::(_T: any, second: any) => second
     | panic;
 
 // 交换元素
-let constraint swap: any = match
-    | constraint Pair::(first: any, second: any) => Pair(second)(first)
+let swap: any = match
+    | Pair::(first: any, second: any) => Pair(second)(first)
     | panic;
 
 // 对两个元素应用函数
-let constraint map_both: any = constraint pair: Pair(Any)(Any) => constraint f: any =>
+let map_both: any = pair: Pair(Any)(Any) => f: any =>
     match pair
-        | constraint Pair::(first: any, second: any) => Pair(f(first))(f(second))
+        | Pair::(first: any, second: any) => Pair(f(first))(f(second))
         | panic;
 
 // 创建配对
-let constraint p1: any = Pair(10)(20);
-let constraint p2: any = Pair("Hello")("World");
+let p1: any = Pair(10)(20);
+let p2: any = Pair("Hello")("World");
 
 // 测试
 fst(p1),
 snd(p1),
 swap(p1),
-map_both(Pair(3)(4))(constraint x: nat => x * x),
+map_both(Pair(3)(4))(x: nat => x * x),
 fst(p2),
 snd(p2)

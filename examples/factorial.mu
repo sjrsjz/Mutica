@@ -1,36 +1,36 @@
 // 阶乘和斐波那契数列示例
 
 // 普通递归阶乘
-let constraint factorial: lambda = 
+let factorial: lambda = 
     dyn_rec fact: match
-        | assert 0 => 1
-        | assert 1 => 1
-        | constraint n: nat => n * fact(n - 1)
+        | 0 => 1
+        | 1 => 1
+        | n: nat => n * fact(n - 1)
         | panic;
 
 // 尾递归阶乘
-let constraint factorial_tail: lambda = constraint n: nat => [
-        let constraint helper: lambda = dyn_rec h: constraint acc: nat => match 
-            | assert 0 => acc
-            | assert 1 => acc
-            | constraint n: nat => h(acc * n)(n - 1)
+let factorial_tail: lambda = n: nat => [
+        let helper: lambda = dyn_rec h: acc: nat => match 
+            | 0 => acc
+            | 1 => acc
+            | n: nat => h(acc * n)(n - 1)
             | panic;
         helper(1)(n)
     ];
 
 // 斐波那契数列
-let constraint fibonacci: lambda = 
+let fibonacci: lambda = 
     dyn_rec fib: match 
-        | assert 0 => 0
-        | assert 1 => 1
-        | constraint n: nat => fib(n - 1) + fib(n - 2)
+        | 0 => 0
+        | 1 => 1
+        | n: nat => fib(n - 1) + fib(n - 2)
         | panic;
 
 // 尾递归斐波那契
-let constraint fibonacci_tail: lambda = constraint n: nat => [
-    let constraint helper: lambda = dyn_rec helper: constraint a: nat => constraint b: nat => match
-            | assert 0 => a
-            | constraint n: nat => helper(b)(a + b)(n - 1)
+let fibonacci_tail: lambda = n: nat => [
+    let helper: lambda = dyn_rec helper: a: nat => b: nat => match
+            | 0 => a
+            | n: nat => helper(b)(a + b)(n - 1)
             | panic;
         helper(0)(1)(n)
     ];

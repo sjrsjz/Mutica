@@ -1,3 +1,3 @@
-let constraint Any: any = constraint _T: any;
+let Any: any = constraint _T: any;
 
 Any::Any

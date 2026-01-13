@@ -1,21 +1,21 @@
-let constraint {
+let {
     return::(return: lambda)
 } = import "lib/controlflow.mu";
 
-let constraint {
+let {
     println::(println: lambda) &
     nat_to_string::(nat_to_string: lambda)
 } = import "lib/string.mu";
 
-let constraint f: lambda = constraint (a: nat, b: nat) => {
-    let constraint a2: nat = a * 2;
-    let constraint b2: nat = b * 3;
+let f: lambda = (a: nat, b: nat) => {
+    let a2: nat = a * 2;
+    let b2: nat = b * 3;
     @return a2 + b2;
     discard println("This line will never be executed");
 };
 
-let constraint main: lambda = assert () => {
-    let constraint result: nat = f(3, 4);
+let main: lambda = () => {
+    let result: nat = f(3, 4);
     discard println("Result of f(3, 4): " + nat_to_string(result));
 };
 

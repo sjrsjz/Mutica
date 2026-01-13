@@ -1,16 +1,16 @@
-let constraint {
+let {
     Nothing::(Nothing: any)
 } = import "maybe.mu";
 
-let constraint while: lambda = constraint init: any => constraint f: lambda => {
-    loop go: constraint state: any = init;
+let while: lambda = init: any => f: lambda => {
+    loop go: state: any = init;
     match f(state)
-        | constraint Just::(v: any) => go(v)
-        | assert Nothing => ()
+        | Just::(v: any) => go(v)
+        | Nothing => ()
         | panic
 };
 
-let constraint while_condition: lambda = constraint condition: lambda => constraint body: lambda => {
+let while_condition: lambda = condition: lambda => body: lambda => {
     loop go: assert () = ();
     if condition() then {
         discard body();
@@ -18,31 +18,31 @@ let constraint while_condition: lambda = constraint condition: lambda => constra
     } else ()
 };
 
-let constraint whilei: lambda = constraint init: any => constraint f: lambda => {
-    loop go: constraint (state: any, i: nat) = (init, 0);
+let whilei: lambda = init: any => f: lambda => {
+    loop go: (state: any, i: nat) = (init, 0);
     match f(state, i)
-        | constraint Just::(v: any) => go(v, i + 1)
-        | assert Nothing => ()
+        | Just::(v: any) => go(v, i + 1)
+        | Nothing => ()
         | panic
 };
 
-let constraint repeat: lambda = constraint n: nat => constraint f: lambda => {
-    loop go: constraint i: nat = 0;
+let repeat: lambda = n: nat => f: lambda => {
+    loop go: i: nat = 0;
     match i
-        | assert n => ()
-        | constraint _T: any => {
+        | n => ()
+        | _T: any => {
             discard f(i);
             go(i + 1)
         }
         | panic
 };
 
-let constraint forever: lambda = constraint init: any => constraint f: lambda => {
-    loop go: constraint state: any = init;
+let forever: lambda = init: any => f: lambda => {
+    loop go: state: any = init;
     go(f(state))
 };
 
-let constraint return: lambda = constraint _f: lambda => constraint v: any => v;
+let return: lambda = _f: lambda => v: any => v;
 
 while::while &
 while_condition::while_condition &

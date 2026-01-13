@@ -1,28 +1,28 @@
-let constraint string_pkg: any = import "lib/string.mu";
-let constraint {
+let string_pkg: any = import "lib/string.mu";
+let {
     String::(String: any) &
     println::(println: lambda)
 } = string_pkg;
 
-let constraint get: lambda = match | panic;
-let constraint set: lambda = match | panic;
+let get: lambda = match | panic;
+let set: lambda = match | panic;
 
-extend get: constraint ClassA::(self: any) => constraint () => {
-    let constraint data::(mut v: any) = self;
+extend get: ClassA::(self: any) => () => {
+    let data::(mut v: any) = self;
     v
 };
 
-extend set: constraint ClassA::(self: any) => constraint value: String => {
-    let constraint data::(v: any) = self;
+extend set: ClassA::(self: any) => value: String => {
+    let data::(v: any) = self;
     discard v := value;
 };
 
 
-let constraint classA: any = constraint v: String => constraint f: any => {
-    let constraint obj: any = ClassA::{
+let classA: any = v: String => f: any => {
+    let obj: any = ClassA::{
         data::(mut v)
     };
-    let constraint result: any = f(obj);
+    let result: any = f(obj);
     result
 };
 
