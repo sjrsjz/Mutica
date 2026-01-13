@@ -1,7 +1,11 @@
 let run: lambda = f: lambda => {
-    handle with k: any => match
+    handle with dyn_rec handler: k: any => match
         | return::(v: any) => v
-        | v: any => k(perform! v)
+        | v: any => {
+            let result: any = perform! v;
+            handle with handler;
+            k result
+        }
         | panic;
     f()
 };

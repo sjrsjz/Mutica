@@ -210,9 +210,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             let io_result = match io_result {
                 Ok(v) => v,
                 Err(TypeError::Perform(v)) => {
+                    let mut continuations = vec![];
                     let perform_handler = loop {
                         match self.cont_stack.pop_and_auto_defork() {
-                            Some(ContinuationOrHandler::Continuation(_)) => continue,
+                            Some(ContinuationOrHandler::Continuation(cont)) => {
+                                continuations.push(cont)
+                            }
                             Some(ContinuationOrHandler::PerformHandler(handler)) => break handler,
                             None => {
                                 return Err(TypeError::MissingPerformHandler(Box::new(func)));
@@ -220,14 +223,41 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         }
                     };
 
-                    let (continuation, handler) = match continuation_style {
-                        InvokeCountinuationStyle::TailCall => (Closure::identity(None), None),
-                        InvokeCountinuationStyle::WithContinuation(v) => (v, None),
+                    let (mut continuation, handler, k0_is_identity) = match continuation_style {
+                        InvokeCountinuationStyle::TailCall => (Closure::identity(None), None, true),
+                        InvokeCountinuationStyle::WithContinuation(v) => (v, None, false),
                         InvokeCountinuationStyle::WithPerformHandler(h) => {
-                            (Closure::identity(None), Some(h))
+                            (Closure::identity(None), Some(h), true)
                         }
-                        InvokeCountinuationStyle::WithBoth(c, h) => (c, Some(h)),
+                        InvokeCountinuationStyle::WithBoth(c, h) => (c, Some(h), false),
                     };
+
+                    if !continuations.is_empty() {
+                        // 把“当前 Invoke 自带的 continuation”与“栈上捕获的 continuations”组合成一个 continuation。
+                        // 组合后的 continuation 行为等价于：v -> k1(k2(...(kn(k0(v)))...))
+                        // 其中 k0 是当前 Invoke 的 continuation（可能为 identity），kn..k1 来自 cont_stack。
+
+                        let mut chain = Vec::with_capacity(
+                            continuations.len() + if k0_is_identity { 0 } else { 1 },
+                        );
+                        if !k0_is_identity {
+                            chain.push(continuation);
+                        }
+                        chain.extend(continuations.into_iter());
+
+                        // 用 Invoke 链构造一个闭包：参数名可以复用（每层 Closure::lazy 都会形成新的作用域）。
+                        let bind_name: Arc<str> = Arc::from("var#continuation_value");
+
+                        // 从外到内折叠：最后一次调用使用 TailCall（continuation=None）以保持 TCO。
+                        let mut next_cont: Option<Type<T>> = None;
+                        for func in chain.into_iter().rev() {
+                            let arg = Variable::new_pattern(bind_name.as_ref(), None);
+                            let invoke = Invoke::new(func, arg, next_cont, None::<Type<T>>, None);
+                            next_cont = Some(Closure::lazy(None, bind_name.clone(), invoke));
+                        }
+
+                        continuation = next_cont.expect("Continuation chain must be non-empty");
+                    }
 
                     let perform_invoke = Invoke::new(
                         perform_handler.clone(),

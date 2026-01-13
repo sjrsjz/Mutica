@@ -434,19 +434,30 @@ impl LinearizeResult {
     pub fn new_apply(
         func: LinearizeResult,
         arg: LinearizeResult,
-        handler: Option<WithLocation<LinearTypeAst, FlowedMetaData>>,
+        handler: Option<LinearizeResult>,
         allocated_tmpvar_name: WithLocation<String>,
         auto_cps: bool,
     ) -> Self {
         let mut bindings = func.bindings;
         bindings.extend(arg.bindings);
-        bindings.push((
-            func.tail_type,
-            arg.tail_type,
-            handler,
-            allocated_tmpvar_name.clone(),
-            auto_cps,
-        ));
+        if let Some(h) = handler {
+            bindings.extend(h.bindings);
+            bindings.push((
+                func.tail_type,
+                arg.tail_type,
+                Some(h.tail_type),
+                allocated_tmpvar_name.clone(),
+                auto_cps,
+            ));
+        } else {
+            bindings.push((
+                func.tail_type,
+                arg.tail_type,
+                None,
+                allocated_tmpvar_name.clone(),
+                auto_cps,
+            ));
+        }
         Self { bindings, tail_type: LinearTypeAst::Variable(allocated_tmpvar_name).into() }
     }
 
@@ -1095,29 +1106,13 @@ impl BasicTypeAst {
             BasicTypeAst::Apply { func, arg, handler, auto_cps } => {
                 let func = func.linearize(ctx, errors, func.location());
                 let arg = arg.linearize(ctx, errors, arg.location());
-                let allocated_tmpvar_name = ctx.allocate_tmpvar_name();
-                match handler {
-                    Some(handler) => {
-                        let handler = handler.linearize(ctx, errors, handler.location());
-                        let result = LinearizeResult::new_apply(
-                            func,
-                            arg,
-                            Some(handler.tail_type().clone()),
-                            allocated_tmpvar_name,
-                            *auto_cps,
-                        );
-                        let mut bindings = result.bindings;
-                        bindings.extend(handler.bindings);
-                        LinearizeResult::new_with_binding(bindings, result.tail_type.clone())
-                    }
-                    None => LinearizeResult::new_apply(
-                        func,
-                        arg,
-                        None,
-                        allocated_tmpvar_name,
-                        *auto_cps,
-                    ),
-                }
+                LinearizeResult::new_apply(
+                    func,
+                    arg,
+                    handler.as_ref().map(|h| h.linearize(ctx, errors, h.location())),
+                    ctx.allocate_tmpvar_name(),
+                    *auto_cps,
+                )
             }
             BasicTypeAst::AtomicOpcode(atomic_opcode) => LinearizeResult::new_simple(
                 WithLocation::new(LinearTypeAst::AtomicOpcode(atomic_opcode.clone()), loc),

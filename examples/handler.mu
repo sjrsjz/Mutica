@@ -19,7 +19,7 @@ discard {
     let {
         println::(println: lambda)
     } = import "lib/string.mu";
-    let handler: lambda = dyn_rec handler: k: any => match
+    handle with dyn_rec handler: k: any => match
         | throw::(v: any) => {
             discard println("Caught throw with value: " + display! v);
         }
@@ -29,7 +29,6 @@ discard {
             k payload
         }
         | panic;
-    handle with handler;
     let (x: nat, y: nat) = perform! debug::("Performing debug for x", 2, 3);
     discard println("Final values: " + display! x + ", " + display! y);
     discard perform! throw::("An error occurred");
