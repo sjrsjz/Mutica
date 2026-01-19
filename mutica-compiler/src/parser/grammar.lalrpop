@@ -343,9 +343,9 @@ SubOf: WithLocation<TypeAst> = {
 
 CpsApply: WithLocation<TypeAst> = {
     // #var arg
-    <l:@L> HashTok <var: IdentAsMacro> <r:@R> <arg: Factor>  => {
+    <l:@L> HashTok <v_l:@L> <var: IdentAsMacro> <v_r:@R> <arg: Factor> <r:@R>  => {
         with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Variable(with_loc(var, source, l..r)), source, l..r)),
+            func: Box::new(with_loc(TypeAst::Variable(with_loc(var, source, v_l..v_r)), source, v_l..v_r)),
             arg: Box::new(arg),
             auto_cps: false,
         }, source, l..r)
@@ -358,6 +358,13 @@ Apply: WithLocation<TypeAst> = {
             func: Box::new(k),
             arg: Box::new(obj),
             auto_cps: true,
+        }, source, l..r)
+    },
+    <l:@L> <arg: Apply> DotTok HashTok <v_l:@L> <var: IdentAsMacro> <v_r:@R> <r:@R> => {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc(var, source, v_l..v_r)), source, v_l..v_r)),
+            arg: Box::new(arg),
+            auto_cps: false,
         }, source, l..r)
     },
     <l:@L> <f: Apply> <x: Term> PipeGreaterThanTok <k: Term> <r:@R> => {

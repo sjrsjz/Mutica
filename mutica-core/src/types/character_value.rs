@@ -74,6 +74,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Char(_) => Ok(ThreeValuedLogic::True),
+                TypeRef::CharValue(v) => Ok((self.value == v.value).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
         })

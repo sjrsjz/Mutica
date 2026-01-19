@@ -73,6 +73,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Float(_) => Ok(ThreeValuedLogic::True),
+                TypeRef::FloatValue(v) => Ok((self.value == v.value).into()),
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
