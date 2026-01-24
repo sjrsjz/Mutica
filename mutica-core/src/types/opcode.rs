@@ -258,7 +258,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             None::<Type<T>>,
                             None::<Type<T>>,None);
 
-                    let call_back: Type<T> = Closure::lazy(None, "var#fixpoint", invoke);
+                    let call_back: Type<T> = Closure::lazy(None, "var#fixpoint", invoke, ctx.environment)?;
                     Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>, ctx.source_info.cloned()))
                 }
                 OpcodeKind::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(

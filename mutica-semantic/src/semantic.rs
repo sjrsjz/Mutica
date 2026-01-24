@@ -79,10 +79,11 @@ impl<'ast> SourceMapping<'ast> {
                 }
             }
             LinearTypeAst::Match { branches, .. } => {
-                for (_vars, pattern, (constraint_l, constraint_r), expr) in branches {
+                for (pattern, constraint, expr) in branches {
                     Self::build_mapping(pattern, mapping, source_file);
-                    Self::build_mapping(constraint_l, mapping, source_file);
-                    Self::build_mapping(constraint_r, mapping, source_file);
+                    for (_, expr) in constraint {
+                        Self::build_mapping(expr, mapping, source_file);
+                    }
                     Self::build_mapping(expr, mapping, source_file);
                 }
             }
@@ -101,9 +102,9 @@ impl<'ast> SourceMapping<'ast> {
                 Self::build_mapping(expr, mapping, source_file);
             }
             LinearTypeAst::Generic { expr, constraint, .. } => {
-                let (f, g) = constraint.as_ref();
-                Self::build_mapping(f, mapping, source_file);
-                Self::build_mapping(g, mapping, source_file);
+                for (_, expr) in constraint {
+                    Self::build_mapping(expr, mapping, source_file);
+                }
                 Self::build_mapping(expr, mapping, source_file);
             }
             LinearTypeAst::Lazy(expr) => {

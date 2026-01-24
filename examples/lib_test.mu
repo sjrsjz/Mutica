@@ -43,7 +43,7 @@ let {
 
 // 创建测试列表: [1, 2, 3, 4, 5]
 let test_list: any = cons(1, cons(2, cons(3, cons(4, cons(5, Nil)))));
-let exist _x in (_x, _x) where () as () = (test_list, (1, 2, 3, 4, 5)); // 类型检查
+let (_x: sub _y, _y : sub _x) = (test_list, (1, 2, 3, 4, 5)); // 类型检查
 let print_int_list: any = lst: List(nat) => {
     discard @iter x: nat = lst in {
         discard print!(x);

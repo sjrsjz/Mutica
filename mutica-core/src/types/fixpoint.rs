@@ -173,7 +173,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 ctx.collected,
             );
             match other {
-                // 这里不能放 AnyOf 等，不然会导致 fixpoint <: Max<> 这种形式，但是由于是通过accept调用的，会导致 Max 比 fixpoint 先拆开
+                TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx), // AllOf 是特殊情况，先展开All是可以的，因为外层全称量词作用于All
+                // 但是 AnyOf 不行，不然会导致 fixpoint <: Max<> 这种形式，但是由于是通过accept调用的，会导致 Any 比 fixpoint 先拆开
                 // 为了透明化 fixpoint 的存在，我们必须先展开 fixpoint
                 TypeRef::FixPoint(v) => {
                     let l: Weak<_> = self.reference.clone().into();

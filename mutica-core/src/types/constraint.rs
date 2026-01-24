@@ -4,11 +4,11 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use smallvec::SmallVec;
 
 use crate::{
-    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, GcAllocObject,
         Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
-        unify::{Environment, EnvironmentVarState},
+        allof::AllOf,
+        unify::{Environment, EnvironmentVarState, EnvironmentView},
     },
     util::{
         arc_opt::ArcOpt,
@@ -19,10 +19,9 @@ use crate::{
 };
 
 pub struct Constraint<T: GcAllocObject<T, Inner = Type<T>>>(
-    // x, P(x), F(x), G(x)
-    // => P(x) exist x where F(x): G(x)
+    // P(x) where {x1: T1, x2: T2, ...}
     #[allow(clippy::type_complexity)]
-    ArcOpt<(Arc<[String]>, Type<T>, Type<T>, Type<T>, Option<Arc<SourceLocation>>)>,
+    ArcOpt<(Type<T>, Vec<(Arc<str>, Type<T>)>, Option<Arc<SourceLocation>>)>,
 );
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Constraint<T> {
@@ -33,17 +32,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Constraint<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Constraint<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        self.0.1.collect(queue);
-        self.0.2.collect(queue);
-        self.0.3.collect(queue);
+        self.0.0.collect(queue);
+        for (_, ty) in self.0.1.iter() {
+            ty.collect(queue);
+        }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Constraint<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        self.0.1.upgrade(collected);
-        self.0.2.upgrade(collected);
-        self.0.3.upgrade(collected);
+        self.0.0.upgrade(collected);
+        for (_, ty) in self.0.1.iter() {
+            ty.upgrade(collected);
+        }
     }
 }
 
@@ -57,15 +58,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Constraint<T> {
         if depth > max_depth {
             return "...".to_string();
         }
-        // T exist {x, y, ...} where F: G
-        let expr = self.expr().represent(path, depth + 1, max_depth);
-        let f = self.0.2.represent(path, depth + 1, max_depth);
-        let g = self.0.3.represent(path, depth + 1, max_depth);
-        let vars = self.0.0.join(", ");
-        if self.0.0.len() == 1 {
-            return format!("exist {vars} {expr} where {f}: {g}");
-        }
-        format!("exist {{{vars}}} {expr} where {f}: {g}")
+        // exist P(x) where {x1: T1, x2: T2, ...}
+        let mut repr =
+            format!("exist {} where {{ ", self.expr().represent(path, depth + 1, max_depth));
+        let constraints: Vec<String> = self
+            .constraint()
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k, v.represent(path, depth + 1, max_depth)))
+            .collect();
+        repr.push_str(&constraints.join(", "));
+        repr.push_str(" }");
+        repr
     }
 }
 
@@ -142,19 +145,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
         mut self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self.0.modify(|(vars, p, f, g, source_info)| {
+        match self.0.modify(|(p, c, source_info)| {
             let p = p.reduce(ctx)?;
-            let f = f.reduce(ctx)?;
-            let g = g.reduce(ctx)?;
-            Ok((vars, p, f, g, source_info))
+            let c = c
+                .into_iter()
+                .map(|(k, v)| v.reduce(ctx).map(|v| (k, v)))
+                .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
+            Ok((p, c, source_info))
         })? {
             Some(()) => Ok(self.dispatch()),
             None => {
-                let (vars, p, f, g, source_info) = self.0.as_ref();
+                let (p, c, source_info) = self.0.as_ref();
                 let p = p.clone().reduce(ctx)?;
-                let f = f.clone().reduce(ctx)?;
-                let g = g.clone().reduce(ctx)?;
-                Ok(Self(ArcOpt::new((vars.clone(), p, f, g, source_info.clone()))).dispatch())
+                let c = c
+                    .iter()
+                    .map(|(k, v)| v.clone().reduce(ctx).map(|v| (k.clone(), v)))
+                    .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
+                Ok(Self(ArcOpt::new((p, c, source_info.clone()))).dispatch())
             }
         }
     }
@@ -167,7 +174,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        self.0.4.as_ref()
+        self.0.2.as_ref()
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
@@ -207,41 +214,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     #[stacksafe::stacksafe]
     fn superof(
         &self,
-        other: Self::RefDispatcher<'_>,
-        ctx: &mut TypeCheckContext<Type<T>, T>,
+        _other: Self::RefDispatcher<'_>,
+        _ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        let mut collector = Collector::new();
-        let mut new_ctx = TypeCheckContext::new(
-            ctx.assumptions,
-            Some(&mut collector),
-            ctx.lhs_env,
-            ctx.rhs_env,
-            ctx.collected,
-        );
-        let result = test_true!(other.subof(self.expr().as_ref_dispatcher(), &mut new_ctx)?);
-        let mut env = Environment::new(
-            self.generic_variables().iter().map(|v| (v.clone(), EnvironmentVarState::FromPattern)),
-        );
-        let collected = collector.take_items().expect("Unable to take items from collector");
-        for (k, v) in collected {
-            env.bind(k, v, ctx.lhs_env, ctx.rhs_env)?
-        }
-        let mut bindings = SmallVec::<[(Arc<str>, Type<T>); 4]>::new();
-        for (k, v) in env.type_vars() {
-            match v {
-                EnvironmentVarState::Bound(ty) => bindings.push((k.clone(), ty.clone())),
-                _ => {
-                    return Ok(ThreeValuedLogic::False); // 未绑定变量，失败
-                }
-            }
-        }
-        ctx.collected.push(env);
-        let (f, g) = self.constraint();
-        let mut new_ctx =
-            TypeCheckContext::new(ctx.assumptions, None, ctx.lhs_env, ctx.rhs_env, ctx.collected);
-        let check_result = f.subof(g.as_ref_dispatcher(), &mut new_ctx);
-        ctx.collected.pop();
-        Ok(result & check_result?)
+        panic!("This method should not be called")
     }
 }
 
@@ -267,14 +243,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         }
         // 收集变量绑定，并进行非线性约束检查
         let mut env = Environment::new(
-            self.generic_variables().iter().map(|v| (v.clone(), EnvironmentVarState::FromPattern)),
+            self.constraint().iter().map(|(v, _)| (v.clone(), EnvironmentVarState::FromPattern)),
         );
         let collected = collector.take_items().expect("Unable to take items from collector");
         for (k, v) in collected {
-            if !env.bind_no_except(k, v, ctx.lhs_env, ctx.rhs_env)? {
-                return Ok((ThreeValuedLogic::False, SmallVec::new()));
-            }
+            env.bind(k, v)?
         }
+        env.finalize(ctx.lhs_env)?; // 解构的值都来源于于 LHS 环境
         let mut bindings: SmallVec<[(Arc<str>, Type<T>); 4]> =
             SmallVec::<[(Arc<str>, Type<T>); 4]>::new();
         // 确保所有变量都已绑定
@@ -288,60 +263,73 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         }
         // 先推入当前已绑定环境到 collected 栈
         ctx.collected.push(env);
-        let (f, g) = self.constraint();
-        let mut new_ctx =
-            TypeCheckContext::new(ctx.assumptions, None, ctx.lhs_env, ctx.rhs_env, ctx.collected);
-        let check_result = f.check(g.as_ref_dispatcher(), &mut new_ctx);
+        let mut check_result = ThreeValuedLogic::True;
+        for (x, c) in self.constraint() {
+            let ty =
+                ctx.collected.lookup_at_last_layer(x).expect("Variable should be bound").clone();
+            let mut new_ctx = TypeCheckContext::new(
+                ctx.assumptions,
+                None,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                ctx.collected,
+            );
+            check_result &= ty.check(c.as_ref_dispatcher(), &mut new_ctx)?;
+            if let ThreeValuedLogic::False = check_result {
+                break;
+            }
+        }
         ctx.collected.pop();
-        Ok((result & check_result?, bindings))
+        Ok((result & check_result, bindings))
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<P, F, G>(
-        generic_variables: impl IntoIterator<Item = String>,
+    pub fn new<P, C>(
         expr: P,
-        constraint: (F, G),
+        constraint: impl IntoIterator<Item = (Arc<str>, C)>,
+        env: EnvironmentView<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
-    ) -> Type<T>
+    ) -> Result<Type<T>, TypeError<Type<T>, T>>
     where
         P: AsDispatcher<Type<T>, T>,
-        F: AsDispatcher<Type<T>, T>,
-        G: AsDispatcher<Type<T>, T>,
+        C: AsDispatcher<Type<T>, T>,
     {
-        Self::new_constraint(generic_variables, expr, constraint, source_info).dispatch()
+        Self::new_constraint(expr, constraint, env, source_info).map(|c| c.into_dispatcher())
     }
 
-    pub fn new_constraint<P, F, G>(
-        generic_variables: impl IntoIterator<Item = String>,
+    pub fn new_constraint<P, C>(
         expr: P,
-        constraint: (F, G),
+        constraint: impl IntoIterator<Item = (Arc<str>, C)>,
+        env: EnvironmentView<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
-    ) -> Self
+    ) -> Result<Self, TypeError<Type<T>, T>>
     where
         P: AsDispatcher<Type<T>, T>,
-        F: AsDispatcher<Type<T>, T>,
-        G: AsDispatcher<Type<T>, T>,
+        C: AsDispatcher<Type<T>, T>,
     {
-        Self(ArcOpt::new((
-            Arc::from_iter(generic_variables),
-            expr.into_dispatcher(),
-            constraint.0.into_dispatcher(),
-            constraint.1.into_dispatcher(),
-            source_info,
-        )))
+        let mut set = SmallVec::<[(Arc<str>, SmallVec<[Type<T>; 2]>); 4]>::new();
+        for (k, v) in constraint.into_iter() {
+            // 合并同名约束
+            if let Some((_, existing)) = set.iter_mut().find(|(key, _)| *key == k) {
+                existing.push(v.into_dispatcher());
+            } else {
+                set.push((k, SmallVec::from_iter([v.into_dispatcher()])));
+            }
+        }
+        let merged_constraints = set
+            .into_iter()
+            .map(|(k, v)| AllOf::new(v.into_iter(), None, env).map(|v| (k, v)))
+            .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
+        Ok(Self(ArcOpt::new((expr.into_dispatcher(), merged_constraints, source_info))))
     }
 
     pub fn expr(&self) -> &Type<T> {
+        &self.0.0
+    }
+
+    pub fn constraint(&self) -> &[(Arc<str>, Type<T>)] {
         &self.0.1
-    }
-
-    pub fn constraint(&self) -> (&Type<T>, &Type<T>) {
-        (&self.0.2, &self.0.3)
-    }
-
-    pub fn generic_variables(&self) -> &[String] {
-        self.0.0.as_ref()
     }
 }

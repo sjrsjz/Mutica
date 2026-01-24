@@ -310,12 +310,8 @@ Delay: WithLocation<TypeAst> = {
         with_loc(TypeAst::Match {
             branches: vec![(
                 GenericPattern::Standard {
-                    vars: vec![],
                     pattern: with_no_loc(TypeAst::Tuple(vec![])),
-                    constraint: (
-                        with_no_loc(TypeAst::Tuple(vec![])),
-                        with_no_loc(TypeAst::Tuple(vec![]))
-                    ),
+                    constraint: vec![],
                 },
                 t,
             )],
@@ -390,20 +386,12 @@ IfElse: WithLocation<TypeAst> = {
                 func: Box::new(with_loc(TypeAst::Match {
                     branches: vec![
                         (GenericPattern::Standard {
-                            vars: vec![],
                             pattern: with_no_loc(TypeAst::Variable(with_no_loc("op#false".to_string()))),
-                            constraint: (
-                                with_no_loc(TypeAst::Tuple(vec![])),
-                                with_no_loc(TypeAst::Tuple(vec![]))
-                            ),
+                            constraint: vec![],
                         }, else_branch),
                         (GenericPattern::Standard {
-                            vars: vec![],
                             pattern: with_no_loc(TypeAst::Variable(with_no_loc("op#true".to_string()))),
-                            constraint: (
-                                with_no_loc(TypeAst::Tuple(vec![])),
-                                with_no_loc(TypeAst::Tuple(vec![]))
-                            ),
+                            constraint: vec![],
                         }, then_branch),
                     ],
                 }, source, inner_l..inner_r)),
@@ -413,20 +401,12 @@ IfElse: WithLocation<TypeAst> = {
             None => with_loc(TypeAst::Match {
                 branches: vec![
                     (GenericPattern::Standard {
-                        vars: vec![],
                         pattern: with_no_loc(TypeAst::Variable(with_no_loc("op#false".to_string()))),
-                        constraint: (
-                            with_no_loc(TypeAst::Tuple(vec![])),
-                            with_no_loc(TypeAst::Tuple(vec![]))
-                        ),
+                        constraint: vec![],
                     }, else_branch),
                     (GenericPattern::Standard {
-                        vars: vec![],
                         pattern: with_no_loc(TypeAst::Variable(with_no_loc("op#true".to_string()))),
-                        constraint: (
-                            with_no_loc(TypeAst::Tuple(vec![])),
-                            with_no_loc(TypeAst::Tuple(vec![]))
-                        ),
+                        constraint: vec![],
                     }, then_branch),
                 ],
             }, source, l..r),    
@@ -581,41 +561,36 @@ Lazy: WithLocation<TypeAst> = {
     },
 }
 
-DictItems: Vec<WithLocation<String>> = {
+DictItems: Vec<(WithLocation<String>, WithLocation<TypeAst>)> = {
     <l:@L> <r:@R> => vec![],
-    <l:@L> <key: Ident> <r:@R> => {
-        vec![with_loc(key, source, l..r)]
+    <l:@L> <key: Ident> ColonTok <value: Calculate> <r:@R> => {
+        vec![(with_loc(key, source, l..r), value)]
     },
-    <mut items: DictItems> CommaTok <l:@L> <key: Ident> <r:@R> => {
-        items.push(with_loc(key, source, l..r));
+    <mut items: DictItems> CommaTok <l:@L> <key: Ident> ColonTok <value: Calculate> <r:@R> => {
+        items.push((with_loc(key, source, l..r), value));
         items
     },
 }
 
-GenericVariables: Vec<WithLocation<String>> = {
+GenericVariables: Vec<(WithLocation<String>, WithLocation<TypeAst>)> = {
     LBraceTok <items: DictItems> RBraceTok => items,
     LBracketTok <items: DictItems> RBracketTok => items,
     LParenTok <items: DictItems> RParenTok => items,
-    <l:@L> <key: Ident> <r:@R> => vec![with_loc(key, source, l..r)],
+    <l:@L> <key: Ident> ColonTok <value: Calculate> <r:@R> => vec![(with_loc(key, source, l..r), value)],
 }
 
 // exist {x, ..} T where F: R
 Generic: GenericPattern = {
-    ExistTok <vars: GenericVariables> InTok <expr: Primary> WhereTok <f: Calculate> AsTok <g: Calculate> => {
+    ExistTok <expr: Primary> WhereTok <constraint: GenericVariables> => {
         GenericPattern::Standard {
-            vars,
             pattern: expr,
-            constraint: (f, g),
+            constraint,
         }
     },
     AssertTok <expr: Calculate> => {
         GenericPattern::Standard {
-            vars: vec![],
             pattern: expr,
-            constraint: (
-                with_no_loc(TypeAst::Tuple(vec![])),
-                with_no_loc(TypeAst::Tuple(vec![]))
-            ),
+            constraint: vec![],
         }
     },
     ConstraintTok <pattern: Calculate> => {
@@ -649,9 +624,11 @@ Primary: WithLocation<TypeAst> = {
 };
 
 Factor: WithLocation<TypeAst> = {
-    <l:@L> BangTok <a: Factor> <r:@R> => {
-        with_loc(TypeAst::Not {
-            value: Box::new(a),
+    <l:@L> BangTok <n: Factor> <r:@R> => {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#not".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(n),
+            auto_cps: true,
         }, source, l..r)
     },
     <l:@L> MinusTok <n: Factor> <r:@R> => {
@@ -761,16 +738,18 @@ And: WithLocation<TypeAst> = {
 }
 
 Compare: WithLocation<TypeAst> = {
-    <l:@L> <left: Compare> EqTok <right: AddSub> <r:@R> => {
-        with_loc(TypeAst::Eq {
-            left: Box::new(left),
-            right: Box::new(right),
+    <l:@L> <left: Compare> <op_l:@L> EqTok <op_r:@R> <right: AddSub> <r:@R> => {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#eq".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
+            auto_cps: true,
         }, source, l..r)
     },
-    <l:@L> <left: Compare> NeqTok <right: AddSub> <r:@R> => {
-        with_loc(TypeAst::Neq {
-            left: Box::new(left),
-            right: Box::new(right),
+    <l:@L> <left: Compare> <op_l:@L> NeqTok <op_r:@R> <right: AddSub> <r:@R> => {
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#neq".to_string(), source, op_l..op_r)), source, op_l..op_r)),
+            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![(left, NonZero::new(1).unwrap()), (right, NonZero::new(1).unwrap())]))),
+            auto_cps: true,
         }, source, l..r)
     },
     <l:@L> <left: Compare> <op_l:@L> LtTok <op_r:@R> <right: AddSub> <r:@R> => {
@@ -979,12 +958,8 @@ Line: WithLocation<TypeAst> = {
     },
     <l:@L> <extend_expr: ExtendDef> <e: Type> <r:@R> => {
         let branch = GenericPattern::Standard {
-            vars: vec![extend_expr.0.clone()],
             pattern: extend_expr.0.clone().map(|var| TypeAst::Variable(extend_expr.0.clone())),
-            constraint: (
-                with_no_loc(TypeAst::Tuple(vec![])),
-                with_no_loc(TypeAst::Tuple(vec![]))
-            ),
+            constraint: vec![(extend_expr.0.clone(), with_no_loc(TypeAst::Wildcard))],
         };
         let binding_value = with_loc(
             TypeAst::Apply {
@@ -1009,12 +984,8 @@ Line: WithLocation<TypeAst> = {
     },
     <l:@L> <discard_expr: Discard> <e: Type> <r:@R> => {
         let branch = GenericPattern::Standard {
-            vars: vec![],
             pattern: with_no_loc(TypeAst::DiscardPattern),
-            constraint: (
-                with_no_loc(TypeAst::Tuple(vec![])),
-                with_no_loc(TypeAst::Tuple(vec![]))
-            ),
+            constraint: vec![],
         };
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Match {
@@ -1028,12 +999,8 @@ Line: WithLocation<TypeAst> = {
         let (custom_func, discard_expr) = custom_discard_expr;
         let func_span = custom_func.location().map(|loc| loc.span().clone()).unwrap_or(l..r);
         let branch = GenericPattern::Standard {
-            vars: vec![],
             pattern: with_no_loc(TypeAst::DiscardPattern),
-            constraint: (
-                with_no_loc(TypeAst::Tuple(vec![])),
-                with_no_loc(TypeAst::Tuple(vec![]))
-            ),
+            constraint: vec![],
         };
         // custom_func_var(pattern=>expr)(value)
         with_loc(TypeAst::Apply {
@@ -1084,12 +1051,8 @@ HandleWith: WithLocation<TypeAst> = {
         with_loc(TypeAst::HandleWith {
             closure: Box::new(with_loc(TypeAst::Match {
                 branches: vec![(GenericPattern::Standard {
-                    vars: vec![],
                     pattern: with_no_loc(TypeAst::DiscardPattern),
-                    constraint: (
-                        with_no_loc(TypeAst::Tuple(vec![])),
-                        with_no_loc(TypeAst::Tuple(vec![]))
-                    ),
+                    constraint: vec![],
                 }, expr)],
             }, source, l..r)),
             init_val: Box::new(with_no_loc(TypeAst::DiscardPattern)),

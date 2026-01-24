@@ -7,10 +7,10 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, Environment, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
         TypeCheckContext, TypeError, TypeRef,
+        allof::AllOf,
         anyof::AnyOf,
         constraint::Constraint,
         pattern::Pattern,
-        sequence::Sequence,
         unify::{EnvironmentStack, EnvironmentVarState, EnvironmentView},
         variable::Variable,
     },
@@ -394,6 +394,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
                         EnvironmentVarState::Bound(ty) => ty.represent(path, depth + 1, max_depth),
                         EnvironmentVarState::FromPattern => "FromPattern".to_string(),
                         EnvironmentVarState::FromCapture => "FromCapture".to_string(),
+                        EnvironmentVarState::BoundList(_) => panic!(
+                            "CRITICAL: Trying to represent a BoundList variable from an environment which didn't finalize it."
+                        ),
                         EnvironmentVarState::Phantom(_) => unreachable!(),
                     };
                     format!("{}: {}", v.as_ref(), ty_str)
@@ -443,26 +446,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         Closure { inner: ArcOpt::new((new_branches, source_info)) }.into_dispatcher()
     }
 
-    pub fn identity(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Self::lazy(source_info, "var#x", Variable::new_pattern("var#x", None))
+    pub fn identity(
+        source_info: Option<Arc<SourceLocation>>,
+        env: EnvironmentView<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Self::lazy(source_info, "var#x", Variable::new_pattern("var#x", None), env)
     }
 
     pub fn lazy<S: Into<Arc<str>>, V: AsDispatcher<Type<T>, T>>(
         source_info: Option<Arc<SourceLocation>>,
         bind_name: S,
         expr: V,
-    ) -> Type<T> {
+        env: EnvironmentView<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let bind_name: Arc<str> = bind_name.into();
         let branch = ClosureBranch {
             captured_vars: Environment::default(),
             pattern: Constraint::new_constraint(
-                vec![bind_name.to_string()],
                 Pattern::<T>::new(bind_name.clone(), None),
-                (Sequence::unit(None), Sequence::unit(None)),
+                vec![(bind_name, AllOf::unknown(None))],
+                env,
                 None,
-            ),
+            )?,
             expr: expr.into_dispatcher(),
         };
-        Closure { inner: ArcOpt::new((vec![branch], source_info)) }.into_dispatcher()
+        Ok(Closure { inner: ArcOpt::new((vec![branch], source_info)) }.into_dispatcher())
     }
 }

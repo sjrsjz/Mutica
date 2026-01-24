@@ -1,0 +1,1 @@
+loop go: nat = 1;

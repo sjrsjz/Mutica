@@ -1,16 +1,15 @@
+pub mod alignment;
 use std::sync::Arc;
 
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 
-use crate::{
-    types::{AsDispatcher, CoinductiveType, GcAllocObject, TypeError},
-    util::three_valued_logic::ThreeValuedLogic,
-};
+use crate::types::{AsDispatcher, CoinductiveType, GcAllocObject, Type, TypeError, anyof::AnyOf};
 
 pub enum EnvironmentVarState<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     FromPattern,
     FromCapture,
     Bound(U),
+    BoundList(SmallVec<[U; 4]>),
     #[doc(hidden)]
     Phantom(std::marker::PhantomData<V>),
 }
@@ -21,6 +20,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentVarStat
             EnvironmentVarState::FromPattern => EnvironmentVarState::FromPattern,
             EnvironmentVarState::FromCapture => EnvironmentVarState::FromCapture,
             EnvironmentVarState::Bound(ty) => EnvironmentVarState::Bound(ty.clone()),
+            EnvironmentVarState::BoundList(tys) => EnvironmentVarState::BoundList(tys.clone()),
             EnvironmentVarState::Phantom(_) => {
                 EnvironmentVarState::Phantom(std::marker::PhantomData)
             }
@@ -59,28 +59,27 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         }
     }
 
-    pub fn bind<'a, X: AsDispatcher<U, V>, S: AsRef<str>>(
+    pub fn bind<X: AsDispatcher<U, V>, S: AsRef<str>>(
         &mut self,
         name: S,
         ty: X,
-        lhs_env: EnvironmentView<'a, U, V>,
-        rhs_env: EnvironmentView<'a, U, V>,
     ) -> Result<(), TypeError<U, V>> {
         let ty = ty.into_dispatcher();
         for (var_name, var_ty) in self.type_vars.iter_mut() {
             if var_name.as_ref() == name.as_ref() {
                 match var_ty {
-                    EnvironmentVarState::Bound(v) => {
-                        if let ThreeValuedLogic::True =
-                            ty.equals(v.as_ref_dispatcher(), lhs_env, rhs_env)?
-                        {
-                            return Ok(());
-                        } else {
-                            return Err(TypeError::AssertFailed((v.clone(), ty).into()));
-                        }
+                    EnvironmentVarState::Bound(_) => {
+                        panic!(
+                            "CRITICAL: Trying to bind already bound variable '{}'",
+                            name.as_ref(),
+                        )
+                    }
+                    EnvironmentVarState::BoundList(v) => {
+                        v.push(ty.into_dispatcher());
+                        return Ok(());
                     }
                     EnvironmentVarState::FromPattern | EnvironmentVarState::FromCapture => {
-                        *var_ty = EnvironmentVarState::Bound(ty.into_dispatcher());
+                        *var_ty = EnvironmentVarState::BoundList(smallvec![ty.into_dispatcher()]);
                         return Ok(());
                     }
                     EnvironmentVarState::Phantom(_) => unreachable!(),
@@ -88,34 +87,6 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
             }
         }
         Err(TypeError::UnboundEnvironmentVariable(name.as_ref().into()))
-    }
-
-    pub fn bind_no_except<'a, X: AsDispatcher<U, V>, S: AsRef<str>>(
-        &mut self,
-        name: S,
-        ty: X,
-        lhs_env: EnvironmentView<'a, U, V>,
-        rhs_env: EnvironmentView<'a, U, V>,
-    ) -> Result<bool, TypeError<U, V>> {
-        let ty = ty.into_dispatcher();
-        for (var_name, var_ty) in self.type_vars.iter_mut() {
-            if var_name.as_ref() == name.as_ref() {
-                return Ok(match var_ty {
-                    EnvironmentVarState::Bound(v) => {
-                        matches!(
-                            ty.equals(v.as_ref_dispatcher(), lhs_env, rhs_env)?,
-                            ThreeValuedLogic::True
-                        )
-                    }
-                    EnvironmentVarState::FromPattern | EnvironmentVarState::FromCapture => {
-                        *var_ty = EnvironmentVarState::Bound(ty.into_dispatcher());
-                        true
-                    }
-                    EnvironmentVarState::Phantom(_) => unreachable!(),
-                });
-            }
-        }
-        Ok(false)
     }
 
     pub fn capture_from(
@@ -144,6 +115,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
                     }
                 }
                 EnvironmentVarState::Bound(_) => {}
+                EnvironmentVarState::BoundList(_) => panic!(
+                    "CRITICAL: Trying to capture a BoundList variable from an environment which didn't finalize it."
+                ),
                 EnvironmentVarState::Phantom(_) => unreachable!(),
             }
         }
@@ -172,6 +146,20 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
     }
 }
 
+impl<T: GcAllocObject<T, Inner = Type<T>>> Environment<Type<T>, T> {
+    pub fn finalize<'a>(
+        &mut self,
+        env: EnvironmentView<'a, Type<T>, T>,
+    ) -> Result<(), TypeError<Type<T>, T>> {
+        // 把所有BoundList变量转换为Bound
+        for (_, var_ty) in self.type_vars.iter_mut() {
+            if let EnvironmentVarState::BoundList(tys) = var_ty {
+                *var_ty = EnvironmentVarState::Bound(AnyOf::new(tys.iter(), None, env)?)
+            }
+        }
+        Ok(())
+    }
+}
 pub struct EnvironmentView<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     type_vars: &'a [(Arc<str>, EnvironmentVarState<U, V>)],
 }

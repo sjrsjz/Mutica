@@ -224,10 +224,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     };
 
                     let (mut continuation, handler, k0_is_identity) = match continuation_style {
-                        InvokeCountinuationStyle::TailCall => (Closure::identity(None), None, true),
+                        InvokeCountinuationStyle::TailCall => {
+                            (Closure::identity(None, empty_env.view())?, None, true)
+                        }
                         InvokeCountinuationStyle::WithContinuation(v) => (v, None, false),
                         InvokeCountinuationStyle::WithPerformHandler(h) => {
-                            (Closure::identity(None), Some(h), true)
+                            (Closure::identity(None, empty_env.view())?, Some(h), true)
                         }
                         InvokeCountinuationStyle::WithBoth(c, h) => (c, Some(h), false),
                     };
@@ -253,7 +255,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         for func in chain.into_iter().rev() {
                             let arg = Variable::new_pattern(bind_name.as_ref(), None);
                             let invoke = Invoke::new(func, arg, next_cont, None::<Type<T>>, None);
-                            next_cont = Some(Closure::lazy(None, bind_name.clone(), invoke));
+                            next_cont = Some(Closure::lazy(
+                                None,
+                                bind_name.clone(),
+                                invoke,
+                                empty_env.view(),
+                            )?);
                         }
 
                         continuation = next_cont.expect("Continuation chain must be non-empty");
@@ -272,7 +279,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                                 handler,
                                 None,
                             ),
-                        )),
+                            empty_env.view(),
+                        )?),
                         None::<Type<T>>,
                         source_info.clone(),
                     );

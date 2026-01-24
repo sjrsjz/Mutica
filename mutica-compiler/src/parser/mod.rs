@@ -100,7 +100,6 @@ pub enum ParseError {
     PatternOutOfParameterDefinition(WithLocation<LinearTypeAst>),
     MissingBranch(WithLocation<LinearTypeAst>),
     OutgoingFixPointReference(WithLocation<LinearTypeAst>, WithLocation<String>, usize),
-    WildcardOutOfConstraint(WithLocation<BasicTypeAst>),
     AstNotDesugared(WithLocation<BasicTypeAst>),
     InternalError(String),
 }
@@ -168,18 +167,6 @@ impl ParseError {
                             .with_color(Color::Red),
                     )
                     .with_help("Ensure that fix-point variables are only used within their defining function's scope, or use 'dyn_rec' for dynamic recursion")
-                    .finish()
-            }
-            ParseError::WildcardOutOfConstraint(ast) => {
-                let (char_start, char_end, filepath) = Self::extract_location_info(ast);
-                Report::build(ReportKind::Error, filepath.clone(), char_start)
-                    .with_message("Wildcard type used outside of a constraint")
-                    .with_label(
-                        Label::new((filepath, char_start..char_end))
-                            .with_message("Wildcards ('_') can only be used within type constraints")
-                            .with_color(Color::Red),
-                    )
-                    .with_help("Use explicit types or type variables instead of Wildcards outside of constraints")
                     .finish()
             }
             ParseError::AstNotDesugared(ast) => {
@@ -990,42 +977,50 @@ pub fn inject_std_library(
     errors: &mut Vec<WithLocation<MultiFileBuilderError>>,
 ) -> WithLocation<BasicTypeAst> {
     let std_lib_code = r##"
-    let constraint $"op#true": any = True::();
-    let constraint $"op#false": any = False::();
-    let constraint $"op#and": any = match
-        | constraint ($"op#true", $"op#true") => $"op#true"
-        | constraint ($"op#true", $"op#false") => $"op#false"
-        | constraint ($"op#false", $"op#true") => $"op#false"
-        | constraint ($"op#false", $"op#false") => $"op#false"
+    let $"op#true": any = True::();
+    let $"op#false": any = False::();
+    let $"op#and": any = match
+        | ($"op#true", $"op#true") => $"op#true"
+        | ($"op#true", $"op#false") => $"op#false"
+        | ($"op#false", $"op#true") => $"op#false"
+        | ($"op#false", $"op#false") => $"op#false"
         | panic;
-    let constraint $"op#or": any = match
-        | constraint ($"op#true", $"op#true") => $"op#true"
-        | constraint ($"op#true", $"op#false") => $"op#true"
-        | constraint ($"op#false", $"op#true") => $"op#true"
-        | constraint ($"op#false", $"op#false") => $"op#false"
+    let $"op#or": any = match
+        | ($"op#true", $"op#true") => $"op#true"
+        | ($"op#true", $"op#false") => $"op#true"
+        | ($"op#false", $"op#true") => $"op#true"
+        | ($"op#false", $"op#false") => $"op#false"
         | panic;
-    let constraint $"op#not": any = match
-        | constraint $"op#true" => $"op#false"
-        | constraint $"op#false" => $"op#true"
+    let $"op#not": any = match
+        | $"op#true" => $"op#false"
+        | $"op#false" => $"op#true"
         | panic;
-    let constraint $"op#add": any = constraint (x: any, y: any) => __add!(x, y);
-    let constraint $"op#sub": any = constraint (x: any, y: any) => __sub!(x, y);
-    let constraint $"op#mul": any = constraint (x: any, y: any) => __mul!(x, y);
-    let constraint $"op#div": any = constraint (x: any, y: any) => __div!(x, y);
-    let constraint $"op#mod": any = constraint (x: any, y: any) => __mod!(x, y);
-    let constraint $"op#gt": any = constraint (x: any, y: any) => __greater!(x, y, true, false);
-    let constraint $"op#lt": any = constraint (x: any, y: any) => __less!(x, y, true, false);
-    let constraint $"op#gte": any = match 
-        | exist _x in (_x, _x) where () as () => true
-        | constraint (x: any, y: any) => __greater!(x, y, true, false)
+    let $"op#add": any = (x: any, y: any) => __add!(x, y);
+    let $"op#sub": any = (x: any, y: any) => __sub!(x, y);
+    let $"op#mul": any = (x: any, y: any) => __mul!(x, y);
+    let $"op#div": any = (x: any, y: any) => __div!(x, y);
+    let $"op#mod": any = (x: any, y: any) => __mod!(x, y);
+    let $"op#gt": any = (x: any, y: any) => __greater!(x, y, true, false);
+    let $"op#lt": any = (x: any, y: any) => __less!(x, y, true, false);
+    let $"op#eq": any = match
+        | (_x: sub _y, _y: sub _x) => true
+        | any => false
         | panic;
-    let constraint $"op#lte": any = match
-        | exist _x in (_x, _x) where () as () => true
-        | constraint (x: any, y: any) => __less!(x, y, true, false)
+    let $"op#neq": any = match
+        | (_x: sub _y, _y: sub _x) => false
+        | any => true
         | panic;
-    let constraint $"op#neg": any = constraint (x: any) => __neg!(x);
-    let constraint $"op#is": any = constraint (x: any, y: any) => __is!(x, y, true, false);
-    let constraint $"op#assign": any = constraint (x: any, y: any) => __assign!(x, y);
+    let $"op#gte": any = match 
+        | (_x: sub _y, _y: sub _x) => true
+        | (x: any, y: any) => __greater!(x, y, true, false)
+        | panic;
+    let $"op#lte": any = match
+        | (_x: sub _y, _y: sub _x) => true
+        | (x: any, y: any) => __less!(x, y, true, false)
+        | panic;
+    let $"op#neg": any = (x: any) => __neg!(x);
+    let $"op#is": any = (x: any, y: any) => __is!(x, y, true, false);
+    let $"op#assign": any = (x: any, y: any) => __assign!(x, y);
     $"<placeholder>"
     "##;
     let mut import_ast = HashMap::new();
@@ -1052,7 +1047,6 @@ pub fn inject_std_library(
                 BasicTypeAst::Float => std_ast,
                 BasicTypeAst::Char => std_ast,
                 BasicTypeAst::Lambda => std_ast,
-                BasicTypeAst::Wildcard => std_ast,
                 BasicTypeAst::NaturalNumberLiteral(_) => std_ast,
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
@@ -1114,14 +1108,15 @@ pub fn inject_std_library(
                             .map(|(pattern_variant, expr)| {
                                 let new_expr = replace_placeholder(expr, ast);
                                 let new_variant = match pattern_variant {
-                                    BasicGenericPattern::Standard { vars, pattern, constraint } => {
+                                    BasicGenericPattern::Standard { pattern, constraint } => {
                                         BasicGenericPattern::Standard {
-                                            vars,
                                             pattern: replace_placeholder(pattern, ast),
-                                            constraint: (
-                                                replace_placeholder(constraint.0, ast),
-                                                replace_placeholder(constraint.1, ast),
-                                            ),
+                                            constraint: constraint
+                                                .into_iter()
+                                                .map(|(v, expr)| {
+                                                    (v, replace_placeholder(expr, ast))
+                                                })
+                                                .collect(),
                                         }
                                     }
                                     BasicGenericPattern::AutoBind { pattern } => {
@@ -1157,14 +1152,13 @@ pub fn inject_std_library(
                 BasicTypeAst::Generic(pattern) => WithLocation::new(
                     BasicTypeAst::Generic(
                         (match *pattern {
-                            BasicGenericPattern::Standard { vars, pattern, constraint } => {
+                            BasicGenericPattern::Standard { pattern, constraint } => {
                                 BasicGenericPattern::Standard {
-                                    vars,
                                     pattern: replace_placeholder(pattern, ast),
-                                    constraint: (
-                                        replace_placeholder(constraint.0, ast),
-                                        replace_placeholder(constraint.1, ast),
-                                    ),
+                                    constraint: constraint
+                                        .into_iter()
+                                        .map(|(v, expr)| (v, replace_placeholder(expr, ast)))
+                                        .collect(),
                                 }
                             }
                             BasicGenericPattern::AutoBind { pattern } => {
