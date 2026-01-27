@@ -75,11 +75,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
     ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -124,11 +125,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -197,11 +199,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             let mut matched = ThreeValuedLogic::False;
             for sub in self.types.iter() {
@@ -220,26 +223,37 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx.pattern_collector.collect(|pattern_env| {
             let mut matched = ThreeValuedLogic::False;
             if let PatternCollector::Subtyping(c) = pattern_env {
-                let mut marker = c.mark_oneof(self.types.len());
+                let mut marker = c.mark_dynamic_oneof();
+
                 for sub in self.types.iter() {
-                    let mut branch = marker.enter_oneof();
-                    let mut path = branch.path();
-                    let mut inner_ctx = TypeCheckContext::new(
-                        ctx.assumptions,
-                        PatternCollector::Subtyping(&mut path),
-                        ctx.lhs_env,
-                        ctx.rhs_env,
-                        ctx.collected,
-                    );
-                    matched |= other.subof(sub.as_ref_dispatcher(), &mut inner_ctx)?
+                    let result = marker.wrap(|path| {
+                        let mut inner_ctx = TypeCheckContext::new(
+                            ctx.instance_assumptions,
+                            None,
+                            PatternCollector::Subtyping(path),
+                            ctx.lhs_env,
+                            ctx.rhs_env,
+                            ctx.collected_bindings,
+                        );
+                        let sub_result = other.subof(sub.as_ref_dispatcher(), &mut inner_ctx);
+                        match sub_result {
+                            Ok(ThreeValuedLogic::True) => (true, Ok(ThreeValuedLogic::True)),
+                            Ok(ThreeValuedLogic::Unknown) => (true, Ok(ThreeValuedLogic::Unknown)),
+                            Ok(val) => (false, Ok(val)),
+                            Err(e) => (false, Err(e)),
+                        }
+                    })?;
+
+                    matched |= result;
                 }
             } else {
                 let mut inner_ctx = TypeCheckContext::new(
-                    ctx.assumptions,
+                    ctx.instance_assumptions,
+                    ctx.subtype_assumptions,
                     pattern_env,
                     ctx.lhs_env,
                     ctx.rhs_env,
-                    ctx.collected,
+                    ctx.collected_bindings,
                 );
                 for sub in self.types.iter() {
                     matched |= other.subof(sub.as_ref_dispatcher(), &mut inner_ctx)?
@@ -338,6 +352,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
         let mut collected_pattern = EnvironmentStack::new();
         let mut context = TypeCheckContext::new(
             &mut assumptions,
+            None,
             PatternCollector::None,
             env,
             env,

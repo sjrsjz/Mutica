@@ -4,9 +4,9 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
-        GcAllocObject, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
-        TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
+        InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
+        Type, TypeCheckContext, TypeError, TypeRef,
     },
     util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
@@ -67,16 +67,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        (match ctx.collected.lookup_at_last_layer(&self.bind_name) {
+        (match ctx.collected_bindings.lookup_at_last_layer(&self.bind_name) {
             Some(existing) => existing.clone(),
             None => {
                 return ctx.pattern_collector.collect(|pattern_env| {
                     let mut inner_ctx = TypeCheckContext::new(
-                        ctx.assumptions,
+                        ctx.instance_assumptions,
+                        ctx.subtype_assumptions,
                         pattern_env,
                         ctx.lhs_env,
                         ctx.rhs_env,
-                        ctx.collected,
+                        ctx.collected_bindings,
                     );
                     match other {
                         TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -100,16 +101,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        (match ctx.collected.lookup_at_last_layer(&self.bind_name) {
+        (match ctx.collected_bindings.lookup_at_last_layer(&self.bind_name) {
             Some(existing) => existing.clone(),
             None => {
                 return ctx.pattern_collector.collect(|pattern_env| {
                     let mut inner_ctx = TypeCheckContext::new(
-                        ctx.assumptions,
+                        ctx.instance_assumptions,
+                        ctx.subtype_assumptions,
                         pattern_env,
                         ctx.lhs_env,
                         ctx.rhs_env,
-                        ctx.collected,
+                        ctx.collected_bindings,
                     );
                     match other {
                         TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -185,14 +187,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             pattern_env.push((self.bind_name.clone(), other.clone_data()));
             Ok(ThreeValuedLogic::True)
         } else {
-            other.check(
-                match ctx.collected.lookup_at_last_layer(&self.bind_name) {
-                    Some(existing) => existing.clone(),
-                    None => return Ok(ThreeValuedLogic::Unknown),
-                }
-                .as_ref_dispatcher(),
-                ctx,
-            )
+            Ok(ThreeValuedLogic::False)
         }
     }
 

@@ -104,11 +104,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -147,11 +148,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -253,7 +255,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                     let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
                     let invoke = Invoke::new(
                             Self::new(OpcodeKind::SetFixPoint, None).dispatch(),
-                            Sequence::new_tuple(vec![place_holder.clone(), Variable::new_pattern("var#fixpoint", None)], None),
+                            Sequence::new_tuple(vec![place_holder.clone(), Variable::new_argument("var#fixpoint", None)], None),
                             None::<Type<T>>,
                             None::<Type<T>>,None);
 
@@ -285,6 +287,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             let mut env_stack = EnvironmentStack::new();
                             let mut type_check_ctx = TypeCheckContext::new(
                                 &mut assumptions,
+                                None,
                                 PatternCollector::None,
                                 ctx.environment,
                                 ctx.environment,

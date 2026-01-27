@@ -2526,9 +2526,11 @@ impl LinearTypeAst {
                         .iter()
                         .map(|(name, _)| (name.value().clone(), name.as_ref().map(|_| ())))
                         .collect::<HashMap<_, _>>();
-                    ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone()));
+                    ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone(), true));
                     let pattern_type: BuildResult<T> =
                         pattern.to_type(ctx, gc, roots, pattern.location())?;
+                    ctx.exit_layer();
+                    ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone(), false));
                     let mut constraint_types = Vec::new();
                     for (name, ctype) in constraints {
                         let ctype_result = ctype.to_type(ctx, gc, roots, ctype.location())?;
@@ -2601,8 +2603,10 @@ impl LinearTypeAst {
                     .map(|(name, _)| (name.value().clone(), name.as_ref().map(|_| ())))
                     .collect::<HashMap<_, _>>();
 
-                ctx.enter_layer(BuildContextLayer::GenericBinding(bindings.clone()));
+                ctx.enter_layer(BuildContextLayer::GenericBinding(bindings.clone(), true));
                 let expr_type = expr.to_type(ctx, gc, roots, expr.location())?;
+                ctx.exit_layer();
+                ctx.enter_layer(BuildContextLayer::GenericBinding(bindings.clone(), false));
                 let mut constraint_types = Vec::new();
                 for (name, ctype) in constraint {
                     let ctype_result = ctype.to_type(ctx, gc, roots, ctype.location())?;

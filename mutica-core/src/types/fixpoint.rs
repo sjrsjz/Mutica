@@ -9,7 +9,9 @@ use arc_gc::{
 use crate::{
     as_type,
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
+        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
+        TypeCheckContext, TypeError, TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation,
@@ -164,11 +166,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx), // AllOf 是特殊情况，先展开All是可以的，因为外层全称量词作用于All
@@ -196,14 +199,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         let assumption_pair = (self_ptr, other_ptr);
                         // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
                         let already_assumed =
-                            inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
+                            inner_ctx.instance_assumptions.iter().any(|a| a == &assumption_pair);
                         if already_assumed {
                             return Ok(ThreeValuedLogic::True); // already assumed
                         }
 
-                        inner_ctx.assumptions.push(assumption_pair.clone());
+                        inner_ctx.instance_assumptions.push(assumption_pair.clone());
                         let result = inner.check(other, &mut inner_ctx);
-                        inner_ctx.assumptions.pop();
+                        inner_ctx.instance_assumptions.pop();
                         result
                     }
                     None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
@@ -219,11 +222,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::FixPoint(v) => {
@@ -235,7 +239,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     }
                     v.superof(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
-                
+
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_fixpoint_value() {
@@ -247,14 +251,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         let assumption_pair = (self_ptr, other_ptr);
                         // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
                         let already_assumed =
-                            inner_ctx.assumptions.iter().any(|a| a == &assumption_pair);
+                            inner_ctx.instance_assumptions.iter().any(|a| a == &assumption_pair);
                         if already_assumed {
                             return Ok(ThreeValuedLogic::True); // already assumed
                         }
 
-                        inner_ctx.assumptions.push(assumption_pair.clone());
+                        inner_ctx.instance_assumptions.push(assumption_pair.clone());
                         let result = inner.subof(other, &mut inner_ctx);
-                        inner_ctx.assumptions.pop();
+                        inner_ctx.instance_assumptions.pop();
                         result
                     }
                     None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
@@ -344,11 +348,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match self.reference.upgrade() {
                 Some(inner) => other.check(
@@ -371,11 +376,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match self.reference.upgrade() {
                 Some(inner) => other.subof(

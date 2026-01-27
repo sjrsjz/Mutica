@@ -26,6 +26,10 @@ impl<'a, V: Debug + Clone> PathCollector<'a, V> {
         OneOfMarker { nodes: self.nodes, oneof_left: branches }
     }
 
+    pub fn mark_dynamic_oneof<'b>(&'b mut self) -> DynamicOneOfMarker<'b, V> {
+        DynamicOneOfMarker { nodes: self.nodes, branch_indices: SmallVec::new() }
+    }
+
     pub fn collect<F, E>(&mut self, f: F) -> Result<ThreeValuedLogic, E>
     where
         F: FnOnce(&mut Self) -> Result<ThreeValuedLogic, E>,
@@ -45,35 +49,47 @@ impl<'a, V: Debug + Clone> PathCollector<'a, V> {
             Err(e) => Err(e),
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        self.nodes.truncate(len);
+    }
 }
 
 // --- 核心遍历逻辑 ---
 impl<'a, V: Debug + Clone> PathCollector<'a, V> {
-    pub fn walk<F>(&self, mut f: F)
+    pub fn walk<B, E, F>(&self, mut f: F) -> Result<ControlFlow<B>, E>
     where
-        F: FnMut(&[V]) -> ControlFlow<()>,
+        F: FnMut(&[V]) -> Result<ControlFlow<B>, E>,
     {
         let mut stack = Vec::new();
         // 初始续体为空
         let continuations = SmallVec::<[(usize, usize); 8]>::new();
 
-        let _ = self.walk_recursive(&mut stack, 0, self.nodes.len(), &continuations, &mut f);
+        self.walk_recursive(&mut stack, 0, self.nodes.len(), &continuations, &mut f)
     }
 
     // 这是一个通用的“片段执行器”
     // start..end: 当前要执行的代码片段
     // continuations: 执行完当前片段后，接下来要执行的片段列表（后进先出）
     #[stacksafe::stacksafe]
-    fn walk_recursive<F>(
+    fn walk_recursive<B, E, F>(
         &self,
         stack: &mut Vec<V>,
         mut pos: usize,
         end: usize,
         continuations: &[(usize, usize)], // 剩余的任务片段：[(start, end), ...]
         f: &mut F,
-    ) -> ControlFlow<()>
+    ) -> Result<ControlFlow<B>, E>
     where
-        F: FnMut(&[V]) -> ControlFlow<()>,
+        F: FnMut(&[V]) -> Result<ControlFlow<B>, E>,
     {
         // 记录进入此函数时的栈深度，用于最后回溯
         let initial_len = stack.len();
@@ -118,10 +134,27 @@ impl<'a, V: Debug + Clone> PathCollector<'a, V> {
                     }
 
                     // 3. 递归分发
+                    // 保存当前栈的长度，确保每个分支从相同的栈状态开始
+                    let branch_start_len = stack.len();
                     for (b_start, b_end) in branches {
+                        // 确保每个分支开始时栈状态一致
+                        stack.truncate(branch_start_len);
+
                         // 递归调用会自动处理栈的 push，并在返回前 truncate 回复原状
                         // 这样保证了分支之间的隔离
-                        self.walk_recursive(stack, b_start, b_end, &next_continuations, f)?;
+                        match self.walk_recursive(stack, b_start, b_end, &next_continuations, f) {
+                            Err(e) => {
+                                stack.truncate(initial_len);
+                                return Err(e);
+                            }
+                            Ok(ControlFlow::Break(b)) => {
+                                stack.truncate(initial_len);
+                                return Ok(ControlFlow::Break(b));
+                            }
+                            Ok(ControlFlow::Continue(())) => {
+                                // 继续下一个分支
+                            }
+                        }
                     }
 
                     // OneOf 处理完毕意味着当前线性片段被截断并分叉了
@@ -129,7 +162,7 @@ impl<'a, V: Debug + Clone> PathCollector<'a, V> {
                     // 并由子分支递归触发了。
                     // 恢复栈状态（弹出 while 循环中 push 的 Single）并返回
                     stack.truncate(initial_len);
-                    return ControlFlow::Continue(());
+                    return Ok(ControlFlow::Continue(()));
                 }
             }
         }
@@ -138,15 +171,15 @@ impl<'a, V: Debug + Clone> PathCollector<'a, V> {
         // 检查是否有后续任务 (Continuation)
         if let Some((next_start, next_end)) = continuations.first() {
             // 取出第一个续体，剩下的作为新的 continuations 传下去
-            self.walk_recursive(stack, *next_start, *next_end, &continuations[1..], f)?;
+            let result = self.walk_recursive(stack, *next_start, *next_end, &continuations[1..], f);
+            stack.truncate(initial_len);
+            result
         } else {
             // 没有续体了，说明一条完整的路径走到头了
-            f(stack)?;
+            let result = f(stack);
+            stack.truncate(initial_len);
+            result
         }
-
-        // 回溯：清理当前函数压入的所有 Single
-        stack.truncate(initial_len);
-        ControlFlow::Continue(())
     }
 }
 
@@ -165,26 +198,81 @@ impl<'a, V: Debug + Clone> OneOfMarker<'a, V> {
         self.oneof_left -= 1;
         let header_pos = self.nodes.len();
         self.nodes.push(PathNode::OneOf(0, is_last));
-        OneOfGuard { nodes: self.nodes, header_pos }
+        OneOfGuard { nodes: self.nodes, header_pos, roll_back: false }
     }
 }
 
 pub struct OneOfGuard<'a, V: Debug + Clone> {
     nodes: &'a mut Vec<PathNode<V>>,
     header_pos: usize,
+    roll_back: bool,
 }
 
 impl<'a, V: Debug + Clone> OneOfGuard<'a, V> {
     pub fn path(&mut self) -> PathCollector<'_, V> {
         PathCollector { nodes: self.nodes }
     }
+
+    pub fn roll_back(&mut self) {
+        self.roll_back = true;
+    }
 }
 
 impl<'a, V: Debug + Clone> Drop for OneOfGuard<'a, V> {
     fn drop(&mut self) {
+        if self.roll_back {
+            // 回滚：移除 OneOf Header
+            self.nodes.truncate(self.header_pos);
+            return;
+        }
         let branch_len = self.nodes.len() - self.header_pos - 1;
         if let PathNode::OneOf(ref mut len, _) = self.nodes[self.header_pos] {
             *len = branch_len;
+        }
+    }
+}
+
+pub struct DynamicOneOfMarker<'a, V: Debug + Clone> {
+    nodes: &'a mut Vec<PathNode<V>>,
+    branch_indices: SmallVec<[usize; 4]>,
+}
+
+impl<'a, V: Debug + Clone> DynamicOneOfMarker<'a, V> {
+    /// 执行一个分支，由闭包决定是否保留该分支
+    /// 闭包返回 (should_keep, result)
+    pub fn wrap<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut PathCollector<V>) -> (bool, R),
+    {
+        let header_idx = self.nodes.len();
+        // 占位符：先写成 is_last=false，等 Drop 时修正最后一条
+        self.nodes.push(PathNode::OneOf(0, false));
+        let start_len = self.nodes.len();
+
+        // 构造子 Collector 借用 nodes
+        let mut sub_collector = PathCollector::from(self.nodes);
+        let (keep, result) = f(&mut sub_collector);
+
+        if keep {
+            let branch_len = self.nodes.len() - start_len;
+            self.nodes[header_idx] = PathNode::OneOf(branch_len, false);
+            self.branch_indices.push(header_idx);
+        } else {
+            // 回滚：移除 Header 及所有后续内容
+            self.nodes.truncate(header_idx);
+        }
+
+        result
+    }
+}
+
+impl<'a, V: Debug + Clone> Drop for DynamicOneOfMarker<'a, V> {
+    fn drop(&mut self) {
+        // 修正最后一个分支的 is_last 标记
+        if let Some(&last_idx) = self.branch_indices.last()
+            && let PathNode::OneOf(len, _) = self.nodes[last_idx]
+        {
+            self.nodes[last_idx] = PathNode::OneOf(len, true);
         }
     }
 }
@@ -251,9 +339,9 @@ mod test {
         // 收集所有路径
         let mut paths = Vec::new();
         let path = PathCollector::from(&mut nodes);
-        path.walk(|p| {
+        let _: Result<ControlFlow<()>, ()> = path.walk(|p| {
             paths.push(p.to_vec());
-            ControlFlow::Continue(())
+            Ok(ControlFlow::Continue(()))
         });
 
         // 验证生成的路径
@@ -317,9 +405,9 @@ mod test {
         // 收集所有路径
         let mut paths = Vec::new();
         let path = PathCollector::from(&mut nodes);
-        path.walk(|p| {
+        let _: Result<ControlFlow<()>, ()> = path.walk(|p| {
             paths.push(p.to_vec());
-            ControlFlow::Continue(())
+            Ok(ControlFlow::Continue(()))
         });
 
         // 验证生成的路径数量和内容
@@ -341,5 +429,161 @@ mod test {
         for (i, p) in paths.iter().enumerate() {
             println!("  Path {}: {:?}", i + 1, p);
         }
+    }
+
+    #[test]
+    fn test_path_walk_with_break() {
+        let mut nodes = Vec::new();
+        let mut path = PathCollector::from(&mut nodes);
+
+        path.push_single(1);
+
+        {
+            let mut oneof_marker = path.mark_oneof(3);
+            {
+                let mut branch = oneof_marker.enter_oneof();
+                branch.path().push_single(2);
+            }
+            {
+                let mut branch = oneof_marker.enter_oneof();
+                branch.path().push_single(3);
+            }
+            {
+                let mut branch = oneof_marker.enter_oneof();
+                branch.path().push_single(4);
+            }
+        }
+
+        path.push_single(5);
+
+        // 测试 break：找到包含 3 的路径就停止
+        let mut found_path = None;
+        let path = PathCollector::from(&mut nodes);
+        let result: Result<ControlFlow<Vec<i32>>, ()> = path.walk(|p| {
+            if p.contains(&3) {
+                Ok(ControlFlow::Break(p.to_vec()))
+            } else {
+                Ok(ControlFlow::Continue(()))
+            }
+        });
+
+        if let Ok(ControlFlow::Break(path)) = result {
+            found_path = Some(path);
+        }
+
+        assert_eq!(found_path, Some(vec![1, 3, 5]));
+    }
+
+    #[test]
+    fn test_path_walk_with_error() {
+        let mut nodes = Vec::new();
+        let mut path = PathCollector::from(&mut nodes);
+
+        path.push_single(1);
+
+        {
+            let mut oneof_marker = path.mark_oneof(3);
+            {
+                let mut branch = oneof_marker.enter_oneof();
+                branch.path().push_single(2);
+            }
+            {
+                let mut branch = oneof_marker.enter_oneof();
+                branch.path().push_single(3);
+            }
+            {
+                let mut branch = oneof_marker.enter_oneof();
+                branch.path().push_single(4);
+            }
+        }
+
+        path.push_single(5);
+
+        // 测试错误传播：遇到 3 就报错
+        let path = PathCollector::from(&mut nodes);
+        let result: Result<ControlFlow<()>, String> = path.walk(|p| {
+            if p.contains(&3) {
+                Err("Found forbidden value 3".to_string())
+            } else {
+                Ok(ControlFlow::Continue(()))
+            }
+        });
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Found forbidden value 3");
+    }
+
+    #[test]
+    fn test_path_walk_nested_empty_branches() {
+        // 复现实际问题的路径结构：
+        // [Single(("a", "x")),
+        //  OneOf(0, false), OneOf(0, true),           // 第一组：2个空分支
+        //  OneOf(0, false), OneOf(2, true),           // 第二组：1个空分支 + 1个包含2个元素的分支
+        //  Single(("b", "y")), Single(("c", "y"))]
+
+        let mut nodes = Vec::new();
+        let mut path = PathCollector::from(&mut nodes);
+
+        path.push_single(("a", "x"));
+
+        {
+            // 第一组 OneOf：2个空分支
+            let mut oneof1 = path.mark_oneof(2);
+            {
+                let _branch1 = oneof1.enter_oneof();
+                // 空分支
+            }
+            {
+                let _branch2 = oneof1.enter_oneof();
+                // 空分支
+            }
+        }
+
+        {
+            // 第二组 OneOf：1个空分支 + 1个包含2个元素的分支
+            let mut oneof2 = path.mark_oneof(2);
+            {
+                let _branch1 = oneof2.enter_oneof();
+                // 空分支
+            }
+            {
+                let mut branch2 = oneof2.enter_oneof();
+                let mut p = branch2.path();
+                p.push_single(("b", "y"));
+                p.push_single(("c", "y"));
+            }
+        }
+
+        println!("Generated path structure: {:?}", nodes);
+
+        // 收集所有路径
+        let mut paths = Vec::new();
+        let path = PathCollector::from(&mut nodes);
+        let _: Result<ControlFlow<()>, ()> = path.walk(|p| {
+            println!("Path: {:?}", p);
+            paths.push(p.to_vec());
+            Ok(ControlFlow::Continue(()))
+        });
+
+        // 应该生成 2 * 2 = 4 条路径：
+        // 1. [("a", "x")] - 第一组的分支1 + 第二组的分支1（都是空）
+        // 2. [("a", "x"), ("b", "y"), ("c", "y")] - 第一组的分支1 + 第二组的分支2
+        // 3. [("a", "x")] - 第一组的分支2 + 第二组的分支1（都是空）
+        // 4. [("a", "x"), ("b", "y"), ("c", "y")] - 第一组的分支2 + 第二组的分支2
+
+        println!("\nTotal paths generated: {}", paths.len());
+        for (i, p) in paths.iter().enumerate() {
+            println!("  Path {}: {:?}", i + 1, p);
+        }
+
+        assert_eq!(paths.len(), 4, "应该生成4条路径");
+
+        // 前两条来自第一组的第一个分支
+        assert_eq!(paths[0], vec![("a", "x")]);
+        assert_eq!(paths[1], vec![("a", "x"), ("b", "y"), ("c", "y")]);
+
+        // 后两条来自第一组的第二个分支
+        assert_eq!(paths[2], vec![("a", "x")]);
+        assert_eq!(paths[3], vec![("a", "x"), ("b", "y"), ("c", "y")]);
     }
 }

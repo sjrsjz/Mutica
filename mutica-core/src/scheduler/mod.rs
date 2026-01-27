@@ -253,7 +253,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         // 从外到内折叠：最后一次调用使用 TailCall（continuation=None）以保持 TCO。
                         let mut next_cont: Option<Type<T>> = None;
                         for func in chain.into_iter().rev() {
-                            let arg = Variable::new_pattern(bind_name.as_ref(), None);
+                            let arg = Variable::new_argument(bind_name.as_ref(), None);
                             let invoke = Invoke::new(func, arg, next_cont, None::<Type<T>>, None);
                             next_cont = Some(Closure::lazy(
                                 None,
@@ -273,7 +273,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             None,
                             Arc::from("var#continuation"),
                             Invoke::new(
-                                Variable::new_pattern("var#continuation", None),
+                                Variable::new_argument("var#continuation", None),
                                 *v,
                                 None::<Type<T>>,
                                 handler,

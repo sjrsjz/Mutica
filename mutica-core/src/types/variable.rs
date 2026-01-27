@@ -18,6 +18,11 @@ pub enum Variable<T: GcAllocObject<T, Inner = Type<T>>> {
         source_info: Option<Arc<SourceLocation>>,
         _phantom: std::marker::PhantomData<T>,
     },
+    ArgumentVariable {
+        bind_name: Arc<str>,
+        source_info: Option<Arc<SourceLocation>>,
+        _phantom: std::marker::PhantomData<T>,
+    },
     PatternVariable {
         bind_name: Arc<str>,
         source_info: Option<Arc<SourceLocation>>,
@@ -30,6 +35,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Variable<T> {
         match self {
             Variable::ContextVariable { bind_name, source_info, _phantom } => {
                 Variable::ContextVariable {
+                    bind_name: bind_name.clone(),
+                    source_info: source_info.clone(),
+                    _phantom: std::marker::PhantomData,
+                }
+            }
+            Variable::ArgumentVariable { bind_name, source_info, _phantom } => {
+                Variable::ArgumentVariable {
                     bind_name: bind_name.clone(),
                     source_info: source_info.clone(),
                     _phantom: std::marker::PhantomData,
@@ -75,11 +87,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -90,10 +103,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 _ => match self {
-                    Variable::PatternVariable { .. } => Ok(ThreeValuedLogic::Unknown),
+                    Variable::ArgumentVariable { .. } => Ok(ThreeValuedLogic::Unknown),
                     Variable::ContextVariable { bind_name, .. } => {
                         if let Some(ty) = ctx.lhs_env.lookup(bind_name) {
                             ty.check(other, &mut inner_ctx)
+                        } else {
+                            Ok(ThreeValuedLogic::Unknown)
+                        }
+                    }
+                    Variable::PatternVariable { bind_name, .. } => {
+                        if let Some(ty) =
+                            inner_ctx.collected_bindings.lookup_at_last_layer(bind_name)
+                        {
+                            ty.clone().check(other, &mut inner_ctx)
                         } else {
                             Ok(ThreeValuedLogic::Unknown)
                         }
@@ -110,17 +132,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
+                TypeRef::Variable(Variable::PatternVariable { bind_name, .. }) => {
+                    if let Some(c) = inner_ctx.subtype_assumptions {
+                        if c.contains(&(self.bind_name().clone(), bind_name.clone())) {
+                            return Ok(ThreeValuedLogic::True);
+                        }
+                        return Ok(ThreeValuedLogic::False);
+                    }
+                    Ok(ThreeValuedLogic::Unknown)
+                }
                 _ => Ok(ThreeValuedLogic::Unknown),
             }
         })
@@ -131,7 +163,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self {
-            Variable::PatternVariable { bind_name, .. } => {
+            Variable::ArgumentVariable { bind_name, .. } => {
                 if let Some(ty) = ctx.pattern_environment.lookup(&bind_name) {
                     Ok(ty.clone())
                 } else {
@@ -147,6 +179,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                     Err(TypeError::UnboundContextVariable(bind_name.to_string().into_boxed_str()))
                 }
             }
+            Variable::PatternVariable { .. } => Ok(self.dispatch()),
         }
     }
 
@@ -157,6 +190,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         match self {
             Variable::ContextVariable { source_info, .. } => source_info.as_ref(),
+            Variable::ArgumentVariable { source_info, .. } => source_info.as_ref(),
             Variable::PatternVariable { source_info, .. } => source_info.as_ref(),
         }
     }
@@ -193,11 +227,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         other.check(
             (match self {
-                Variable::PatternVariable { .. } => return Ok(ThreeValuedLogic::Unknown),
+                Variable::ArgumentVariable { .. } => return Ok(ThreeValuedLogic::Unknown),
                 Variable::ContextVariable { bind_name, .. } => {
                     match ctx.rhs_env.lookup(bind_name) {
                         Some(ty) => ty.clone(),
                         None => return Ok(ThreeValuedLogic::Unknown),
+                    }
+                }
+                Variable::PatternVariable { bind_name, .. } => {
+                    if let Some(ty) = ctx.collected_bindings.lookup_at_last_layer(bind_name) {
+                        ty.clone()
+                    } else {
+                        return Ok(ThreeValuedLogic::Unknown);
                     }
                 }
             })
@@ -214,11 +255,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         other.subof(
             (match self {
-                Variable::PatternVariable { .. } => return Ok(ThreeValuedLogic::Unknown),
+                Variable::ArgumentVariable { .. } => return Ok(ThreeValuedLogic::Unknown),
                 Variable::ContextVariable { bind_name, .. } => {
                     match ctx.rhs_env.lookup(bind_name) {
                         Some(ty) => ty.clone(),
                         None => return Ok(ThreeValuedLogic::Unknown),
+                    }
+                }
+                Variable::PatternVariable { bind_name, .. } => {
+                    if let Some(ty) = ctx.collected_bindings.lookup_at_last_layer(bind_name) {
+                        ty.clone()
+                    } else {
+                        return Ok(ThreeValuedLogic::Unknown);
                     }
                 }
             })
@@ -237,13 +285,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
     ) -> String {
         match self {
             Variable::ContextVariable { bind_name, .. } => format!("c.{}", bind_name),
-            Variable::PatternVariable { bind_name, .. } => format!("λ.{}", bind_name),
+            Variable::ArgumentVariable { bind_name, .. } => format!("λ.{}", bind_name),
+            Variable::PatternVariable { bind_name, .. } => format!("p.{}", bind_name),
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
-    #[allow(clippy::new_ret_no_self)]
     pub fn new_context(
         bind_name: impl Into<Arc<str>>,
         source_info: Option<Arc<SourceLocation>>,
@@ -256,7 +304,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
         .dispatch()
     }
 
-    #[allow(clippy::new_ret_no_self)]
+    pub fn new_argument(
+        bind_name: impl Into<Arc<str>>,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
+        Variable::ArgumentVariable {
+            bind_name: bind_name.into(),
+            source_info,
+            _phantom: std::marker::PhantomData,
+        }
+        .dispatch()
+    }
+
     pub fn new_pattern(
         bind_name: impl Into<Arc<str>>,
         source_info: Option<Arc<SourceLocation>>,
@@ -272,6 +331,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
     pub fn bind_name(&self) -> &Arc<str> {
         match self {
             Variable::ContextVariable { bind_name, .. } => bind_name,
+            Variable::ArgumentVariable { bind_name, .. } => bind_name,
             Variable::PatternVariable { bind_name, .. } => bind_name,
         }
     }

@@ -5,7 +5,9 @@ use arc_gc::traceable::GCTraceable;
 use crate::{
     test_true,
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef, unify::EnvironmentView
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
+        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
+        TypeCheckContext, TypeError, TypeRef, unify::EnvironmentView,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -118,11 +120,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -262,13 +265,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     };
                                     // 由于不消耗任何前缀元素就直接匹配剩余部分，可能会导致无限递归，因此需要做循环假设检测
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
-                                    if inner_ctx.assumptions.contains(&pair) {
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
                                         return Ok(ThreeValuedLogic::True);
                                     }
-                                    inner_ctx.assumptions.push(pair);
+                                    inner_ctx.instance_assumptions.push(pair);
                                     let result =
                                         viewed.check(r_cons.as_ref_dispatcher(), &mut inner_ctx);
-                                    inner_ctx.assumptions.pop();
+                                    inner_ctx.instance_assumptions.pop();
                                     all &= result?;
                                     Ok(all)
                                 }
@@ -342,13 +345,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         offset: v.physical_prefix_len(),
                                     };
                                     let pair = (cons.tagged_ptr(), viewed.tagged_ptr());
-                                    if inner_ctx.assumptions.contains(&pair) {
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
                                         return Ok(ThreeValuedLogic::True);
                                     }
-                                    inner_ctx.assumptions.push(pair);
+                                    inner_ctx.instance_assumptions.push(pair);
                                     let result =
                                         cons.check(viewed.as_ref_dispatcher(), &mut inner_ctx);
-                                    inner_ctx.assumptions.pop();
+                                    inner_ctx.instance_assumptions.pop();
                                     all &= result?;
                                     Ok(all)
                                 }
@@ -382,13 +385,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         offset: v.physical_prefix_len(),
                                     };
                                     let pair = (cons.tagged_ptr(), viewed.tagged_ptr());
-                                    if inner_ctx.assumptions.contains(&pair) {
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
                                         return Ok(ThreeValuedLogic::True);
                                     }
-                                    inner_ctx.assumptions.push(pair);
+                                    inner_ctx.instance_assumptions.push(pair);
                                     let result =
                                         cons.check(viewed.as_ref_dispatcher(), &mut inner_ctx);
-                                    inner_ctx.assumptions.pop();
+                                    inner_ctx.instance_assumptions.pop();
                                     all &= result?;
                                     Ok(all)
                                 }
@@ -449,11 +452,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -586,13 +590,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         offset: self.physical_prefix_len(),
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
-                                    if inner_ctx.assumptions.contains(&pair) {
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
                                         return Ok(ThreeValuedLogic::True);
                                     }
-                                    inner_ctx.assumptions.push(pair);
+                                    inner_ctx.instance_assumptions.push(pair);
                                     let result =
                                         viewed.subof(r_cons.as_ref_dispatcher(), &mut inner_ctx);
-                                    inner_ctx.assumptions.pop();
+                                    inner_ctx.instance_assumptions.pop();
                                     all &= result?;
                                     Ok(all)
                                 }
@@ -665,13 +669,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         offset: v.physical_prefix_len(),
                                     };
                                     let pair = (cons.tagged_ptr(), viewed.tagged_ptr());
-                                    if inner_ctx.assumptions.contains(&pair) {
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
                                         return Ok(ThreeValuedLogic::True);
                                     }
-                                    inner_ctx.assumptions.push(pair);
+                                    inner_ctx.instance_assumptions.push(pair);
                                     let result =
                                         cons.subof(viewed.as_ref_dispatcher(), &mut inner_ctx);
-                                    inner_ctx.assumptions.pop();
+                                    inner_ctx.instance_assumptions.pop();
                                     all &= result?;
                                     Ok(all)
                                 }
@@ -705,13 +709,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         offset: v.physical_prefix_len(),
                                     };
                                     let pair = (cons.tagged_ptr(), viewed.tagged_ptr());
-                                    if inner_ctx.assumptions.contains(&pair) {
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
                                         return Ok(ThreeValuedLogic::True);
                                     }
-                                    inner_ctx.assumptions.push(pair);
+                                    inner_ctx.instance_assumptions.push(pair);
                                     let result =
                                         cons.subof(viewed.as_ref_dispatcher(), &mut inner_ctx);
-                                    inner_ctx.assumptions.pop();
+                                    inner_ctx.instance_assumptions.pop();
                                     all &= result?;
                                     Ok(all)
                                 }

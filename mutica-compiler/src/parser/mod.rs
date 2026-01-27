@@ -496,7 +496,7 @@ pub enum BuildContextLayer<T: GcAllocObject<T, Inner = Type<T>>> {
         patterns: HashMap<String, WithLocation<()>>,
         captures: HashMap<String, WithLocation<()>>,
     },
-    GenericBinding(HashMap<String, WithLocation<()>>),
+    GenericBinding(HashMap<String, WithLocation<()>>, bool), // 第二个参数用于区分定义/使用
     FixPoint(WithLocation<String>, Type<T>),
 }
 
@@ -508,8 +508,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContextLayer<T> {
         Self::Function { patterns, captures }
     }
 
-    pub fn new_generic_binding_layer(patterns: HashMap<String, WithLocation<()>>) -> Self {
-        Self::GenericBinding(patterns)
+    pub fn new_generic_binding_layer(
+        patterns: HashMap<String, WithLocation<()>>,
+        is_definition: bool,
+    ) -> Self {
+        Self::GenericBinding(patterns, is_definition)
     }
 
     pub fn new_fixpoint_layer(name: WithLocation<String>, ty: Type<T>) -> Self {
@@ -549,7 +552,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     match (patterns.get(var.as_ref()), captures.get(var.as_ref())) {
                         (Some(v), _) => {
                             return Some((
-                                Variable::new_pattern(
+                                Variable::new_argument(
                                     Arc::from(var.as_ref()),
                                     v.location().cloned().map(Arc::new),
                                 ),
@@ -569,19 +572,30 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     }
                     outgoing_function_layer_count += 1;
                 }
-                BuildContextLayer::GenericBinding(patterns) => {
+                BuildContextLayer::GenericBinding(patterns, is_definition) => {
                     if skip_generic {
                         continue;
                     }
                     if let Some(v) = patterns.get(var.as_ref()) {
-                        return Some((
-                            Pattern::new(
-                                Arc::from(var.as_ref()),
-                                v.location().cloned().map(Arc::new),
-                            )
-                            .dispatch(),
-                            None,
-                        ));
+                        if *is_definition {
+                            return Some((
+                                Pattern::new(
+                                    Arc::from(var.as_ref()),
+                                    v.location().cloned().map(Arc::new),
+                                )
+                                .dispatch(),
+                                None,
+                            ));
+                        } else {
+                            return Some((
+                                Variable::new_pattern(
+                                    Arc::from(var.as_ref()),
+                                    v.location().cloned().map(Arc::new),
+                                )
+                                .dispatch(),
+                                None,
+                            ));
+                        }
                     }
                     skip_generic = true; // 只允许跨越一层 Generic
                 }
@@ -610,7 +624,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     }
                     return None;
                 }
-                BuildContextLayer::FixPoint(_, _) | BuildContextLayer::GenericBinding(_) => {}
+                BuildContextLayer::FixPoint(_, _) | BuildContextLayer::GenericBinding(_, _) => {}
             }
         }
         None

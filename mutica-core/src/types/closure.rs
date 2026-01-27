@@ -123,11 +123,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -192,11 +193,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.assumptions,
+                ctx.instance_assumptions,
+                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected,
+                ctx.collected_bindings,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -305,6 +307,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             let mut env_stack = EnvironmentStack::new();
             let mut pattern_check_ctx = TypeCheckContext::new(
                 &mut assumptions,
+                None,
                 PatternCollector::Deconstruct(&mut matched_pattern),
                 ctx.environment,
                 ctx.environment,
@@ -446,7 +449,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         source_info: Option<Arc<SourceLocation>>,
         env: EnvironmentView<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Self::lazy(source_info, "var#x", Variable::new_pattern("var#x", None), env)
+        Self::lazy(source_info, "var#x", Variable::new_argument("var#x", None), env)
     }
 
     pub fn lazy<S: Into<Arc<str>>, V: AsDispatcher<Type<T>, T>>(

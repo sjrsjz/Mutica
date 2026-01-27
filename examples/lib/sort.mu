@@ -1,5 +1,4 @@
 let list_pkg: any = import "list.mu";
-let Any::(Any: any) = import "any.mu";
 let {
     List::(List: any) &
     cons::(cons: lambda) &
@@ -8,7 +7,7 @@ let {
     take::(take: lambda)
 } = list_pkg;
 // 归并两个已排序的列表
-let merge: lambda = (cmp: lambda, lst1: List(Any), lst2: List(Any)) => {
+let merge: lambda = (cmp: lambda, lst1: List(any), lst2: List(any)) => {
     loop merge_go: t: any = (lst1, lst2);
     match t
         | ((), l2: any) => l2
@@ -21,7 +20,7 @@ let merge: lambda = (cmp: lambda, lst1: List(Any), lst2: List(Any)) => {
 };
 
 // 将列表分为两半
-let split: lambda = lst: List(Any) => {
+let split: lambda = lst: List(any) => {
     let len: nat = len lst;
     let mid: nat = len / 2;
     let first_half: any = take lst mid;
@@ -30,7 +29,7 @@ let split: lambda = lst: List(Any) => {
 };
 
 // 归并排序主函数
-let merge_sort: lambda = cmp: lambda => lst: List(Any) =>  {
+let merge_sort: lambda = cmp: lambda => lst: List(any) =>  {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -46,14 +45,14 @@ let merge_sort: lambda = cmp: lambda => lst: List(Any) =>  {
 
 
 // 快速排序
-let quick_sort: lambda = cmp: lambda => lst: List(Any) => {
+let quick_sort: lambda = cmp: lambda => lst: List(any) => {
     loop go: t: any = lst;
     match t
         | () => ()
         | (v: any ~ ()) => v
         | (pivot: any ~ rest: any) => {
             // 分区函数
-            let partition: lambda = l: List(Any) => {
+            let partition: lambda = l: List(any) => {
                 loop part: pt: any = (l, (), ());
                 let (lst_p: any, smaller: any, larger: any) = pt;
                 match lst_p
@@ -77,9 +76,9 @@ let quick_sort: lambda = cmp: lambda => lst: List(Any) => {
 };
 
 // 插入排序
-let insert_sort: lambda = cmp: lambda => lst: List(Any) => {
+let insert_sort: lambda = cmp: lambda => lst: List(any) => {
     // 将元素插入已排序列表
-    let insert: lambda = (x: any, sorted: List(Any)) => {
+    let insert: lambda = (x: any, sorted: List(any)) => {
         loop go: t: any = sorted;
         match t
             | () => cons(x, ())

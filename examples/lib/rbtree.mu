@@ -6,7 +6,6 @@ let {
 } = import "int.mu";
 let Just::(Just: lambda) = maybe_pkg;
 let Nothing::(Nothing: any) = maybe_pkg;
-let Any::(Any: any) = import "any.mu";
 
 // 颜色定义
 let Red: any = Red::();
@@ -24,7 +23,7 @@ let Tree: lambda = (K: any, V: any) => rec tree: (
 let empty: any = Empty::();
 
 // 平衡函数 - 处理红黑树的4种违规情况
-let balance: lambda = t: Tree(Any, Any) => 
+let balance: lambda = t: Tree(any, any) => 
     match t
         // 情况1: 左-左红红
         | Node::(Black, z: any, zv: any, Node::(Red, y: any, yv: any, Node::(Red, x: any, xv: any, a: any, b: any), c: any), d: any) =>
@@ -43,7 +42,7 @@ let balance: lambda = t: Tree(Any, Any) =>
         | panic;
 
 // 插入辅助函数
-let insert_helper: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => value: any => {
+let insert_helper: lambda = cmp: lambda => tree: Tree(any, any) => key: any => value: any => {
     loop go: t: any = tree;
     match t
         | Empty::() => Node::(Red, key, value, Empty::(), Empty::())
@@ -59,7 +58,7 @@ let insert_helper: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => v
 };
 
 // 插入函数 - 确保根节点是黑色
-let insert: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => value: any => {
+let insert: lambda = cmp: lambda => tree: Tree(any, any) => key: any => value: any => {
     let result: any = insert_helper(cmp)(tree)(key)(value);
     match result
         | Node::(_T: _, k: any, v: any, left: any, right: any) => Node::(Black, k, v, left, right)
@@ -68,7 +67,7 @@ let insert: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => value: a
 };
 
 // 查找函数
-let lookup: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => {
+let lookup: lambda = cmp: lambda => tree: Tree(any, any) => key: any => {
     loop go: t: any = tree;
     match t
         | Empty::() => Nothing
@@ -84,7 +83,7 @@ let lookup: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => {
 };
 
 // 检查键是否存在
-let contains: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => {
+let contains: lambda = cmp: lambda => tree: Tree(any, any) => key: any => {
     match lookup(cmp)(tree)(key)
         | Just::(_T: _) => true
         | Nothing::() => false
@@ -92,7 +91,7 @@ let contains: lambda = cmp: lambda => tree: Tree(Any, Any) => key: any => {
 };
 
 // 获取树的大小
-let size: lambda = tree: Tree(Any, Any) => {
+let size: lambda = tree: Tree(any, any) => {
     loop go: t: any = tree;
     match t
         | Empty::() => 0
@@ -101,7 +100,7 @@ let size: lambda = tree: Tree(Any, Any) => {
 };
 
 // 中序遍历
-let inorder: lambda = tree: Tree(Any, Any) => f: lambda => {
+let inorder: lambda = tree: Tree(any, any) => f: lambda => {
     loop go: t: any = tree;
     match t
         | Empty::() => ()
