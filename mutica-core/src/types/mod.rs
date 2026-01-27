@@ -79,7 +79,7 @@ macro_rules! typeref_dispatch {
     };
 }
 
-use std::{error::Error, fmt::Debug, marker::PhantomData, sync::Arc};
+use std::{error::Error, fmt::Debug, sync::Arc};
 
 use arc_gc::{
     arc::{GCArc, GCArcWeak},
@@ -111,11 +111,13 @@ use crate::{
         pattern::Pattern,
         sequence::Sequence,
         subof::SubOf,
-        unify::{Environment, EnvironmentStack, EnvironmentView},
+        unify::{
+            Environment, EnvironmentStack, EnvironmentView, collector::Collector,
+            path_collector::PathCollector,
+        },
         variable::Variable,
     },
     util::{
-        collector::Collector,
         cycle_detector::FastCycleDetector,
         rootstack::{RootStack, Rootable},
         source_info::{SourceLocation, byte_offset_to_char_offset},
@@ -1140,25 +1142,60 @@ impl<T> TaggedPtr<T> {
     }
 }
 
+pub enum PatternCollector<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    None,
+    Deconstruct(&'a mut Collector<(Arc<str>, U)>),
+    Subtyping(&'a mut PathCollector<'b, (Arc<str>, Arc<str>)>),
+    Pandom(std::marker::PhantomData<V>),
+}
+
+pub trait CollectorExt<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    fn collect<F, E>(&mut self, f: F) -> Result<ThreeValuedLogic, E>
+    where
+        F: FnOnce(PatternCollector<'_, '_, U, V>) -> Result<ThreeValuedLogic, E>;
+}
+
+impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> CollectorExt<U, V>
+    for PatternCollector<'a, 'b, U, V>
+{
+    fn collect<F, E>(&mut self, f: F) -> Result<ThreeValuedLogic, E>
+    where
+        F: for<'c, 'd> FnOnce(PatternCollector<'c, 'd, U, V>) -> Result<ThreeValuedLogic, E>,
+    {
+        // if let Some(collector) = self { collector.collect(|c| f(Some(c))) } else { f(None) }
+        match self {
+            PatternCollector::None => f(PatternCollector::None),
+            PatternCollector::Deconstruct(c) => {
+                c.collect(|collected: &mut Collector<(Arc<str>, U)>| {
+                    f(PatternCollector::Deconstruct(collected))
+                })
+            }
+            PatternCollector::Subtyping(c) => {
+                c.collect(|collected| f(PatternCollector::Subtyping(collected)))
+            }
+            PatternCollector::Pandom(_) => f(PatternCollector::Pandom(std::marker::PhantomData)),
+        }
+    }
+}
+
 /// 类型检查上下文，用于 `check` 方法
-pub struct TypeCheckContext<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+pub struct TypeCheckContext<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-    pub pattern_collector: Option<&'a mut Collector<(Arc<str>, U)>>,
+    pub pattern_collector: PatternCollector<'a, 'b, U, V>,
     pub lhs_env: EnvironmentView<'a, U, V>,
     pub rhs_env: EnvironmentView<'a, U, V>,
     pub collected: &'a mut EnvironmentStack<U, V>,
-    _marker: PhantomData<V>,
 }
 
-impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, U, V> {
+impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, 'b, U, V> {
     pub fn new(
         assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        pattern_collector: Option<&'a mut Collector<(Arc<str>, U)>>,
+        pattern_collector: PatternCollector<'a, 'b, U, V>,
         lhs_env: EnvironmentView<'a, U, V>,
         rhs_env: EnvironmentView<'a, U, V>,
         collected: &'a mut EnvironmentStack<U, V>,
     ) -> Self {
-        Self { assumptions, pattern_collector, lhs_env, rhs_env, collected, _marker: PhantomData }
+        Self { assumptions, pattern_collector, lhs_env, rhs_env, collected }
     }
 }
 
@@ -1239,7 +1276,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
             self.as_ref_dispatcher(),
             &mut TypeCheckContext::new(
                 &mut SmallVec::new(),
-                None,
+                PatternCollector::None,
                 rhs_env,
                 lhs_env,
                 &mut EnvironmentStack::new()
@@ -1249,7 +1286,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
             other,
             &mut TypeCheckContext::new(
                 &mut SmallVec::new(),
-                None,
+                PatternCollector::None,
                 lhs_env,
                 rhs_env,
                 &mut EnvironmentStack::new()

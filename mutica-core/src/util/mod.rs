@@ -1,6 +1,5 @@
 pub mod allocator;
 pub mod arc_opt;
-pub mod collector;
 pub mod colorize;
 pub mod cycle_detector;
 pub mod rootstack;

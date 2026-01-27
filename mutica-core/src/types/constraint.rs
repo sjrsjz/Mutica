@@ -4,18 +4,18 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use smallvec::SmallVec;
 
 use crate::{
+    test_true,
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, GcAllocObject,
-        Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
+        GcAllocObject, PatternCollector, Representable, Rootable, TaggedPtr, Type,
+        TypeCheckContext, TypeError, TypeRef,
         allof::AllOf,
-        unify::{Environment, EnvironmentVarState, EnvironmentView},
+        unify::{
+            Environment, EnvironmentVarState, EnvironmentView, collector::Collector,
+            path_collector::PathCollector,
+        },
     },
-    util::{
-        arc_opt::ArcOpt,
-        collector::{Collector, CollectorExt},
-        source_info::SourceLocation,
-        three_valued_logic::ThreeValuedLogic,
-    },
+    util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Constraint<T: GcAllocObject<T, Inner = Type<T>>>(
@@ -132,10 +132,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Constraint(_) => Ok(ThreeValuedLogic::Unknown), // 不可判定
+                TypeRef::Constraint(other) => {
+                    let lhs_pattern = self.expr();
+                    let rhs_pattern = other.expr();
+                    let mut collected_path = Vec::new();
+                    let mut path_collector = PathCollector::from(&mut collected_path);
+                    let mut pattern_check_ctx = TypeCheckContext::new(
+                        ctx.assumptions,
+                        PatternCollector::Subtyping(&mut path_collector),
+                        ctx.lhs_env,
+                        ctx.rhs_env,
+                        ctx.collected,
+                    );
+                    let pattern_result = test_true!(
+                        lhs_pattern
+                            .subof(rhs_pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?
+                    );
+
+                    println!("Constraint pattern subtyping collected path: {:?}", collected_path);
+
+                    Ok(pattern_result)
+                }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -231,7 +250,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         let mut collector = Collector::new();
         let mut new_ctx = TypeCheckContext::new(
             ctx.assumptions,
-            Some(&mut collector),
+            PatternCollector::Deconstruct(&mut collector),
             ctx.lhs_env,
             ctx.rhs_env,
             ctx.collected,
@@ -269,7 +288,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                 ctx.collected.lookup_at_last_layer(x).expect("Variable should be bound").clone();
             let mut new_ctx = TypeCheckContext::new(
                 ctx.assumptions,
-                None,
+                PatternCollector::None,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.collected,

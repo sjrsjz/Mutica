@@ -4,12 +4,10 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, float_value::FloatValue,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef, float_value::FloatValue
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -90,7 +88,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Float(_) => Ok(ThreeValuedLogic::True),

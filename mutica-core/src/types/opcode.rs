@@ -4,14 +4,14 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef, closure::Closure, fixpoint::FixPoint, float_value::FloatValue, invoke::Invoke,
-        natural_number::NaturalNumber, sequence::Sequence, unify::EnvironmentStack,
-        variable::Variable,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
+        InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
+        Type, TypeCheckContext, TypeError, TypeRef, closure::Closure, fixpoint::FixPoint,
+        float_value::FloatValue, invoke::Invoke, natural_number::NaturalNumber, sequence::Sequence,
+        unify::EnvironmentStack, variable::Variable,
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -157,7 +157,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Opcode(v) => Ok(match (&self.kind, &v.kind) {
@@ -286,7 +285,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             let mut env_stack = EnvironmentStack::new();
                             let mut type_check_ctx = TypeCheckContext::new(
                                 &mut assumptions,
-                                None,
+                                PatternCollector::None,
                                 ctx.environment,
                                 ctx.environment,
                                 &mut env_stack

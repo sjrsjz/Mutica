@@ -8,12 +8,13 @@ use arc_gc::{
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, GcAllocObject,
-        Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
+        GcAllocObject, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
+        TypeRef,
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, rootstack::RootStack,
-        source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
+        cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -141,7 +142,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutab
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Mutable(v) => {

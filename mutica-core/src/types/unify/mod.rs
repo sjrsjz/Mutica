@@ -1,4 +1,5 @@
-pub mod alignment;
+pub mod path_collector;
+pub mod collector;
 use std::sync::Arc;
 
 use smallvec::{SmallVec, smallvec};

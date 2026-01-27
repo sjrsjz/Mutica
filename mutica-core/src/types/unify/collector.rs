@@ -10,21 +10,6 @@ impl<T> Default for Collector<T> {
     }
 }
 
-pub trait CollectorExt<T> {
-    fn collect<F, E>(&mut self, f: F) -> Result<ThreeValuedLogic, E>
-    where
-        F: FnOnce(Option<&mut Collector<T>>) -> Result<ThreeValuedLogic, E>;
-}
-
-impl<T> CollectorExt<T> for Option<&mut Collector<T>> {
-    fn collect<F, E>(&mut self, f: F) -> Result<ThreeValuedLogic, E>
-    where
-        F: FnOnce(Option<&mut Collector<T>>) -> Result<ThreeValuedLogic, E>,
-    {
-        if let Some(collector) = self { collector.collect(|c| f(Some(c))) } else { f(None) }
-    }
-}
-
 impl<T> Collector<T> {
     pub fn new() -> Self {
         Self { items: Some(smallvec::SmallVec::new()) }

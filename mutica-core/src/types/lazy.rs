@@ -4,13 +4,9 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, Representable,
-        Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
     },
-    util::{
-        arc_opt::ArcOpt, collector::CollectorExt, source_info::SourceLocation,
-        three_valued_logic::ThreeValuedLogic,
-    },
+    util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Lazy<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -118,7 +114,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Lazy(v) => {

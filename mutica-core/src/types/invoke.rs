@@ -5,13 +5,13 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use crate::{
     test_true,
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
+        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
+        TypeCheckContext, TypeError, TypeRef,
     },
     util::{
-        arc_opt::ArcOpt, collector::CollectorExt, cycle_detector::FastCycleDetector,
-        source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -184,7 +184,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Invoke(v) => {

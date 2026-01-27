@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use crate::types::CoinductiveTypeRef;
-use crate::util::collector::CollectorExt;
+use crate::types::{CoinductiveTypeRef, CollectorExt};
 use crate::util::source_info::SourceLocation;
 use crate::{
     types::{
@@ -121,7 +120,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 _ => Ok(ThreeValuedLogic::Unknown),
             }

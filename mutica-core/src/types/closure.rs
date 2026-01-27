@@ -4,21 +4,18 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, Environment, GcAllocObject,
-        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, Environment,
+        GcAllocObject, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
+        TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
         allof::AllOf,
         anyof::AnyOf,
         constraint::Constraint,
         pattern::Pattern,
-        unify::{EnvironmentStack, EnvironmentVarState, EnvironmentView},
+        unify::{EnvironmentStack, EnvironmentVarState, EnvironmentView, collector::Collector},
         variable::Variable,
     },
     util::{
-        arc_opt::ArcOpt,
-        collector::{Collector, CollectorExt},
-        cycle_detector::FastCycleDetector,
-        source_info::SourceLocation,
+        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -205,7 +202,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 // TypeRef::Closure(v) => {
@@ -309,7 +305,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             let mut env_stack = EnvironmentStack::new();
             let mut pattern_check_ctx = TypeCheckContext::new(
                 &mut assumptions,
-                Some(&mut matched_pattern),
+                PatternCollector::Deconstruct(&mut matched_pattern),
                 ctx.environment,
                 ctx.environment,
                 &mut env_stack,

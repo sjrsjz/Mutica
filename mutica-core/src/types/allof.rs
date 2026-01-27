@@ -6,14 +6,14 @@ use smallvec::{SmallVec, smallvec};
 use crate::{
     test_true,
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
+        InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
+        Type, TypeCheckContext, TypeError, TypeRef,
         anyof::AnyOf,
         unify::{EnvironmentStack, EnvironmentView},
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
@@ -134,12 +134,27 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
             match other {
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 _ => {
                     let mut matched = ThreeValuedLogic::False;
-                    for sub in self.types.iter() {
-                        matched |= sub.subof(other, &mut inner_ctx)?
+                    if let PatternCollector::Subtyping(c) = &mut inner_ctx.pattern_collector {
+                        let mut marker = c.mark_oneof(self.types.len());
+                        for sub in self.types.iter() {
+                            let mut branch = marker.enter_oneof();
+                            let mut path = branch.path();
+                            let mut inner_ctx = TypeCheckContext::new(
+                                inner_ctx.assumptions,
+                                PatternCollector::Subtyping(&mut path),
+                                inner_ctx.lhs_env,
+                                inner_ctx.rhs_env,
+                                inner_ctx.collected,
+                            );
+                            matched |= sub.subof(other, &mut inner_ctx)?
+                        }
+                    } else {
+                        for sub in self.types.iter() {
+                            matched |= sub.subof(other, &mut inner_ctx)?
+                        }
                     }
                     Ok(matched)
                 }
@@ -320,8 +335,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
         let mut absorbed: SmallVec<[bool; 8]> = smallvec![false; collected.len()];
         let mut assumptions = smallvec![];
         let mut collected_pattern = EnvironmentStack::new();
-        let mut context =
-            TypeCheckContext::new(&mut assumptions, None, env, env, &mut collected_pattern);
+        let mut context = TypeCheckContext::new(
+            &mut assumptions,
+            PatternCollector::None,
+            env,
+            env,
+            &mut collected_pattern,
+        );
 
         for i in 0..collected.len() {
             for j in 0..i {

@@ -9,13 +9,11 @@ use arc_gc::{
 use crate::{
     as_type,
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, GcAllocObject, InvokeContext,
-        ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef
     },
     util::{
-        collector::CollectorExt, cycle_detector::FastCycleDetector, rootstack::RootStack,
-        source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
+        cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation,
+        three_valued_logic::ThreeValuedLogic,
     },
 };
 
@@ -237,8 +235,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                     }
                     v.superof(self.as_ref_dispatcher(), &mut inner_ctx)
                 }
-                TypeRef::Pattern(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-
+                
                 _ => match self.reference.upgrade() {
                     Some(inner) => {
                         let inner = match inner.as_ref().get_fixpoint_value() {

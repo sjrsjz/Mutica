@@ -4,13 +4,11 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, GcAllocObject,
-        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
+        GcAllocObject, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
+        TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
     },
-    util::{
-        collector::CollectorExt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic,
-    },
+    util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -117,9 +115,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                         TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                         TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                         TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-                        TypeRef::Pattern(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                         TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
-
+                        TypeRef::Pattern(v) => {
+                            if let PatternCollector::Subtyping(c) = &mut inner_ctx.pattern_collector
+                            {
+                                c.push_single((self.bind_name.clone(), v.bind_name.clone())); // 记录绑定关系
+                                Ok(ThreeValuedLogic::True)
+                            } else {
+                                Ok(ThreeValuedLogic::False)
+                            }
+                        }
                         _ => Ok(ThreeValuedLogic::False),
                     }
                 });
@@ -176,7 +181,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         other: Self::RefDispatcher<'_>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        if let Some(pattern_env) = &mut ctx.pattern_collector {
+        if let PatternCollector::Deconstruct(pattern_env) = &mut ctx.pattern_collector {
             pattern_env.push((self.bind_name.clone(), other.clone_data()));
             Ok(ThreeValuedLogic::True)
         } else {
@@ -194,21 +199,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     #[stacksafe::stacksafe]
     fn superof(
         &self,
-        other: Self::RefDispatcher<'_>,
-        ctx: &mut TypeCheckContext<Type<T>, T>,
+        _other: Self::RefDispatcher<'_>,
+        _ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
-        if ctx.pattern_collector.is_some() {
-            Ok(ThreeValuedLogic::Unknown) // pattern_collector 收集的是 LHS: RHS 的约束，无法去收集子类型关系，只能返回 Unknown
-        } else {
-            other.subof(
-                match ctx.collected.lookup_at_last_layer(&self.bind_name) {
-                    Some(existing) => existing.clone(),
-                    None => return Ok(ThreeValuedLogic::Unknown),
-                }
-                .as_ref_dispatcher(),
-                ctx,
-            )
-        }
+        panic!("Pattern::superof should not be called directly")
     }
 }
 
