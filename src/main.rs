@@ -15,7 +15,12 @@ use mutica_compiler::{
     },
 };
 use mutica_core::{
-    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable}, scheduler::{self, ContinuationOrHandler, stack::Stack}, stacksafe::{set_minimum_stack_size, set_stack_allocation_size}, tokio, types::{AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef}, util::{cycle_detector::FastCycleDetector, rootstack::RootStack}
+    arc_gc::{arc::GCArcWeak, gc::GC, traceable::GCTraceable},
+    scheduler::{self, ContinuationOrHandler, stack::Stack},
+    stacksafe::{set_minimum_stack_size, set_stack_allocation_size},
+    tokio,
+    types::{AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef},
+    util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
 // 定义一个用于GC堆分配的类型
@@ -494,7 +499,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
         }
     }
 
-    fn dump_stack_report(stack: &Stack<ContinuationOrHandler<TypeGcOnceLock>>) -> StackTraceReport {
+    fn log_stack_report(stack: &Stack<ContinuationOrHandler<TypeGcOnceLock>>) -> StackTraceReport {
         use mutica_compiler::ariadne::{Color, Label, Report, ReportKind};
         use mutica_core::types::CoinductiveType;
         use mutica_core::util::source_info::byte_offset_to_char_offset;
@@ -561,7 +566,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
             .unwrap_or(()),
         Err(e) => {
             // Print stack trace as a report
-            dump_stack_report(linear_scheduler.stack()).eprint().ok();
+            log_stack_report(linear_scheduler.stack()).eprint().ok();
 
             // TypeErrorReport now bundles the report with all needed source files
             e.to_report().eprint().ok();

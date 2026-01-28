@@ -149,13 +149,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Variable(Variable::PatternVariable { bind_name, layer, .. }) => {
-                    // if let Some(c) = inner_ctx.subtype_assumptions {
-                    //     if c.contains(&(self.bind_name().clone(), bind_name.clone())) {
-                    //         return Ok(ThreeValuedLogic::True);
-                    //     }
-                    //     return Ok(ThreeValuedLogic::False);
-                    // }
-                    // Ok(ThreeValuedLogic::Unknown)
                     if let Variable::PatternVariable {
                         bind_name: self_bind_name,
                         layer: self_layer,
@@ -174,13 +167,54 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                                 TypeError::GenericLayerOverflow(self.clone().dispatch().into())
                             })? {
                             Ok(ThreeValuedLogic::True)
+                        } else if let Some(ty) = inner_ctx
+                            .collected_bindings
+                            .lookup_at_layer(self_bind_name, *self_layer)
+                            .ok_or_else(|| {
+                                TypeError::GenericLayerOverflow(self.clone().dispatch().into())
+                            })?
+                        {
+                            ty.clone().subof(other, &mut inner_ctx)
                         } else {
-                            Ok(ThreeValuedLogic::False)
+                            Ok(ThreeValuedLogic::Unknown)
                         };
+                    };
+
+                    match self {
+                        Variable::ArgumentVariable { .. } => Ok(ThreeValuedLogic::Unknown),
+                        Variable::ContextVariable { bind_name, .. } => {
+                            if let Some(ty) = ctx.lhs_env.lookup(bind_name) {
+                                ty.subof(other, &mut inner_ctx)
+                            } else {
+                                Ok(ThreeValuedLogic::Unknown)
+                            }
+                        }
+                        Variable::PatternVariable { .. } => unreachable!(),
                     }
-                    Ok(ThreeValuedLogic::Unknown)
                 }
-                _ => Ok(ThreeValuedLogic::Unknown),
+                _ => match self {
+                    Variable::ArgumentVariable { .. } => Ok(ThreeValuedLogic::Unknown),
+                    Variable::ContextVariable { bind_name, .. } => {
+                        if let Some(ty) = ctx.lhs_env.lookup(bind_name) {
+                            ty.subof(other, &mut inner_ctx)
+                        } else {
+                            Ok(ThreeValuedLogic::Unknown)
+                        }
+                    }
+                    Variable::PatternVariable { bind_name, layer, .. } => {
+                        if let Some(ty) = inner_ctx
+                            .collected_bindings
+                            .lookup_at_layer(bind_name, *layer)
+                            .ok_or_else(|| {
+                                TypeError::GenericLayerOverflow(self.clone().dispatch().into())
+                            })?
+                        {
+                            ty.clone().subof(other, &mut inner_ctx)
+                        } else {
+                            Ok(ThreeValuedLogic::Unknown)
+                        }
+                    }
+                },
             }
         })
     }
