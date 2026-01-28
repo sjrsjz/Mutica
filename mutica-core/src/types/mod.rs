@@ -1145,7 +1145,7 @@ impl<T> TaggedPtr<T> {
 pub enum PatternCollector<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     None,
     Deconstruct(&'a mut Collector<(Arc<str>, U)>),
-    Subtyping(&'a mut PathCollector<'b, (Arc<str>, Arc<str>)>),
+    Subtyping(&'a mut PathCollector<'b, (Arc<str>, Arc<str>, usize, usize)>),
     Pandom(std::marker::PhantomData<V>),
 }
 
@@ -1182,7 +1182,6 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> CollectorExt<U, V>
 #[allow(clippy::type_complexity)]
 pub struct TypeCheckContext<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub instance_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-    pub subtype_assumptions: Option<&'a [(Arc<str>, Arc<str>)]>,
     pub pattern_collector: PatternCollector<'a, 'b, U, V>,
     pub lhs_env: EnvironmentView<'a, U, V>,
     pub rhs_env: EnvironmentView<'a, U, V>,
@@ -1193,20 +1192,12 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a,
     #[allow(clippy::type_complexity)]
     pub fn new(
         instance_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
-        subtype_assumptions: Option<&'a [(Arc<str>, Arc<str>)]>,
         pattern_collector: PatternCollector<'a, 'b, U, V>,
         lhs_env: EnvironmentView<'a, U, V>,
         rhs_env: EnvironmentView<'a, U, V>,
         collected_bindings: &'a mut EnvironmentStack<U, V>,
     ) -> Self {
-        Self {
-            instance_assumptions,
-            subtype_assumptions,
-            pattern_collector,
-            lhs_env,
-            rhs_env,
-            collected_bindings,
-        }
+        Self { instance_assumptions, pattern_collector, lhs_env, rhs_env, collected_bindings }
     }
 }
 
@@ -1287,7 +1278,6 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
             self.as_ref_dispatcher(),
             &mut TypeCheckContext::new(
                 &mut SmallVec::new(),
-                None,
                 PatternCollector::None,
                 rhs_env,
                 lhs_env,
@@ -1298,7 +1288,6 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
             other,
             &mut TypeCheckContext::new(
                 &mut SmallVec::new(),
-                None,
                 PatternCollector::None,
                 lhs_env,
                 rhs_env,

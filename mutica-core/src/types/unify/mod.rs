@@ -1,5 +1,5 @@
-pub mod path_collector;
 pub mod collector;
+pub mod path_collector;
 use std::sync::Arc;
 
 use smallvec::{SmallVec, smallvec};
@@ -31,21 +31,37 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentVarStat
 
 pub struct Environment<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     type_vars: Vec<(Arc<str>, EnvironmentVarState<U, V>)>,
+    subtype_assumptions: Vec<(Arc<str>, Arc<str>, usize, usize)>, // (sub, sup, layer_sub, layer_sup)
     _phantom: std::marker::PhantomData<V>,
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Environment<U, V> {
     fn clone(&self) -> Self {
-        Self { type_vars: self.type_vars.clone(), _phantom: std::marker::PhantomData }
+        Self {
+            type_vars: self.type_vars.clone(),
+            subtype_assumptions: self.subtype_assumptions.clone(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
-    pub fn new<I: IntoIterator<Item = (S, EnvironmentVarState<U, V>)>, S: Into<Arc<str>>>(
+    pub fn new<
+        I: IntoIterator<Item = (S, EnvironmentVarState<U, V>)>,
+        J: IntoIterator<Item = (P, Q, usize, usize)>,
+        P: Into<Arc<str>>,
+        Q: Into<Arc<str>>,
+        S: Into<Arc<str>>,
+    >(
         type_vars: I,
+        subtype_assumptions: J,
     ) -> Self {
         Self {
             type_vars: type_vars.into_iter().map(|(s, state)| (s.into(), state)).collect(),
+            subtype_assumptions: subtype_assumptions
+                .into_iter()
+                .map(|(p, q, layer_sub, layer_sup)| (p.into(), q.into(), layer_sub, layer_sup))
+                .collect(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -56,6 +72,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
                 .into_iter()
                 .map(|(s, ty)| (s.into(), EnvironmentVarState::Bound(ty)))
                 .collect(),
+            subtype_assumptions: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -198,7 +215,11 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentView<'a, U, V
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Default for Environment<U, V> {
     fn default() -> Self {
-        Self { type_vars: Vec::new(), _phantom: std::marker::PhantomData }
+        Self {
+            type_vars: Vec::new(),
+            subtype_assumptions: Vec::new(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
@@ -234,8 +255,38 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentStack<U, V> {
     //     None
     // }
 
-    pub fn lookup_at_last_layer<S: AsRef<str>>(&self, name: S) -> Option<&U> {
-        if let Some(env) = self.stack.last() { env.lookup(name.as_ref()) } else { None }
+    pub fn lookup_at_layer<S: AsRef<str>>(&self, name: S, layer: usize) -> Option<Option<&U>> {
+        match self.stack.get(layer) {
+            Some(env) => match env.lookup(name.as_ref()) {
+                Some(ty) => Some(Some(ty)),
+                None => Some(None),
+            },
+            None => None,
+        }
+    }
+
+    pub fn lookup_subtype_assumption<M: AsRef<str>, N: AsRef<str>>(
+        &self,
+        sub: M,
+        sup: N,
+        layer_sub: usize,
+        layer_sup: usize,
+    ) -> Option<bool> {
+        if layer_sub >= self.stack.len() || layer_sup >= self.stack.len() {
+            return None;
+        }
+        for env in self.stack.iter().rev() {
+            for (p, q, l_sub, l_sup) in env.subtype_assumptions.iter() {
+                if p.as_ref() == sub.as_ref()
+                    && q.as_ref() == sup.as_ref()
+                    && *l_sub == layer_sub
+                    && *l_sup == layer_sup
+                {
+                    return Some(true);
+                }
+            }
+        }
+        Some(false)
     }
 
     pub fn layers(&self) -> usize {

@@ -1,10 +1,10 @@
 let maybe_pkg: any = import "maybe.mu";
-let while_condition::(while: lambda) = import "controlflow.mu";
-let deref::($"op#not": lambda) = import "mutable.mu";
+let while_condition::(while: any) = import "controlflow.mu";
+let deref::($"op#not": any) = import "mutable.mu";
 
-let List: lambda = T: any => (!..T);
+let List: any = T: any => (!..T);
 
-let Greater: lambda = (T: any, n: nat) => {
+let Greater: any = (T: any, n: nat) => {
     let prefix: any = mut ();
     let i: any = mut 0;
     discard while delay (!i < n) delay {
@@ -14,7 +14,7 @@ let Greater: lambda = (T: any, n: nat) => {
     !prefix + (!..T)
 };
 
-let Range: lambda = (T: any, min: nat, max: nat) => {
+let Range: any = (T: any, min: nat, max: nat) => {
     let tuple: any = mut ();
     let final: any = mut never;
     let i: any = mut 0;
@@ -28,7 +28,7 @@ let Range: lambda = (T: any, min: nat, max: nat) => {
     !final
 };
 
-let Exact: lambda = (T: any, n: nat) => {
+let Exact: any = (T: any, n: nat) => {
     let tuple: any = mut ();
     let i: any = mut 0;
     discard while delay (!i < n) delay {
@@ -38,7 +38,7 @@ let Exact: lambda = (T: any, n: nat) => {
     !tuple
 };
 
-let Modular: lambda = (T: any, range_len: nat, prefix_len: nat) => {
+let Modular: any = (T: any, range_len: nat, prefix_len: nat) => {
     match range_len
         | 0 => Exact(T, prefix_len)
         | _T: any => {
@@ -68,18 +68,18 @@ let Modular: lambda = (T: any, range_len: nat, prefix_len: nat) => {
 };
 
 let Nil: any = ();
-let cons: lambda = (head: any, tail: any) => (head,) + tail;
-let head: lambda = match
+let cons: any = (head: any, tail: any) => (head,) + tail;
+let head: any = match
     | (h: any ~ _T: _) => h
     | panic;
-let tail: lambda = match
+let tail: any = match
     | (_T: _ ~ t: any) => t
     | panic;
-let is_nil: lambda = match
+let is_nil: any = match
     | () => true
     | _T: _ => false
     | panic;
-let iter: lambda = lst: List(any) => f: lambda => {
+let iter: any = lst: List(any) => f: (lambda | v: never | panic) => {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -89,7 +89,7 @@ let iter: lambda = lst: List(any) => f: lambda => {
         }
         | panic
 };
-let iteri: lambda = lst: List(any) => f: lambda => {
+let iteri: any = lst: List(any) => f: (lambda | (index: nat, v: never) | panic) => {
     loop go: (t: any, index: nat) = (lst, 0);
     match t
         | () => ()
@@ -99,21 +99,21 @@ let iteri: lambda = lst: List(any) => f: lambda => {
         }
         | panic
 };
-let map: lambda = lst: List(any) => f: lambda => {
+let map: any = lst: List(any) => f: (lambda | v: never | panic) => {
     loop go: t: any = lst;
     match t
         | () => ()
         | (h: any ~ t: any) => cons(f(h), go(t))
         | panic
 };
-let len: lambda = lst: List(any) => {
+let len: any = lst: List(any) => {
     loop go: t: any = lst;
     match t
         | () => 0
         | (_T: _ ~ t: any) => 1 + go(t)
         | panic
 };
-let filter: lambda = lst: List(any) => pred: lambda => {
+let filter: any = lst: List(any) => pred: (lambda | v: never | panic) => {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -122,46 +122,46 @@ let filter: lambda = lst: List(any) => pred: lambda => {
             else go(t)
         | panic
 };
-let fold: lambda = 
+let fold: any = 
     lst: List(any) => 
     acc: any => 
-    f: lambda => {
+    f: (lambda | (acc: never, v: never) | panic) => {
     loop go: (t: any, a: any) = (lst, acc);
     match t
         | () => a
         | (h: any ~ t: any) => go(t, f(a, h))
         | panic
 };
-let foldr: lambda = 
+let foldr: any = 
     lst: List(any) => 
     acc: any => 
-    f: lambda => {
+    f: (lambda | (v: never, acc: never) | panic) => {
     loop go: t: any = lst;
     match t
         | () => acc
         | (h: any ~ t: any) => f(h, go(t))
         | panic
 };
-let append: lambda = 
+let append: any = 
     lst1: List(any) => 
     lst2: List(any) => {
     lst1 + lst2
 };
-let reverse: lambda = lst: List(any) => {
+let reverse: any = lst: List(any) => {
     loop go: t: any = (lst, ());
     match t
         | ((), acc: any) => acc
         | ((h: any ~ t: any), acc: any) => go(t, cons(h, acc))
         | panic
 };
-let nth: lambda = lst: List(any) => n: nat => {
+let nth: any = lst: List(any) => n: nat => {
     loop go: (t: any, i: nat) = (lst, n);
     match (t, i)
         | ((h: any ~ _T: _) , 0) => h
         | ((_T: _ ~ t: any), i: nat) => go(t, i - 1)
         | panic
 };
-let take: lambda = lst: List(any) => n: nat => {
+let take: any = lst: List(any) => n: nat => {
     loop go: (t: any, i: nat) = (lst, n);
     match (t, i)
         | ((), _T: _) => ()
@@ -169,7 +169,7 @@ let take: lambda = lst: List(any) => n: nat => {
         | ((h: any ~ t: any), i: nat) => cons(h, go(t, i - 1))
         | panic
 };
-let drop: lambda = lst: List(any) => n: nat => {
+let drop: any = lst: List(any) => n: nat => {
     loop go: (t: any, i: nat) = (lst, n);
     match (t, i)
         | ((), _T: _) => ()
@@ -177,8 +177,8 @@ let drop: lambda = lst: List(any) => n: nat => {
         | ((_T: _ ~ t: any), i: nat) => go(t, i - 1)
         | panic
 };
-let find: lambda = lst: List(any) => pred: lambda => {
-    let go: lambda = dyn_rec go: match
+let find: any = lst: List(any) => pred: (lambda | v: never | panic) => {
+    let go: any = dyn_rec go: match
         | () => {
             let Nothing::(v: any) = maybe_pkg;
             v
@@ -192,8 +192,8 @@ let find: lambda = lst: List(any) => pred: lambda => {
         | panic;
     go(lst)
 };
-let allof: lambda = lst: List(any) => pred: lambda => {
-    let go: lambda = dyn_rec go: match
+let allof: any = lst: List(any) => pred: (lambda | v: never | panic) => {
+    let go: any = dyn_rec go: match
         | () => true
         | (h: any ~ t: any) => if pred(h)
             then go(t)
@@ -201,8 +201,8 @@ let allof: lambda = lst: List(any) => pred: lambda => {
         | panic;
     go(lst)
 };
-let anyof: lambda = lst: List(any) => pred: lambda => {
-    let go: lambda = dyn_rec go: match
+let anyof: any = lst: List(any) => pred: (lambda | v: never | panic) => {
+    let go: any = dyn_rec go: match
         | () => false
         | (h: any ~ t: any) => if pred(h)
             then true

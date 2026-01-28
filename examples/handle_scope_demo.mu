@@ -1,11 +1,11 @@
 let {
-    println::(println: lambda)
+    println::(println: any)
 } = import "lib/string.mu";
 
-let throw: lambda = err: any => perform! throw::err;
+let throw: any = err: any => perform! throw::err;
 
 // 一个最小的 try/catch handler：只截获 throw::err，其它 effect 透传
-let try_catch: lambda = on_throw: lambda => f: lambda => {
+let try_catch: any = on_throw: any => f: any => {
     handle with dyn_rec h: k: any => match
         | throw::(err: any) => on_throw(err)
         | v: any => {

@@ -1,11 +1,11 @@
 let {
-    println::(println: lambda) &
+    println::(println: any) &
     String::(String: any)
 } = import "lib/string.mu";
 
-let mutable: lambda = k: lambda => (unique_name: String, init_value: any ~ on_change: [(lambda,) | ()]) => {
+let mutable: any = k: any => (unique_name: String, init_value: any ~ on_change: [(lambda | v: any | panic,) | ()]) => {
     let handler: any = dyn_rec self: state: any => {
-        dyn_rec built_handler: k: lambda => match
+        dyn_rec built_handler: k: any => match
             | get::Mutable::unique_name => {
                 handle with built_handler;
                 k(state)
@@ -13,7 +13,7 @@ let mutable: lambda = k: lambda => (unique_name: String, init_value: any ~ on_ch
             | set::(Mutable::unique_name, new_state: any) => {
                 handle with (self new_state);
                 discard match on_change
-                    | (f: lambda,) => f(Mutable::unique_name)
+                    | (f: (lambda | v: any | panic),) => f(Mutable::unique_name)
                     | () => ()
                     | panic;
                 k()
@@ -31,8 +31,8 @@ let mutable: lambda = k: lambda => (unique_name: String, init_value: any ~ on_ch
 
 let Mut: any = Mutable::String;
 
-// let get: lambda = unique_name: String => perform! get::unique_name;
-// let set: lambda = unique_name: String => new_value: any => perform! set::(unique_name, new_value);
+// let get: any = unique_name: String => perform! get::unique_name;
+// let set: any = unique_name: String => new_value: any => perform! set::(unique_name, new_value);
 extend $"op#assign": (unique_name: Mut, new_value: any) => perform! set::(unique_name, new_value);
 extend $"op#not": unique_name: Mut => perform! get::unique_name;
 

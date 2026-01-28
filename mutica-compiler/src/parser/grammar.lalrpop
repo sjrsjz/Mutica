@@ -157,7 +157,7 @@ CharLiteral: char = {
 NatTok: () = <l:@L> "Nat" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 FloatTok: () = <l:@L> "Float" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 CharTok: () = <l:@L> "Char" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
-LambdaTok: () = <l:@L> "Lambda" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
+LambdaTok: () = <l:@L> "Lambda" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 TrueTok: () = <l:@L> "True" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 FalseTok: () = <l:@L> "False" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 AnyTok: () = <l:@L> "Any" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
@@ -244,7 +244,6 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> NatTok <r:@R> => with_loc(TypeAst::NaturalNumberSet, source, l..r),
     <l:@L> FloatTok <r:@R> => with_loc(TypeAst::Float, source, l..r),
     <l:@L> CharTok <r:@R> => with_loc(TypeAst::Char, source, l..r),
-    <l:@L> LambdaTok <r:@R> => with_loc(TypeAst::Lambda, source, l..r),
     <l:@L> TrueTok <r:@R> => with_loc(TypeAst::Variable(with_loc("op#true".to_string(), source, l..r)), source, l..r),
     <l:@L> FalseTok <r:@R> => with_loc(TypeAst::Variable(with_loc("op#false".to_string(), source, l..r)), source, l..r),
     <l:@L> AnyTok <r:@R> => with_loc(TypeAst::Wildcard, source, l..r),
@@ -431,6 +430,10 @@ Match: WithLocation<TypeAst> = {
     },
 }
 
+Lambda: WithLocation<TypeAst> = {
+    <l:@L> LambdaTok <inner_l:@L> <branches: LambdaBranch*> <inner_r:@R> PipeTok PanicTok? <r:@R> => with_loc(TypeAst::Lambda { patterns: branches }, source, l..r)
+}
+
 ForIn: WithLocation<TypeAst> = {
     <l:@L> ForTok <inner_l:@L> <binding: Binding> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
         let (branch, value) = binding;
@@ -483,6 +486,18 @@ FnDef: (GenericPattern, WithLocation<TypeAst>) = {
 
 MatchBranch: (GenericPattern, WithLocation<TypeAst>) = {
     PipeTok <branch: FnDef> => branch,
+}
+
+LambdaBranch: GenericPattern = {
+    PipeTok <branch: Generic> => branch,
+    PipeTok <pattern: Calculate> => {
+        match pattern.value() {
+            TypeAst::Generic(generic_pattern) => generic_pattern.as_ref().clone().into(),
+            _ => GenericPattern::AutoBind {
+                pattern: pattern,
+            },
+        }
+    }
 }
 
 
@@ -611,6 +626,7 @@ Primary: WithLocation<TypeAst> = {
     <r: RecursiveGen> => r,
     <c: Constraint> => c,
     <m: Match> => m,
+    <l: Lambda> => l,
     <c: Closure> => c,
     <f: ForIn> => f,
     <i: IfElse> => i,

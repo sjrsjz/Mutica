@@ -1,38 +1,38 @@
 let list_pkg: any = import "list.mu";
 let maybe_pkg: any = import "maybe.mu";
 let {
-    List::(List: lambda) &
-    iter::(iter: lambda) &
-    len::(len: lambda) &
-    take::(take: lambda) &
-    drop::(drop: lambda)
+    List::(List: any) &
+    iter::(iter: any) &
+    len::(len: any) &
+    take::(take: any) &
+    drop::(drop: any)
 } = list_pkg;
-let Just::(Just: lambda) = maybe_pkg;
+let Just::(Just: any) = maybe_pkg;
 let Nothing::(Nothing: any) = maybe_pkg;
 
 let String: any = List(char);
 
-let println: lambda = s: String => {
+let println: any = s: String => {
     discard @iter c: char = s in {
         discard print!(c);
     };
     discard print!('\n');
 };
 
-let print: lambda = s: String => {
+let print: any = s: String => {
     @iter c: char = s in {
         discard print!(c);
     }
 };
 
-let slice: lambda = (s: String, start: nat, end: nat) => {
+let slice: any = (s: String, start: nat, end: nat) => {
     let len: nat = len(s);
     if (start >= 0 && start <= len && end >= start && end <= len)
         then Just(take(drop(s)(start))(end - start))
         else Nothing
 };
 
-let nat_to_string: lambda = 
+let nat_to_string: any = 
     match
         | 0 => "0"
         | n: nat => {

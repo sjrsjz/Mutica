@@ -1,5 +1,5 @@
 discard {
-    let handler: lambda = dyn_rec handler: k: any => match
+    let handler: any = dyn_rec handler: k: any => match
         | GetA::() => {
             handle with handler;
             k 42
@@ -17,7 +17,7 @@ discard {
 
 discard {
     let {
-        println::(println: lambda)
+        println::(println: any)
     } = import "lib/string.mu";
     handle with dyn_rec handler: k: any => match
         | throw::(v: any) => {

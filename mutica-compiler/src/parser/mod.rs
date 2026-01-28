@@ -463,6 +463,7 @@ impl ParseContext {
         for scope in self.declared_variables.iter_mut().rev() {
             match scope {
                 Scope::Function(map) => {
+                    skip_generic = true; // 跨越 Function 层时跳过 Generic 层
                     if let Some((count, loc)) = map.get_mut(name) {
                         *count += 1;
                         return Ok((loc, None));
@@ -477,7 +478,6 @@ impl ParseContext {
                         *count += 1;
                         return Ok((loc, None));
                     }
-                    skip_generic = true; // 只允许跨越一层 Generic
                 }
                 Scope::FixPoint(n, count, loc) => {
                     if n == name {
@@ -546,9 +546,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
     pub fn lookup<S: AsRef<str>>(&self, var: S) -> Option<(Type<T>, Option<usize>)> {
         let mut outgoing_function_layer_count = 0;
         let mut skip_generic = false;
-        for layer in self.layers.iter().rev() {
+        let mut is_last_generic_layer = true;
+        for (i, layer) in self.layers.iter().rev().enumerate() {
             match layer {
                 BuildContextLayer::Function { patterns, captures } => {
+                    skip_generic = true; // 跨越 Function 层时跳过 Generic 层
                     match (patterns.get(var.as_ref()), captures.get(var.as_ref())) {
                         (Some(v), _) => {
                             return Some((
@@ -577,19 +579,37 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                         continue;
                     }
                     if let Some(v) = patterns.get(var.as_ref()) {
+                        let mut layer = 0;
+                        // 向上查找有多少层 GenericBinding
+                        for l in self.layers.iter().rev().skip(i + 1) {
+                            match l {
+                                BuildContextLayer::GenericBinding(_, _) => {
+                                    layer += 1;
+                                }
+                                BuildContextLayer::FixPoint(_, _) => continue,
+                                BuildContextLayer::Function { .. } => break,
+                            }
+                        }
+
+                        // 如果是定义且是最内层 GenericBinding，则创建 Pattern 类型
                         if *is_definition {
-                            return Some((
-                                Pattern::new(
-                                    Arc::from(var.as_ref()),
-                                    v.location().cloned().map(Arc::new),
-                                )
-                                .dispatch(),
-                                None,
-                            ));
+                            if is_last_generic_layer {
+                                return Some((
+                                    Pattern::new(
+                                        Arc::from(var.as_ref()),
+                                        layer,
+                                        v.location().cloned().map(Arc::new),
+                                    )
+                                    .dispatch(),
+                                    None,
+                                ));
+                            }
+                            // 不是最内层定义，意味着它尝试使用一个未解构的泛型变量，认为它未定义
                         } else {
                             return Some((
                                 Variable::new_pattern(
                                     Arc::from(var.as_ref()),
+                                    layer,
                                     v.location().cloned().map(Arc::new),
                                 )
                                 .dispatch(),
@@ -597,7 +617,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                             ));
                         }
                     }
-                    skip_generic = true; // 只允许跨越一层 Generic
+                    is_last_generic_layer = false;
                 }
                 BuildContextLayer::FixPoint(name, v) => {
                     if var.as_ref().eq(name.value()) {
@@ -1060,7 +1080,6 @@ pub fn inject_std_library(
                 BasicTypeAst::NaturalNumberSet => std_ast,
                 BasicTypeAst::Float => std_ast,
                 BasicTypeAst::Char => std_ast,
-                BasicTypeAst::Lambda => std_ast,
                 BasicTypeAst::NaturalNumberLiteral(_) => std_ast,
                 BasicTypeAst::FloatLiteral(_) => std_ast,
                 BasicTypeAst::CharLiteral(_) => std_ast,
@@ -1140,6 +1159,30 @@ pub fn inject_std_library(
                                     }
                                 };
                                 (new_variant, new_expr)
+                            })
+                            .collect(),
+                    },
+                    loc.as_ref(),
+                ),
+                BasicTypeAst::Lambda { patterns } => WithLocation::new(
+                    BasicTypeAst::Lambda {
+                        patterns: patterns
+                            .into_iter()
+                            .map(|pattern_variant| match pattern_variant {
+                                BasicGenericPattern::Standard { pattern, constraint } => {
+                                    BasicGenericPattern::Standard {
+                                        pattern: replace_placeholder(pattern, ast),
+                                        constraint: constraint
+                                            .into_iter()
+                                            .map(|(v, expr)| (v, replace_placeholder(expr, ast)))
+                                            .collect(),
+                                    }
+                                }
+                                BasicGenericPattern::AutoBind { pattern } => {
+                                    BasicGenericPattern::AutoBind {
+                                        pattern: replace_placeholder(pattern, ast),
+                                    }
+                                }
                             })
                             .collect(),
                     },

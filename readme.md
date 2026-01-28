@@ -11,7 +11,7 @@
 
 ## 📖 Overview
 
-Mutica is an experimental, structurally-typed functional programming language featuring an advanced **coinductive type system** for precise structural type checking. The language supports powerful pattern matching, effect handlers, and a rule-based constraint validation system that goes far beyond traditional subtyping.
+Mutica is an experimental, structurally-typed functional programming language featuring an advanced **coinductive type system** for precise structural type checking. The language supports powerful pattern matching, effect handlers, and a rule-based validation system that goes far beyond traditional subtyping.
 
 ### Key Features
 
@@ -20,7 +20,7 @@ Mutica is an experimental, structurally-typed functional programming language fe
 - 🎭 **Advanced Pattern Matching**: Sophisticated destructuring with exhaustive pattern matching and type-safe guards.
 - 📦 **Label-based Namespaces**: Type isolation through labels, enabling algebraic data types like `Maybe` and `Either`.
 - 💫 **Effect Handlers**: Built-in support for algebraic effects through `perform!` and `handle...with` constructs.
-- 🛡️ **Meta-level Type Operators**: Unique operators like `sub` and `constraint` that manipulate constraint validation at the type level.
+- 🛡️ **Meta-level Type Operators**: Unique operators like `sub` and `constraint` that manipulate validation at the type level.
 - 📚 **Module System**: Import-based modular code organization with `import` statements.
 - ♻️ **Automatic Garbage Collection**: Employs `arc-gc` with cycle detection for efficient memory management.
 
@@ -55,38 +55,38 @@ cargo run -- version
 
 ```mutica
 // Integer
-let constraint x: nat = 42;
+let x: nat = 42;
 
 // Character
-let constraint c: char = 'A';
+let c: char = 'A';
 
 // Tuple
-let constraint pair: (nat, nat) = (1, 2);
+let pair: (nat, nat) = (1, 2);
 
 // AnyOf Type
-let constraint value: (nat | char) = 42;
-let constraint bottom: any = never; // Bottom type
+let value: (nat | char) = 42;
+let bottom: any = never; // Bottom type
 
 // AllOf Type (used for records/structs)
-let constraint point: { x::nat & y::nat } = { x::1 & y::2 };
-let constraint top: any = unknown; // Top type
+let point: { x::nat & y::nat } = { x::1 & y::2 };
+let top: any = unknown; // Top type
 
 // Top Type (any)
-let constraint anything: any = 42; // `any` is the supertype of all conventional types
-let constraint anything: _ = 42;             // An underscore can be used directly to assert a type constraint
+let anything: any = 42; // `any` is the supertype of all conventional types
+let anything: _ = 42;             // An underscore can be used directly to a type constraint
 ```
 
 ### Function Definitions
 
 ```mutica
 // A function that accepts an integer
-let constraint add_one: any = (x: nat) => x + 1; // `=>` defines a function
+let add_one: any = (x: nat) => x + 1; // `=>` defines a function
 
 // A recursive function using `dyn_rec` with pattern matching
-let constraint fib: any = dyn_rec f: match
-    | assert 0 => 0
-    | assert 1 => 1
-    | constraint n: nat => f(n - 1) + f(n - 2)
+let fib: any = dyn_rec f: match
+    | 0 => 0
+    | 1 => 1
+    | n: nat => f(n - 1) + f(n - 2)
     | panic; // Asserts that the match is exhaustive for the input `n: nat`
 ```
 
@@ -95,10 +95,10 @@ let constraint fib: any = dyn_rec f: match
 The `is` operator is not traditional subtyping, but a check to see if a type fulfills the constraints of another.
 
 ```mutica
-// A value fulfills the constraint of its general type
+// A value fulfills the of its general type
 1 is nat                           // true
 
-// A more specific record fulfills the constraint of a more general one
+// A more specific record fulfills the of a more general one
 { x::1 & y::2 } is x::nat      // true
 ```
 
@@ -106,17 +106,17 @@ The `is` operator is not traditional subtyping, but a check to see if a type ful
 
 ```mutica
 // Define labeled constructors
-let constraint Just: any = constraint T: any => Just::T;
-let constraint Nothing: any = Nothing::();
+let Just: any = T: any => Just::T;
+let Nothing: any = Nothing::();
 
 // Define the Maybe type using a union
-let constraint Maybe: any = constraint T: any => (Just T | Nothing);
+let Maybe: any = T: any => (Just T | Nothing);
 
 // Use pattern matching on labeled types
-let constraint map: any = constraint v: Maybe(any) => constraint f: lambda => 
+let map: any = v: Maybe(any) => f: (lambda | v: never | panic) => 
     match v
-        | constraint Just::(x: any) => Just(f(x))
-        | assert Nothing::() => Nothing
+        | Just::(x: any) => Just(f(x))
+        | Nothing::() => Nothing
         | panic;
 ```
 
@@ -124,27 +124,27 @@ let constraint map: any = constraint v: Maybe(any) => constraint f: lambda =>
 
 ```mutica
 // Use intersection types to simulate a struct
-let constraint Point: any = (x: nat, y: nat, z: nat) => { x::x & y::y & z::z };
+let Point: any = (x: nat, y: nat, z: nat) => { x::x & y::y & z::z };
 
-let constraint p: any = Point(1, 2, 3);
+let p: any = Point(1, 2, 3);
 
 // Deconstructuring
-let constraint { x::(x: nat) & z::(z: nat) } = p;
+let { x::(x: nat) & z::(z: nat) } = p;
 ```
 
 ### Effect Handlers
 
 ```mutica
 // Define effect handlers
-let constraint handler: any = match
-    | assert GetA::() => 42
-    | assert GetB::() => 84
+let handler: any = match
+    | GetA::() => 42
+    | GetB::() => 84
     | panic;
 
 // Use effects with handlers
-handle constraint z: nat = 1 with handler;
-let constraint x: nat = perform! GetA::();
-let constraint y: nat = perform! GetB::();
+handle z: nat = 1 with handler;
+let x: nat = perform! GetA::();
+let y: nat = perform! GetB::();
 x, y, z  // Results: 42, 84, 1
 ```
 
@@ -152,28 +152,28 @@ x, y, z  // Results: 42, 84, 1
 
 ```mutica
 // Import from another file
-let constraint pkg: any = import "lib/maybe.mu";
+let pkg: any = import "lib/maybe.mu";
 // Destructure imported values
-let constraint {
+let {
     Just::(Just: any) &
     Nothing::(Nothing: any) &
     map::(map: any)
 } = pkg;
 
 // Use imported functions
-let constraint v1: any = Just(41);
+let v1: any = Just(41);
 map(v1)(x: nat => x + 1)  // Results: Just(42)
 ```
 
 ### UFCS
 
 ```mutica
-let constraint {
+let {
     Just::(Just: any) &
     map::(map: any)
 } = import "lib/maybe.mu";
 // Using UFCS to call functions as methods
-let constraint v1: any = Just(41);
+let v1: any = Just(41);
 v1.map(x: nat => x + 1)  // Results: Just(42)
 ```
 
@@ -182,10 +182,10 @@ v1.map(x: nat => x + 1)  // Results: Just(42)
 ### Fibonacci
 
 ```mutica
-let constraint fib: any = dyn_rec f: match
-    | assert 0 => 0
-    | assert 1 => 1
-    | constraint n: nat => f(n - 1) + f(n - 2)
+let fib: any = dyn_rec f: match
+    | 0 => 0
+    | 1 => 1
+    | n: nat => f(n - 1) + f(n - 2)
     | panic;
 
 fib(10) // Computes the 10th Fibonacci number
@@ -194,11 +194,11 @@ fib(10) // Computes the 10th Fibonacci number
 ### IO Example
 
 ```mutica
-let constraint List: any = constraint T: any => rec list: (() | (T ~ list));
-let constraint print_chars: any = dyn_rec print_chars: constraint str: List(char) =>
+let List: any = T: any => rec list: (() | (T ~ list));
+let print_chars: any = dyn_rec print_chars: str: List(char) =>
     match str
-        | assert () => ()
-        | constraint (head: char ~ tail: any) => {
+        | () => ()
+        | (head: char ~ tail: any) => {
             discard print!(head);
             print_chars(tail)
         }
@@ -210,21 +210,78 @@ print_chars("Hello, world!\n")
 ### Custom CPS
 
 ```mutica
-let constraint println::(println: lambda) = import "lib/string.mu";
-let constraint Pointer: any = (nat, nat);
-let constraint alloc: lambda = constraint f: lambda => constraint v: any => {
-    // RAII automatic memory management
-    let constraint pointer: Pointer = alloc! v;
-    let constraint result: any = f pointer;
-    discard dealloc! pointer;
-    result
+let {
+    List::(List: any) &
+    map::(map: any) &
+    allof::(allof: any)
+} = import "lib/list.mu";
+
+let Pending: any = (payload: any, continuation: any) => Pending::(payload, continuation);
+let Finished: any = result: any => Finished::result;
+let Coroutine: any = [Pending::(any, any) | Finished::any];
+
+let yield: any = continutation: any => value: any => Pending(value, continutation);
+let return: any = _f: any => value: any => Finished(value);
+
+let await: any = dyn_rec await:
+    continuation: any => 
+    coroutine: Coroutine => {
+    match coroutine
+        | Pending::(payload: any, next_continuation: any) => {
+            Pending::(payload, v: any => await(continuation)(next_continuation(v)))
+        }
+        | Finished::(value: any) => {
+            continuation(value)
+        }
+        | panic
 };
 
-let constraint my_str: Pointer = #alloc "Hello, World!";
-discard println! my_str; // (0, 0) (represents as (Unit, Unit) internally)
-discard println(get! my_str);
-discard set!(my_str, "Goodbye, World!");
-discard println(get! my_str);
+let run_async: any = statement: List(Coroutine) => {
+    loop go: statement: List(Coroutine) = statement;
+    let new_statements: any = statement.map(
+        c: Coroutine => match c
+            | Pending::(payload: any, continuation: any) => continuation(payload)
+            | Finished::(value: any) => Finished::value
+            | panic
+    );
+    if new_statements.allof(
+         c: Coroutine => match c
+            | Finished::any => true
+            | Pending::(any, any) => false
+            | panic
+    )
+        then new_statements.map(c: Coroutine => match c
+            | Finished::(value: any) => value
+            | panic
+        )
+        else go(new_statements)
+};
+
+// Example usage:
+let f: any = (x: nat, id: nat) => {
+    let {
+        nat_to_string::(nat_to_string: any) &
+        println::(println: any)
+    } = import "lib/string.mu";
+    @yield ();
+    discard println("In f: " + nat_to_string(x) + ", id: " + nat_to_string(id));
+    @return x + 1;
+};
+
+let g: any = (x: nat, id: nat) => {
+    let y: nat = #await f(x, id);
+    @yield ();
+    @return x * y;
+};
+
+
+let async_f: any = (x: nat, id: nat) => {
+    let a: nat = #await f(x, id);
+    let b: nat = #await f(a, id) + #await g(x, id);
+    @return b;
+};
+
+[async_f(10, 1), async_f(12, 2)].run_async
 ```
 
 ## 🏗️ Architecture

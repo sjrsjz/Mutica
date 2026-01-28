@@ -1,9 +1,9 @@
 let {
-    println::(println: lambda)
+    println::(println: any)
 } = import "lib/string.mu";
-let deref::(deref: lambda) = import "lib/mutable.mu";
+let deref::(deref: any) = import "lib/mutable.mu";
 
-let bool_to_string: lambda = b: any => 
+let bool_to_string: any = b: any => 
     if b then "true" else "false";
 
 let program: any = result: mut () => {
@@ -19,7 +19,7 @@ let program2: any = result: mut () => {
     // discard println("This line will be printed if an exception occurs above and stack is unwound correctly.");
 };
 
-let handler: lambda = dyn_rec h: k: any => match
+let handler: any = dyn_rec h: k: any => match
     | flip::() => {
         discard { handle with h; k true };
         discard { handle with h; k false };

@@ -1,34 +1,34 @@
-let throw_panic::(throw_panic: lambda) = import "panic.mu";
-let Just: lambda = T: any => Just::T;
+let throw_panic::(throw_panic: any) = import "panic.mu";
+let Just: any = T: any => Just::T;
 let Nothing: any = Nothing::();
-let Maybe: lambda = T: any => (Just T | Nothing);
-let map: lambda = v: Maybe(any) => f: lambda => 
+let Maybe: any = T: any => (Just T | Nothing);
+let map: any = v: Maybe(any) => f: (lambda | v: never | panic) => 
     match v
         | Just::(x: any) => Just(f(x))
         | Nothing::() => Nothing
         | panic;
 // A version of map that works with custom let bindings
-let map_let: lambda = f: lambda => v: Maybe(any) => 
+let map_let: any = f: (lambda | v: never | panic) => v: Maybe(any) => 
     match v
         | Just::(x: any) => Just(f(x))
         | Nothing::() => Nothing
         | panic;
-let unwrap_or_else: lambda = v: Maybe(any) => f: lambda => 
+let unwrap_or_else: any = v: Maybe(any) => f: (lambda | () | panic) => 
     match v
         | Just::(x: any) => x
         | Nothing::() => f()
         | panic;
-let unwrap_or: lambda = v: Maybe(any) => default: any => 
+let unwrap_or: any = v: Maybe(any) => default: any => 
     match v
         | Just::(x: any) => x
         | Nothing::() => default
         | panic;
-let unwrap: lambda = v: Maybe(any) => 
+let unwrap: any = v: Maybe(any) => 
     match v
         | Just::(x: any) => x
         | _T: any => throw_panic("Called unwrap on Nothing")
         | panic;
-let unwrap_let: lambda = f: lambda => v: Maybe(any) => 
+let unwrap_let: any = f: (lambda | v: never | panic) => v: Maybe(any) => 
     match v
         | Just::(x: any) => f(x)
         | _T: any => throw_panic("Called unwrap on Nothing")

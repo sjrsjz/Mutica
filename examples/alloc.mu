@@ -1,11 +1,11 @@
 let string_pkg: any = import "lib/string.mu";
 let {
     String::(String: any) &
-    println::(println: lambda)
+    println::(println: [lambda | panic])
 } = string_pkg;
 
-let get: lambda = match | panic;
-let set: lambda = match | panic;
+let get: (lambda | panic) = match | panic;
+let set: (lambda | panic) = match | panic;
 
 extend get: ClassA::(self: any) => () => {
     let data::(mut v: any) = self;

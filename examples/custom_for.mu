@@ -1,16 +1,16 @@
 let {
     String::(String: any) &
-    println::(println: lambda) &
-    nat_to_string::(nat_to_string: lambda)
+    println::(println: any) &
+    nat_to_string::(nat_to_string: any)
 } = import "lib/string.mu";
 let {
-    iter::(iter: lambda)
+    iter::(iter: any)
 } = import "lib/list.mu";
 let {
-    while::(while: lambda)
+    while::(while: any)
 } = import "lib/controlflow.mu";
 let {
-    Just::(Just: lambda) &
+    Just::(Just: any) &
     Nothing::(Nothing: any)
 } = import "lib/maybe.mu";
 

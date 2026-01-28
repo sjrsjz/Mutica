@@ -1,6 +1,6 @@
 let {
-    println::(println: lambda) &
-    nat_to_string::(nat_to_string: lambda)
+    println::(println: any) &
+    nat_to_string::(nat_to_string: any)
 } = import "lib/string.mu";
 
 // --- Multi-level Try-Catch using Effect Handlers ---
@@ -8,9 +8,9 @@ let {
 // - 用一个 try_catch 组合子来“限定” throw 的影响域（只影响这次 f() 的求值）
 // - try_catch 内部需要自引用（转发未知 effect 时要重新安装 handler），因此这里使用 dyn_rec
 
-let throw: lambda = err: any => perform! throw::err;
+let throw: any = err: any => perform! throw::err;
 
-let try_catch: lambda = on_throw: lambda => f: lambda => {
+let try_catch: any = on_throw: any => f: any => {
     handle with dyn_rec h: k: any => match
         | throw::(err: any) => on_throw(err)
         | v: any => {
@@ -25,11 +25,11 @@ let try_catch: lambda = on_throw: lambda => f: lambda => {
 // Example 1: Inner rethrow -> outer catch
 discard println("=== Example 1: Basic Nested Try-Catch ===");
 discard {
-    let outer: lambda = err: any => {
+    let outer: any = err: any => {
         discard println("Outer caught: " + err);
         "outer_fallback"
     };
-    let inner: lambda = err: any => {
+    let inner: any = err: any => {
         discard println("Inner caught: " + err);
         throw("Re-thrown from inner: " + err)
     };
@@ -48,14 +48,13 @@ discard println("");
 // Example 2: Selective catch (division handled, others rethrow)
 discard println("=== Example 2: Selective Error Handling ===");
 discard {
-    let outer: lambda = err: any => {
+    let outer: any = err: any => {
         discard println("Outer caught: " + err);
         "outer_recovered"
     };
-    let inner: lambda = err: any => {
+    let inner: any = err: any => {
         discard println("Inner saw: " + err);
         // 这里简单用字符串前缀来区分错误类型
-        // 真正的“前缀判断”可以换成你库里的字符串函数
         if display! err == display! err
             then 0
             else throw(err)
@@ -74,7 +73,7 @@ discard println("");
 // Example 3: Success path
 discard println("=== Example 3: Success Path ===");
 discard {
-    let on_err: lambda = err: any => {
+    let on_err: any = err: any => {
         discard println("Caught error: " + err);
         0
     };
@@ -90,12 +89,12 @@ discard println("");
 // Example 4: Three layers adding context
 discard println("=== Example 4: Three Levels of Handling ===");
 discard {
-    let h3: lambda = err: any => {
+    let h3: any = err: any => {
         discard println("Level3 caught: " + err);
         "handled_at_level3"
     };
-    let h2: lambda = err: any => throw("Level2 -> " + err);
-    let h1: lambda = err: any => throw("Level1 -> " + err);
+    let h2: any = err: any => throw("Level2 -> " + err);
+    let h1: any = err: any => throw("Level1 -> " + err);
 
     let result: any = h3.try_catch delay {
         h2.try_catch delay {
@@ -111,11 +110,11 @@ discard println("");
 // Example 5: Practical layered handling (validation vs application)
 discard println("=== Example 5: Practical Operations ===");
 discard {
-    let app: lambda = err: any => {
+    let app: any = err: any => {
         discard println("App caught: " + err);
         50
     };
-    let validate: lambda = err: any => {
+    let validate: any = err: any => {
         discard println("Validator caught: " + err);
         throw("Validation->" + err)
     };

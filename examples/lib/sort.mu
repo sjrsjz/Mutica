@@ -1,13 +1,13 @@
 let list_pkg: any = import "list.mu";
 let {
     List::(List: any) &
-    cons::(cons: lambda) &
-    len::(len: lambda) &
-    drop::(drop: lambda) &
-    take::(take: lambda)
+    cons::(cons: any) &
+    len::(len: any) &
+    drop::(drop: any) &
+    take::(take: any)
 } = list_pkg;
 // 归并两个已排序的列表
-let merge: lambda = (cmp: lambda, lst1: List(any), lst2: List(any)) => {
+let merge: any = (cmp: (lambda | (l: never, r: never) | panic), lst1: List(any), lst2: List(any)) => {
     loop merge_go: t: any = (lst1, lst2);
     match t
         | ((), l2: any) => l2
@@ -20,7 +20,7 @@ let merge: lambda = (cmp: lambda, lst1: List(any), lst2: List(any)) => {
 };
 
 // 将列表分为两半
-let split: lambda = lst: List(any) => {
+let split: any = lst: List(any) => {
     let len: nat = len lst;
     let mid: nat = len / 2;
     let first_half: any = take lst mid;
@@ -29,7 +29,7 @@ let split: lambda = lst: List(any) => {
 };
 
 // 归并排序主函数
-let merge_sort: lambda = cmp: lambda => lst: List(any) =>  {
+let merge_sort: any = cmp: (lambda | (l: never, r: never) | panic) => lst: List(any) =>  {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -45,14 +45,14 @@ let merge_sort: lambda = cmp: lambda => lst: List(any) =>  {
 
 
 // 快速排序
-let quick_sort: lambda = cmp: lambda => lst: List(any) => {
+let quick_sort: any = cmp: (lambda | (l: never, r: never) | panic) => lst: List(any) => {
     loop go: t: any = lst;
     match t
         | () => ()
-        | (v: any ~ ()) => v
+        | (v: any ~ ()) => cons(v, ())
         | (pivot: any ~ rest: any) => {
             // 分区函数
-            let partition: lambda = l: List(any) => {
+            let partition: any = l: List(any) => {
                 loop part: pt: any = (l, (), ());
                 let (lst_p: any, smaller: any, larger: any) = pt;
                 match lst_p
@@ -76,9 +76,9 @@ let quick_sort: lambda = cmp: lambda => lst: List(any) => {
 };
 
 // 插入排序
-let insert_sort: lambda = cmp: lambda => lst: List(any) => {
+let insert_sort: any = cmp: (lambda | (l: never, r: never) | panic) => lst: List(any) => {
     // 将元素插入已排序列表
-    let insert: lambda = (x: any, sorted: List(any)) => {
+    let insert: any = (x: any, sorted: List(any)) => {
         loop go: t: any = sorted;
         match t
             | () => cons(x, ())

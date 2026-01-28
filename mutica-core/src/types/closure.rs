@@ -124,7 +124,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
-                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
@@ -139,48 +138,44 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Lambda(_) => Ok(ThreeValuedLogic::True),
-                // 我们实际上难以解决这种非柯里霍德华体系的函数类型的归属问题，因此这里不作考虑，下面的逻辑也是有严重问题的
-                // TypeRef::Closure(v) => {
-                //     let (self_branches, _) = self.inner.as_ref();
-                //     let (v_branches, _) = v.inner.as_ref();
+                TypeRef::Lambda(other) => {
+                    // Closure 对 Lambda 的 check：只比较模式，忽略分支的 expr
+                    // 规则与 Lambda::subof 类似，但 LHS 使用 closure 的 branch.pattern
+                    let lhs_branches = self.branches();
+                    let rhs_patterns = other.patterns();
 
-                //     if self_branches.len() != v_branches.len() {
-                //         return Ok(ThreeValuedLogic::False);
-                //     }
+                    let mut i = 0usize;
+                    let mut j = 0usize;
+                    let mut result = ThreeValuedLogic::True;
 
-                //     let mut all = ThreeValuedLogic::True;
+                    while i < lhs_branches.len() && j < rhs_patterns.len() {
+                        let lhs = &lhs_branches[i].pattern;
+                        let rhs = &rhs_patterns[j];
+                        match rhs.subof_constraint(
+                            lhs,
+                            &mut inner_ctx,
+                            None::<
+                                fn(
+                                    &mut TypeCheckContext<Type<T>, T>,
+                                )
+                                    -> Result<ThreeValuedLogic, TypeError<Type<T>, T>>,
+                            >,
+                        )? {
+                            ThreeValuedLogic::True => {
+                                j += 1;
+                            }
+                            ThreeValuedLogic::False => {
+                                i += 1;
+                            }
+                            ThreeValuedLogic::Unknown => {
+                                result &= ThreeValuedLogic::Unknown;
+                                j += 1;
+                            }
+                        }
+                    }
 
-                //     for (self_inner, other_inner) in self_branches.iter().zip(v_branches.iter()) {
-                //         let mut pattern_ctx = TypeCheckContext::new(
-                //             ctx.assumptions,
-                //             None,
-                //             ctx.lhs_env,
-                //             ctx.rhs_env,
-                //             ctx.collected,
-                //         );
-
-                //         all &= test_true!(
-                //             self_inner
-                //                 .expr
-                //                 .check(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
-                //         );
-
-                //         let mut pattern_ctx = TypeCheckContext::new(
-                //             ctx.assumptions,
-                //             None,
-                //             ctx.rhs_env,
-                //             ctx.lhs_env,
-                //             ctx.collected,
-                //         );
-                //         all &= test_true!(
-                //             other_inner
-                //                 .pattern
-                //                 .check(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
-                //         )
-                //     }
-                //     Ok(all)
-                // }
+                    if j >= rhs_patterns.len() { Ok(result) } else { Ok(ThreeValuedLogic::False) }
+                }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -194,7 +189,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
-                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
@@ -205,6 +199,42 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
+
+                TypeRef::Closure(other) => {
+                    // Closure 的子类型关系：模式逆变，expr 协变
+                    let lhs_branches = self.branches();
+                    let rhs_branches = other.branches();
+
+                    let mut i = 0usize;
+                    let mut j = 0usize;
+                    let mut result = ThreeValuedLogic::True;
+
+                    while i < lhs_branches.len() && j < rhs_branches.len() {
+                        let lhs = &lhs_branches[i];
+                        let rhs = &rhs_branches[j];
+                        let expr_check = |ctx: &mut TypeCheckContext<_, _>| {
+                            lhs.expr.subof(rhs.expr.as_ref_dispatcher(), ctx)
+                        };
+                        match rhs.pattern.subof_constraint(
+                            &lhs.pattern,
+                            &mut inner_ctx,
+                            Some(expr_check),
+                        )? {
+                            ThreeValuedLogic::True => {
+                                j += 1;
+                            }
+                            ThreeValuedLogic::False => {
+                                i += 1;
+                            }
+                            ThreeValuedLogic::Unknown => {
+                                result &= ThreeValuedLogic::Unknown;
+                                j += 1;
+                            }
+                        }
+                    }
+
+                    if j >= rhs_branches.len() { Ok(result) } else { Ok(ThreeValuedLogic::False) }
+                }
 
                 // TypeRef::Closure(v) => {
                 //     let (self_branches, _) = self.inner.as_ref();
@@ -307,7 +337,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             let mut env_stack = EnvironmentStack::new();
             let mut pattern_check_ctx = TypeCheckContext::new(
                 &mut assumptions,
-                None,
                 PatternCollector::Deconstruct(&mut matched_pattern),
                 ctx.environment,
                 ctx.environment,
@@ -427,7 +456,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
             .into_iter()
             .map(|(captures, pattern, expr)| {
                 let expr_ty = expr.into_dispatcher();
-                ClosureBranch { captured_vars: Environment::new(captures), pattern, expr: expr_ty }
+                ClosureBranch {
+                    captured_vars: Environment::new(
+                        captures,
+                        Vec::<(Arc<str>, Arc<str>, usize, usize)>::new(),
+                    ),
+                    pattern,
+                    expr: expr_ty,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -462,7 +498,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         let branch = ClosureBranch {
             captured_vars: Environment::default(),
             pattern: Constraint::new_constraint(
-                Pattern::<T>::new(bind_name.clone(), None),
+                Pattern::<T>::new(bind_name.clone(), 0, None),
                 vec![(bind_name, AllOf::unknown(None))],
                 env,
                 None,

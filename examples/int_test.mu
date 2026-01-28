@@ -1,17 +1,17 @@
 let {
     int::(int: any) &
-    Positive::(Positive: lambda) &
-    Negative::(Negative: lambda) &
-    Add::($"op#add": lambda) &
-    Sub::($"op#sub": lambda) &
-    Mul::($"op#mul": lambda) &
-    Div::($"op#div": lambda) &
-    Mod::($"op#mod": lambda) &
-    Lt::($"op#lt": lambda) &
-    Gt::($"op#gt": lambda) &
-    Lte::($"op#lte": lambda) &
-    Gte::($"op#gte": lambda) &
-    Neg::($"op#neg": lambda)
+    Positive::(Positive: any) &
+    Negative::(Negative: any) &
+    Add::($"op#add": any) &
+    Sub::($"op#sub": any) &
+    Mul::($"op#mul": any) &
+    Div::($"op#div": any) &
+    Mod::($"op#mod": any) &
+    Lt::($"op#lt": any) &
+    Gt::($"op#gt": any) &
+    Lte::($"op#lte": any) &
+    Gte::($"op#gte": any) &
+    Neg::($"op#neg": any)
 } = import "lib/int.mu";
 let a: int = Positive 5;
 let b: int = Negative 3;

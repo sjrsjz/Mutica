@@ -1,4 +1,4 @@
-let f: lambda = dyn_rec f: match
+let f: any = dyn_rec f: match
     | 0 => 0
     | 1 => 1
     | n: nat => f(n - 1) + f(n - 2)

@@ -12,10 +12,10 @@ let {
 // --- 用户逻辑 ---
 
 // tick: s -> k -> k(s, s+1)
-let tick: lambda = s: nat => k: lambda => 
+let tick: any = s: nat => k: any => 
     k(s, s + 1);
 
-let program: lambda = {
+let program: any = {
     discard (); // 封装作用域
     let next: any = bind;
     
@@ -24,7 +24,7 @@ let program: lambda = {
     // 变为: next(v1 => ...)(tick)
     // 这匹配 bind(f)(m) 的签名
 
-    let print_a_add_b: lambda = (a: nat, b: nat) => {
+    let print_a_add_b: any = (a: nat, b: nat) => {
         discard println("a: " + nat_to_string a);
         discard println("b: " + nat_to_string b);
         discard println("a + b: " + nat_to_string(a + b));

@@ -8,11 +8,11 @@ let {
 
 // Constructors for @ syntax
 // @return value; -> return(continuation)(value)
-let return: any = _k: lambda => v: any => 
+let return: any = _k: any => v: any => 
     (success: any, _failure: any) => success(v);
 
 // @throw error; -> throw(continuation)(error)
-let throw: any = _k: lambda => e: any => 
+let throw: any = _k: any => e: any => 
     (_success: any, failure: any) => failure(e);
 
 // Helper to wrap a raw value into a Result (if not using @ syntax)
@@ -23,24 +23,24 @@ let to_throw: any = e: any =>
     (_success: any, failure: any) => failure(e);
 
 // Combinators
-let map: any = res: lambda => f: lambda =>
+let map: any = res: any => f: any =>
     (success: any, failure: any) =>
         res(v: any => success(f(v)), failure);
 
-let map_err: any = res: lambda => f: lambda =>
+let map_err: any = res: any => f: any =>
     (success: any, failure: any) =>
         res(success, e: any => failure(f(e)));
 
-let and_then: any = res: lambda => f: lambda =>
+let and_then: any = res: any => f: any =>
     (success: any, failure: any) =>
         res(v: any => f(v)(success, failure), failure);
 
-let unwrap_or: any = res: lambda => default: any =>
+let unwrap_or: any = res: any => default: any =>
     res(v: any => v, _e: any => default);
 
 // Execution / Extraction
 // try_catch takes a handler and a Result (the computation)
-let try_catch: any = handler: lambda => res: lambda =>
+let try_catch: any = handler: any => res: any =>
     res(v: any => v, handler);
 
 

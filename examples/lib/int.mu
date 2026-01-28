@@ -1,4 +1,4 @@
-let throw_panic::(throw_panic: lambda) = import "panic.mu";
+let throw_panic::(throw_panic: (lambda | panic)) = import "panic.mu";
 let int: any = 0 | Positive::nat | Negative::nat;
 extend $"op#add": match
     | (0, 0) => 0
@@ -117,11 +117,11 @@ extend $"op#gte": match
     | (Positive::nat, Negative::nat) => true
     | (Negative::nat, Positive::nat) => false
     | panic;
-let Positive: lambda = match
+let Positive: any = match
     | 0 => throw_panic "Cannot create Positive from 0"
     | (x: nat) => Positive::x
     | panic;
-let Negative: lambda = match
+let Negative: any = match
     | 0 => throw_panic "Cannot create Negative from 0"
     | (x: nat) => Negative::x
     | panic;

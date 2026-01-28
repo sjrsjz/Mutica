@@ -1,6 +1,6 @@
 let {
-    println::(println: lambda) &
-    nat_to_string::(nat_to_string: lambda)
+    println::(println: any) &
+    nat_to_string::(nat_to_string: any)
 } = import "lib/string.mu";
 
 // --- Multi-level Try-Catch using Effect Handlers ---

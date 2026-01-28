@@ -1,4 +1,3 @@
-let Any::(Any: any) = import "lib/any.mu";
 // 二叉树示例
 let Leaf: any = value: any => Leaf::value;
 let Node: any = (left: any, right: any, value: any) => Node::(left, right, value);
@@ -9,7 +8,7 @@ let Tree: any = T: any => rec tree: (Empty::() | Leaf::T | Node::(tree, tree, T)
 let tree_size: any = 
     dyn_rec size: match
         | Empty => 0
-        | Leaf(Any) => 1
+        | Leaf(any) => 1
         | Node::(left: any, right: any, _T: any) => 
             1 + size(left) + size(right)
         | panic;
@@ -18,7 +17,7 @@ let tree_size: any =
 let tree_height: any = 
     dyn_rec height: match
         | Empty => 0
-        | Leaf(Any) => 1
+        | Leaf(any) => 1
         | Node::(left: any, right: any, _T: any) => {
             let lh: nat = height(left);
             let rh: nat = height(right);
@@ -43,4 +42,4 @@ let mytree: any =
         1
     );
 
-tree_size mytree, tree_height mytree, tree_sum mytree, mytree is Tree(nat), Tree(nat) is Tree(Any)
+tree_size mytree, tree_height mytree, tree_sum mytree, mytree is Tree(nat), Tree(nat) is Tree(any)

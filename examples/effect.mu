@@ -1,4 +1,4 @@
-let run: lambda = f: lambda => {
+let run: any = f: any => {
     handle with dyn_rec handler: k: any => match
         | return::(v: any) => v
         | v: any => {
@@ -10,12 +10,12 @@ let run: lambda = f: lambda => {
     f()
 };
 
-let return: lambda = v: any => perform! return::v;
+let return: any = v: any => perform! return::v;
 
 run delay {
     let {
-        println::(println: lambda) &
-        nat_to_string::(nat_to_string: lambda)
+        println::(println: any) &
+        nat_to_string::(nat_to_string: any)
     } = import "lib/string.mu";
     let a: nat = 10;
     let b: nat = 5;

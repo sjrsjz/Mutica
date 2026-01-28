@@ -46,7 +46,6 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::NaturalNumberSet => (),
             LinearTypeAst::Float => (),
             LinearTypeAst::Char => (),
-            LinearTypeAst::Lambda => (),
             LinearTypeAst::NaturalNumberLiteral(_) => (),
             LinearTypeAst::FloatLiteral(_) => (),
             LinearTypeAst::CharLiteral(_) => (),
@@ -85,6 +84,14 @@ impl<'ast> SourceMapping<'ast> {
                         Self::build_mapping(expr, mapping, source_file);
                     }
                     Self::build_mapping(expr, mapping, source_file);
+                }
+            }
+            LinearTypeAst::Lambda { patterns, .. } => {
+                for (pattern, constraint) in patterns {
+                    Self::build_mapping(pattern, mapping, source_file);
+                    for (_, expr) in constraint {
+                        Self::build_mapping(expr, mapping, source_file);
+                    }
                 }
             }
             LinearTypeAst::Invoke { func, arg, continuation, perform_handler } => {

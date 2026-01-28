@@ -1,4 +1,4 @@
-let throw_panic: lambda = match
+let throw_panic: any = match
     | v: any => {
         let never = Panic::v;
     }

@@ -1,24 +1,23 @@
-let Any::(Any: any) = import "lib/any.mu";
 let String::(String: any) = import "lib/string.mu";
 // Either 类型示例 (用于错误处理)
-let Left: lambda = value: any => Left::value;
-let Right: lambda = value: any => Right::value;
-let Either: lambda = (T: any, U: any) => (Left T | Right U);
+let Left: any = value: any => Left::value;
+let Right: any = value: any => Right::value;
+let Either: any = (T: any, U: any) => (Left T | Right U);
 // map_right: 只对 Right 值进行映射
-let map_right: lambda = either: Either(Any, Any) => f: lambda =>
+let map_right: any = either: Either(any, any) => f: any =>
     match either
         | Left::(err: any) => Left(err)
         | Right::(val: any) => Right(f(val))
         | panic;
 
 // 安全除法
-let safe_div: lambda = a: nat => match
+let safe_div: any = a: nat => match
     | assert 0 => Left("Division by zero")
     | b_val: nat => Right(a / b_val)
     | panic;
 
 // 链式操作
-let bind: lambda = either: Either(Any, Any) => f: lambda =>
+let bind: any = either: Either(any, any) => f: any =>
     match either
         | Left::(err: any) => Left(err)
         | Right::(val: any) => f(val)

@@ -1,13 +1,13 @@
 let {
-    println::(println: lambda) &
-    nat_to_string::(nat_to_string: lambda)
+    println::(println: any) &
+    nat_to_string::(nat_to_string: any)
 } = import "lib/string.mu";
 
-let deref: lambda = mut T: any => T;
+let deref: any = mut T: any => T;
 
 discard println("Simple `while` loop example:");
 discard {
-    let while: lambda = condition: lambda => body: lambda => {
+    let while: any = condition: any => body: any => {
         loop go: assert () = ();
         if condition() then {
             discard body();

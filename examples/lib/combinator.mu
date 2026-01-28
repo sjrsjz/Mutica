@@ -4,27 +4,27 @@
 // ============ SKI 组合子系统 ============
 
 // I combinator (Identity) - 恒等函数
-let id: lambda = x: any => x;
+let id: any = x: any => x;
 
 // K combinator (Constant) - 常量函数
-let const: lambda = x: any => _y: any => x;
+let const: any = x: any => _y: any => x;
 
 // S combinator - 组合应用
-let s: lambda = f: lambda => g: lambda => x: any => f(x)(g(x));
+let s: any = f: any => g: any => x: any => f(x)(g(x));
 
 // ============ 其他经典组合子 ============
 
 // B combinator (Compose) - 函数组合
-let compose: lambda = f: lambda => g: lambda => x: any => f(g(x));
+let compose: any = f: any => g: any => x: any => f(g(x));
 
 // C combinator (Flip) - 翻转参数
-let flip: lambda = f: lambda => x: any => y: any => f(y)(x);
+let flip: any = f: any => x: any => y: any => f(y)(x);
 
 // W combinator (Duplication) - 参数复制
-let dup: lambda = f: lambda => x: any => f(x)(x);
+let dup: any = f: any => x: any => f(x)(x);
 
 // Y combinator (Fixed-point) - 不动点组合子
-let fix: lambda = f: lambda => {
+let fix: any = f: any => {
     let go: any = dyn_rec go: f(go);
     go
 };
@@ -32,10 +32,10 @@ let fix: lambda = f: lambda => {
 // ============ 元组投影组合子 ============
 
 // fst: 获取二元组第一个元素
-let fst: lambda = (x: any, _y: any) => x;
+let fst: any = (x: any, _y: any) => x;
 
 // snd: 获取二元组第二个元素
-let snd: lambda = (_x: any, y: any) => y;
+let snd: any = (_x: any, y: any) => y;
 
 // ============ 导出所有组合子 ============
 

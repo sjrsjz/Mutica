@@ -1,6 +1,6 @@
 let String::(String: any) = import "lib/string.mu";
-let Option: lambda = T: any => (Some::T | None::());
-let println: lambda = x: any => {
+let Option: any = T: any => (Some::T | None::());
+let println: any = x: any => {
     discard println! x;
 };
 discard println[Option(1)];

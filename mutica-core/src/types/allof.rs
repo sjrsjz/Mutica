@@ -74,7 +74,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
-                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
@@ -107,7 +106,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
-                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
@@ -126,7 +124,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
                             let result = marker.wrap(|path| {
                                 let mut inner_ctx = TypeCheckContext::new(
                                     inner_ctx.instance_assumptions,
-                                    None,
                                     PatternCollector::Subtyping(path),
                                     inner_ctx.lhs_env,
                                     inner_ctx.rhs_env,
@@ -210,7 +207,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
-                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
@@ -233,7 +229,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
-                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
@@ -336,7 +331,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
         let mut collected_pattern = EnvironmentStack::new();
         let mut context = TypeCheckContext::new(
             &mut assumptions,
-            None,
             PatternCollector::None,
             env,
             env,

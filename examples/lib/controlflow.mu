@@ -2,7 +2,7 @@ let {
     Nothing::(Nothing: any)
 } = import "maybe.mu";
 
-let while: lambda = init: any => f: lambda => {
+let while: any = init: any => f: (lambda | v: never | panic) => {
     loop go: state: any = init;
     match f(state)
         | Just::(v: any) => go(v)
@@ -10,7 +10,7 @@ let while: lambda = init: any => f: lambda => {
         | panic
 };
 
-let while_condition: lambda = condition: lambda => body: lambda => {
+let while_condition: any = condition: any => body: (lambda | () | panic) => {
     loop go: assert () = ();
     if condition() then {
         discard body();
@@ -18,7 +18,7 @@ let while_condition: lambda = condition: lambda => body: lambda => {
     } else ()
 };
 
-let whilei: lambda = init: any => f: lambda => {
+let whilei: any = init: any => f: (lambda | (state: never, counter: nat) | panic) => {
     loop go: (state: any, i: nat) = (init, 0);
     match f(state, i)
         | Just::(v: any) => go(v, i + 1)
@@ -26,7 +26,7 @@ let whilei: lambda = init: any => f: lambda => {
         | panic
 };
 
-let repeat: lambda = n: nat => f: lambda => {
+let repeat: any = n: nat => f: (lambda | counter: nat | panic) => {
     loop go: i: nat = 0;
     match i
         | n => ()
@@ -37,12 +37,12 @@ let repeat: lambda = n: nat => f: lambda => {
         | panic
 };
 
-let forever: lambda = init: any => f: lambda => {
+let forever: any = init: any => f: (lambda | v: never | panic) => {
     loop go: state: any = init;
     go(f(state))
 };
 
-let return: lambda = _f: lambda => v: any => v;
+let return: any = _f: any => v: any => v;
 
 while::while &
 while_condition::while_condition &

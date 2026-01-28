@@ -76,7 +76,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
-                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
@@ -105,7 +104,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
-                ctx.subtype_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,

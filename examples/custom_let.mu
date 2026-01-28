@@ -1,11 +1,11 @@
 let {
     String::(String: any) &
-    println::(println: lambda) &
-    nat_to_string::(nat_to_string: lambda) &
-    print::(print: lambda)
+    println::(println: any) &
+    nat_to_string::(nat_to_string: any) &
+    print::(print: any)
 } = import "lib/string.mu";
 
-let debug_let: lambda = f: lambda => v: any => {
+let debug_let: any = f: any => v: any => {
     discard print("Debug let:");
     discard print! v;
     discard print! '\n';
