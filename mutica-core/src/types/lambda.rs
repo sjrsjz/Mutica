@@ -138,7 +138,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                             }
                             ThreeValuedLogic::Unknown => {
                                 result &= ThreeValuedLogic::Unknown;
-                                j += 1;
+                                i += 1; // 保守起见，Unknown时也推进LHS
                             }
                         }
                     }

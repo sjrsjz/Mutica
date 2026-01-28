@@ -169,7 +169,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                             }
                             ThreeValuedLogic::Unknown => {
                                 result &= ThreeValuedLogic::Unknown;
-                                j += 1;
+                                i += 1;
                             }
                         }
                     }
@@ -228,7 +228,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                             }
                             ThreeValuedLogic::Unknown => {
                                 result &= ThreeValuedLogic::Unknown;
-                                j += 1;
+                                i += 1;
                             }
                         }
                     }
