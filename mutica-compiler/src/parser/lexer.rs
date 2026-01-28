@@ -161,6 +161,8 @@ pub enum LexerToken {
     Wildcard,
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_owned())]
     Ident(String),
+    #[regex(r"`[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice()[1..].to_owned())]
+    Attribute(String),
     #[regex(r#"'(\\u\{[0-9a-fA-F]{1,6}\}|\\[nrt\\'"]|[^'\\])'"#, parse_char_literal)]
     CharLit(char),
 

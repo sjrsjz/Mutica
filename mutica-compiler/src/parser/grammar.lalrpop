@@ -26,6 +26,7 @@ extern {
         "Ident"         => LexerToken::Ident(<String>),
         "CharLit"       => LexerToken::CharLit(<char>),
         "StringLit"     => LexerToken::StringLit(<String>),
+        "Attribute"     => LexerToken::Attribute(<String>),
 
         "Let"           => LexerToken::Let,
         "With"          => LexerToken::With,
@@ -123,6 +124,13 @@ Ident: String = {
     },
     <l:@L> DollarTok <s:"StringLit"> <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Identifier);
+        s
+    }
+};
+
+Attribute: String = {
+    <l:@L> <s:"Attribute"> <r:@R> => {
+        TokenColor::fill_colors(colors, l..r, TokenColor::Attribute);
         s
     }
 };
@@ -257,6 +265,31 @@ AtomType: WithLocation<TypeAst> = {
     <l:@L> <s: StringLiteral> <r:@R> => {
         let chars: Vec<(WithLocation<TypeAst>, NonZero<usize>)> = s.chars().map(|ch| (with_loc(TypeAst::CharLiteral(ch), source, l..r), NonZero::new(1).unwrap())).collect();
         with_loc(TypeAst::Tuple(chars), source, l..r)
+    },
+    <l:@L> <a: Attribute> <r:@R> => {
+        // 'attribute  => match | attribute::(v: any) => v | panic
+        let value_name = format!("attribute#{}", a);
+        let value_var = with_loc(value_name, source, l..r);
+        let tag = with_loc(a, source, l..r);
+        let pattern = with_loc(
+            TypeAst::Namespace {
+                tag: tag.clone(),
+                expr: Box::new(with_loc(TypeAst::Variable(value_var.clone()), source, l..r)),
+            },
+            source,
+            l..r,
+        );
+        let branch = GenericPattern::Standard {
+            pattern,
+            constraint: vec![(value_var.clone(), with_no_loc(TypeAst::Wildcard))],
+        };
+        with_loc(
+            TypeAst::Match {
+                branches: vec![(branch, with_loc(TypeAst::Variable(value_var), source, l..r))],
+            },
+            source,
+            l..r,
+        )
     },
     <l:@L> <io: Ident> BangTok <r:@R> => {
         TokenColor::fill_colors(colors, l..r, TokenColor::Function);
