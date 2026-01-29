@@ -228,16 +228,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     let mut i = 0usize;
                     let mut j = 0usize;
                     let mut result = ThreeValuedLogic::True;
+                    let mut collector = Some(inner_ctx.pattern_collector);
+                    let mut assumptions = inner_ctx.instance_assumptions;
+                    let mut bindings = inner_ctx.collected_bindings;
 
                     while i < lhs_branches.len() && j < rhs_branches.len() {
                         let lhs = &lhs_branches[i];
                         let rhs = &rhs_branches[j];
+                        let mut inner_loop_ctx = TypeCheckContext::new(
+                            assumptions,
+                            collector.take().unwrap(),
+                            lhs.captured_vars.view(), // 这地方是有严重问题的，因为这只支持一层的捕获变量，有理由怀疑可能需要进行动态作用域查找才能实现正确语义
+                            rhs.captured_vars.view(),
+                            bindings,
+                        );
                         let expr_check = |ctx: &mut TypeCheckContext<_, _>| {
                             lhs.expr.subof(rhs.expr.as_ref_dispatcher(), ctx)
                         };
                         match rhs.pattern.subof_constraint(
                             &lhs.pattern,
-                            &mut inner_ctx,
+                            &mut inner_loop_ctx,
                             Some(expr_check),
                         )? {
                             ThreeValuedLogic::True => {
@@ -251,6 +261,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                                 i += 1;
                             }
                         }
+                        // 奇葩的设计：通过移动所有权等操作堵住借用检查器的嘴
+                        collector = Some(inner_loop_ctx.pattern_collector);
+                        assumptions = inner_loop_ctx.instance_assumptions;
+                        bindings = inner_loop_ctx.collected_bindings;
                     }
 
                     if j >= rhs_branches.len() { Ok(result) } else { Ok(ThreeValuedLogic::False) }
