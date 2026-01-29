@@ -39,8 +39,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for ClosureBranch<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for ClosureBranch<T> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
         for (_, var) in self.captured_vars.type_vars() {
-            if let EnvironmentVarState::Bound(ty) = var {
-                ty.collect(queue);
+            match var {
+                EnvironmentVarState::Bound(ty) => {
+                    ty.collect(queue);
+                }
+                EnvironmentVarState::BoundList(tys) => {
+                    for ty in tys.iter() {
+                        ty.collect(queue);
+                    }
+                }
+                EnvironmentVarState::FromArgument => {}
+                EnvironmentVarState::FromCapture => {}
+                EnvironmentVarState::Phantom(_) => {}
             }
         }
         self.pattern.collect(queue);
@@ -51,8 +61,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for ClosureBranch<T> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for ClosureBranch<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         for (_, var) in self.captured_vars.type_vars() {
-            if let EnvironmentVarState::Bound(ty) = var {
-                ty.upgrade(collected);
+            match var {
+                EnvironmentVarState::Bound(ty) => {
+                    ty.upgrade(collected);
+                }
+                EnvironmentVarState::BoundList(tys) => {
+                    for ty in tys.iter() {
+                        ty.upgrade(collected);
+                    }
+                }
+                EnvironmentVarState::FromArgument => {}
+                EnvironmentVarState::FromCapture => {}
+                EnvironmentVarState::Phantom(_) => {}
             }
         }
         self.pattern.upgrade(collected);

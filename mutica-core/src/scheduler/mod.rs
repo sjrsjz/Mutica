@@ -17,10 +17,7 @@ use crate::{
         unify::Environment,
         variable::Variable,
     },
-    util::{
-        allocator::IdAllocator, cycle_detector::FastCycleDetector, rootstack::RootStack,
-        source_info::SourceLocation,
-    },
+    util::{cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation},
 };
 
 pub enum ContinuationOrHandler<T: GcAllocObject<T, Inner = Type<T>>> {
@@ -64,7 +61,6 @@ pub struct LinearScheduler<T: GcAllocObject<T, Inner = Type<T>>> {
     outer_io_handler: Option<AsyncIoHandler<T>>,
     cont_stack: Stack<ContinuationOrHandler<T>>,
     current_type: Option<Type<T>>,
-    _allocated_types: IdAllocator<Type<T>>,
     roots: RootStack<Type<T>, T>,
 }
 
@@ -72,13 +68,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     pub fn new(initial_type: Type<T>, outer_io_handler: Option<AsyncIoHandler<T>>) -> Self {
         let mut roots = RootStack::new();
         roots.attach(&initial_type);
-        Self {
-            outer_io_handler,
-            cont_stack: Stack::new(),
-            current_type: Some(initial_type),
-            _allocated_types: IdAllocator::new(),
-            roots,
-        }
+        Self { outer_io_handler, cont_stack: Stack::new(), current_type: Some(initial_type), roots }
     }
 
     async fn io(
@@ -214,9 +204,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let perform_handler = loop {
                         match self.cont_stack.pop_and_auto_defork() {
                             Some(ContinuationOrHandler::Continuation(cont)) => {
+                                // 保护从栈弹出的 continuation（离开栈保护区域）
+                                self.roots.attach(&cont);
                                 continuations.push(cont)
                             }
-                            Some(ContinuationOrHandler::PerformHandler(handler)) => break handler,
+                            Some(ContinuationOrHandler::PerformHandler(handler)) => {
+                                // 保护从栈弹出的 handler（离开栈保护区域）
+                                self.roots.attach(&handler);
+                                break handler;
+                            }
                             None => {
                                 return Err(TypeError::MissingPerformHandler(Box::new(func)));
                             }
@@ -254,33 +250,33 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         let mut next_cont: Option<Type<T>> = None;
                         for func in chain.into_iter().rev() {
                             let arg = Variable::new_argument(bind_name.as_ref(), None);
-                            let invoke = Invoke::new(func, arg, next_cont, None::<Type<T>>, None);
-                            next_cont = Some(Closure::lazy(
-                                None,
-                                bind_name.clone(),
-                                invoke,
-                                empty_env.view(),
-                            )?);
+                            let invoke =
+                                Invoke::new(func, arg, next_cont.clone(), None::<Type<T>>, None);
+                            let new_closure =
+                                Closure::lazy(None, bind_name.clone(), invoke, empty_env.view())?;
+                            next_cont = Some(new_closure);
                         }
 
                         continuation = next_cont.expect("Continuation chain must be non-empty");
                     }
 
+                    let inner_closure = Closure::lazy(
+                        None,
+                        Arc::from("var#continuation"),
+                        Invoke::new(
+                            Variable::new_argument("var#continuation", None),
+                            *v,
+                            None::<Type<T>>,
+                            handler,
+                            None,
+                        ),
+                        empty_env.view(),
+                    )?;
+
                     let perform_invoke = Invoke::new(
                         perform_handler.clone(),
                         continuation,
-                        Some(Closure::lazy(
-                            None,
-                            Arc::from("var#continuation"),
-                            Invoke::new(
-                                Variable::new_argument("var#continuation", None),
-                                *v,
-                                None::<Type<T>>,
-                                handler,
-                                None,
-                            ),
-                            empty_env.view(),
-                        )?),
+                        Some(inner_closure),
                         None::<Type<T>>,
                         source_info.clone(),
                     );
@@ -388,9 +384,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         if let Some(current) = &self.current_type {
             self.roots.attach(current);
         }
-        for ty in self._allocated_types.iter().flatten() {
-            self.roots.attach(ty);
-        }
     }
 
     pub fn stack(&self) -> &Stack<ContinuationOrHandler<T>> {
@@ -399,11 +392,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 
     pub fn current(&self) -> &Type<T> {
         self.current_type.as_ref().expect("Current type is None")
-    }
-
-    #[deprecated]
-    pub fn allocated_types(&self) -> &IdAllocator<Type<T>> {
-        &self._allocated_types
     }
 
     pub fn roots(&self) -> &RootStack<Type<T>, T> {

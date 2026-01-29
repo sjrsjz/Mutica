@@ -222,11 +222,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Mutable<T> {
         value: X,
         source_info: Option<Arc<SourceLocation>>,
         gc: &mut GC<T>,
-        root_stack: &mut RootStack<Type<T>, T>,
+        roots: &mut RootStack<Type<T>, T>,
     ) -> Type<T> {
         let gc_arc = gc.create(T::new_mutable_slot(value.into_dispatcher()));
         let reference = gc_arc.as_weak();
-        root_stack.push(gc_arc);
+        roots.push(gc_arc);
         Mutable { reference, source_info }.dispatch()
     }
 

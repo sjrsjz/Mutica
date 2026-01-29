@@ -58,8 +58,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for FixPoint<T> {
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for FixPoint<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        if let Some(inner) = self.reference.upgrade() {
-            collected.push(inner);
+        if let Some(strong) = self.reference.upgrade() {
+            collected.push(strong);
         }
     }
 }

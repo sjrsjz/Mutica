@@ -456,10 +456,10 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
     const SWEEP_INTERVAL: usize = 8192;
     let result = loop {
         // for debugging: 在每一步后进行垃圾收集和根栈清理
-        #[cfg(debug_assertions)]
-        gc.collect();
-        #[cfg(debug_assertions)]
-        linear_scheduler.sweep_roots();
+        // #[cfg(debug_assertions)]
+        // gc.collect();
+        // #[cfg(debug_assertions)]
+        // linear_scheduler.sweep_roots();
 
         match linear_scheduler.step(&mut gc).await {
             Ok(true) => (),
