@@ -1,3 +1,4 @@
+pub mod native;
 pub mod stack;
 
 use std::{future::Future, io::Write, pin::Pin, sync::Arc};
@@ -116,6 +117,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     use std::io;
                     io::stdout().flush().unwrap();
                     Ok(Some(Sequence::unit(source_info.cloned())))
+                }
+                "stopwatch" => {
+                    let stopwatch = native::timer::Stopwatch::new(source_info.cloned());
+                    Ok(Some(stopwatch))
                 }
                 // 类型表示相关
                 "repr" => {

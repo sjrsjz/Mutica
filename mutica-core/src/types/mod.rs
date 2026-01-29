@@ -16,6 +16,7 @@ pub mod mutable;
 pub mod namespace;
 pub mod natural_number;
 pub mod natural_number_set;
+pub mod opaque;
 pub mod opcode;
 pub mod pattern;
 pub mod sequence;
@@ -47,6 +48,7 @@ macro_rules! type_dispatch {
             Type::Mutable(v) => v.$method($($args),*),
             Type::NaturalNumber(v) => v.$method($($args),*),
             Type::NaturalNumberSet (v) => v.$method($($args),*),
+            Type::OpaqueObject (v) => v.$method($($args),*),
         }
     };
 }
@@ -75,6 +77,7 @@ macro_rules! typeref_dispatch {
             TypeRef::Mutable(v) => v.$method($($args),*),
             TypeRef::NaturalNumber(v) => v.$method($($args),*),
             TypeRef::NaturalNumberSet (v) => v.$method($($args),*),
+            TypeRef::OpaqueObject (v) => v.$method($($args),*),
         }
     };
 }
@@ -107,6 +110,7 @@ use crate::{
         namespace::Namespace,
         natural_number::NaturalNumber,
         natural_number_set::NaturalNumberSet,
+        opaque::OpaqueObject,
         opcode::Opcode,
         pattern::Pattern,
         sequence::Sequence,
@@ -151,6 +155,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Mutable(v) => Type::Mutable(v.clone()),
             Type::NaturalNumber(v) => Type::NaturalNumber(v.clone()),
             Type::NaturalNumberSet(v) => Type::NaturalNumberSet(v.clone()),
+            Type::OpaqueObject(v) => Type::OpaqueObject(v.clone()),
         }
     }
 }
@@ -198,6 +203,8 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     NaturalNumber(NaturalNumber<T>),
     // 自然数集合类型
     NaturalNumberSet(NaturalNumberSet<T>),
+    // 不透明对象类型（用于封装宿主语言对象）
+    OpaqueObject(OpaqueObject<T>),
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
@@ -222,6 +229,7 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Mutable(&'a Mutable<T>),
     NaturalNumber(&'a NaturalNumber<T>),
     NaturalNumberSet(&'a NaturalNumberSet<T>),
+    OpaqueObject(&'a OpaqueObject<T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
@@ -306,6 +314,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Mutable(v) => Type::Mutable(v.clone()),
             TypeRef::NaturalNumber(v) => Type::NaturalNumber(v.clone()),
             TypeRef::NaturalNumberSet(v) => Type::NaturalNumberSet(v.clone()),
+            TypeRef::OpaqueObject(v) => Type::OpaqueObject(v.clone()),
         }
     }
 }
@@ -837,8 +846,8 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
     }
 }
 
-pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized>:
-    GCTraceable<T> + 'static + Sized
+pub trait GcAllocObject<T: GCTraceable<T> + 'static + Sized + Send + Sync>:
+    GCTraceable<T> + 'static + Sized + Send + Sync
 {
     type Inner: CoinductiveType<Self::Inner, T>
     where
@@ -1084,6 +1093,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Mutable(v) => TypeRef::Mutable(v),
             Type::NaturalNumber(v) => TypeRef::NaturalNumber(v),
             Type::NaturalNumberSet(v) => TypeRef::NaturalNumberSet(v),
+            Type::OpaqueObject(v) => TypeRef::OpaqueObject(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
@@ -1122,6 +1132,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Mutable(v) => TypeRef::Mutable(v),
             Type::NaturalNumber(v) => TypeRef::NaturalNumber(v),
             Type::NaturalNumberSet(v) => TypeRef::NaturalNumberSet(v),
+            Type::OpaqueObject(v) => TypeRef::OpaqueObject(v),
         }
     }
     fn into_dispatcher(self) -> Type<T>
