@@ -353,8 +353,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
         _max_depth: usize,
     ) -> String {
         match self {
-            Variable::ContextVariable { bind_name, .. } => format!("c.{}", bind_name),
-            Variable::ArgumentVariable { bind_name, .. } => format!("λ.{}", bind_name),
+            Variable::ContextVariable { bind_name, .. } => format!("capture.{}", bind_name),
+            Variable::ArgumentVariable { bind_name, .. } => format!("arg.{}", bind_name),
             Variable::PatternVariable { bind_name, layer, .. } => {
                 format!("P_{}.{}", layer, bind_name)
             }

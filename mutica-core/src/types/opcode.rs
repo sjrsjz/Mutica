@@ -376,7 +376,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                 ))),
                             },
                             (Type::Closure(l), Type::Closure(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(l.clone().impls(r.clone(), ctx.source_info.cloned())),
+                                OpcodeKind::Add => Ok(l.clone().impls(r.clone(), ctx.source_info.cloned())?),
                                 _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                                     std::io::Error::other(
                                         "Only 'Add' operation is supported for Closure types",

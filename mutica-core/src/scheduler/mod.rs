@@ -14,7 +14,7 @@ use crate::{
         invoke::{Invoke, InvokeCountinuationStyle},
         natural_number::NaturalNumber,
         sequence::Sequence,
-        unify::{Environment, EnvironmentVarState},
+        unify::Environment,
         variable::Variable,
     },
     util::{
@@ -187,10 +187,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     }
 
     pub async fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
-        let empty_env = Environment::new(
-            Vec::<(Arc<str>, EnvironmentVarState<Type<T>, T>)>::new(),
-            Vec::<(Arc<str>, Arc<str>, usize, usize)>::new(),
-        );
+        let empty_env = Environment::placeholder();
         // 在 await 之前完成所有需要 rec_assumptions 的工作
         let current_type = self.current_type.take().ok_or_else(|| {
             TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))

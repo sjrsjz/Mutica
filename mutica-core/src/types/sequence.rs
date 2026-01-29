@@ -1209,6 +1209,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
         }
     }
 
+    /*
     pub fn add<'a>(
         &'a self,
         other: &Sequence<T>,
@@ -1319,6 +1320,61 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
             source_info: self.source_info.clone(), // 或者合并 info
             offset: 0,                             // 物理拼接后，offset 归零
         })
+    }
+    */
+
+    pub fn add<'a>(
+        &'a self,
+        other: &Sequence<T>,
+        _env: EnvironmentView<'a, Type<T>, T>,
+    ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
+        // 朴素拼接：直接拼接 Vec，不做任何合并或展开。
+        // 对于 LHS，直接保留其物理前缀和 offset，不需要 seek 切割。
+        match self.ty {
+            SequenceType::Repeat(..) | SequenceType::Cons(..) => {
+                return Err(TypeError::TypeMismatch(
+                    (
+                        self.as_ref_dispatcher().clone_data(),
+                        "Finite Sequence (Tuple or Unit)".into(),
+                    )
+                        .into(),
+                ));
+            }
+            _ => {}
+        }
+
+        let self_phys = self.physical_prefix();
+        let other_phys = other.physical_prefix();
+        let mut new_prefix: Vec<(Type<T>, NonZero<usize>)> =
+            Vec::with_capacity(self_phys.len() + other_phys.len());
+
+        // 处理 self：保留所有物理块，后续直接复用 self.offset
+        new_prefix.extend(self_phys.iter().cloned());
+
+        // 处理 other：需要 seek 以去除其 offset 跳过的部分，紧接在 self 逻辑末尾之后
+        if let Some((idx, rem)) = other.seek_prefix() {
+            // 第一个可能被切断的块
+            new_prefix.push((other_phys[idx].0.clone(), NonZero::new(rem).unwrap()));
+            // 后续完整的块
+            for (ty, count) in other_phys.iter().skip(idx + 1) {
+                new_prefix.push((ty.clone(), *count));
+            }
+        }
+
+        let new_prefix_arc: Arc<[_]> = Arc::from(new_prefix);
+        let new_ty = match &other.ty {
+            SequenceType::Unit | SequenceType::NonEmptyTuple(_) => {
+                if new_prefix_arc.is_empty() {
+                    SequenceType::Unit
+                } else {
+                    SequenceType::NonEmptyTuple(new_prefix_arc)
+                }
+            }
+            SequenceType::Repeat(_, tail) => SequenceType::Repeat(new_prefix_arc, tail.clone()),
+            SequenceType::Cons(_, tail) => SequenceType::Cons(new_prefix_arc, tail.clone()),
+        };
+
+        Ok(Sequence { ty: new_ty, source_info: self.source_info.clone(), offset: self.offset })
     }
 
     pub fn is_tuple(&self) -> bool {

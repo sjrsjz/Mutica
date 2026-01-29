@@ -372,6 +372,7 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     AssertFailed(Box<(U, U)>),
     MissingContinuation(Box<U>),
     MissingPerformHandler(Box<U>),
+    ClosureNotReduced(Box<U>),
     RuntimeError(Arc<dyn Error + Send + Sync>),
     OtherError(Box<str>),
     Perform(Box<U>),
@@ -414,6 +415,7 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::MissingPerformHandler(ty) => {
                 write!(f, "Missing perform handler: {:?}", ty)
             }
+            TypeError::ClosureNotReduced(ty) => write!(f, "Closure not reduced: {:?}", ty),
             TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
             TypeError::Perform(ty) => write!(f, "Perform raised: {:?}", ty),
             TypeError::OtherError(msg) => write!(f, "Other error: {}", msg),
@@ -657,6 +659,32 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Handler missing"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::ClosureNotReduced(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
+                if let Some(loc) = ty.source_info() {
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
+                    let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message(format!("Closure not reduced: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("Closure should have been reduced here, otherwise the captured variables may not be valid"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message(format!("Closure not reduced: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Closure not reduced"),
                         )
                         .finish()
                 }
@@ -1297,10 +1325,10 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         Ok(sub_ab & sub_ba)
     }
 
-    // 归约变换
+    // 归约变换 (beta-reduction)
     fn reduce(self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
 
-    // 类型应用
+    // 类型应用 (apply)
     fn invoke(self, ctx: InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>>;

@@ -242,10 +242,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         let lhs_pattern = self.expr();
         let rhs_pattern = other.expr();
-        let empty_env_layer = Environment::new(
-            Vec::<(Arc<str>, EnvironmentVarState<Type<T>, T>)>::new(),
-            Vec::<(Arc<str>, Arc<str>, usize, usize)>::new(),
-        );
+        let empty_env_layer = Environment::placeholder();
         ctx.collected_bindings.push(empty_env_layer); // 为子类型检查创建一个空的环境层，防止模式变量的层级索引对不上号
         let mut collected_path = Vec::new();
         let mut path_collector = PathCollector::from(&mut collected_path);
@@ -280,10 +277,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                     None => rhs_tys.push((rhs, 0)),
                 }
             }
-            let new_env_layer = Environment::new(
-                Vec::<(Arc<str>, EnvironmentVarState<Type<T>, T>)>::new(),
-                subtype_assumptions.iter().cloned(),
-            );
+            let new_env_layer =
+                Environment::subtype_assumption(subtype_assumptions.iter().cloned());
             ctx.collected_bindings.push(new_env_layer);
             let mut new_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
@@ -349,10 +344,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<(ThreeValuedLogic, SmallVec<[(Arc<str>, Type<T>); 4]>), TypeError<Type<T>, T>> {
-        let empty_env_layer = Environment::new(
-            Vec::<(Arc<str>, EnvironmentVarState<Type<T>, T>)>::new(),
-            Vec::<(Arc<str>, Arc<str>, usize, usize)>::new(),
-        );
+        let empty_env_layer = Environment::placeholder();
         ctx.collected_bindings.push(empty_env_layer); // 为解构创建一个空的环境层，防止模式变量的层级索引对不上号
         let mut collector = Collector::new();
         let mut new_ctx = TypeCheckContext::new(
@@ -369,9 +361,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
             return Ok((ThreeValuedLogic::False, SmallVec::new()));
         }
         // 收集变量绑定，并进行非线性约束检查
-        let mut env = Environment::new(
-            self.constraint().iter().map(|(v, _)| (v.clone(), EnvironmentVarState::FromPattern)),
-            Vec::<(Arc<str>, Arc<str>, usize, usize)>::new(),
+        let mut env = Environment::pattern_binding(
+            self.constraint().iter().map(|(v, _)| (v.clone(), EnvironmentVarState::FromArgument)),
         );
         let collected = collector.take_items().expect("Unable to take items from collector");
         for (k, v) in collected {

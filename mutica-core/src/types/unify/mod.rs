@@ -7,7 +7,7 @@ use smallvec::{SmallVec, smallvec};
 use crate::types::{AsDispatcher, CoinductiveType, GcAllocObject, Type, TypeError, anyof::AnyOf};
 
 pub enum EnvironmentVarState<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    FromPattern,
+    FromArgument,
     FromCapture,
     Bound(U),
     BoundList(SmallVec<[U; 4]>),
@@ -18,7 +18,7 @@ pub enum EnvironmentVarState<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentVarState<U, V> {
     fn clone(&self) -> Self {
         match self {
-            EnvironmentVarState::FromPattern => EnvironmentVarState::FromPattern,
+            EnvironmentVarState::FromArgument => EnvironmentVarState::FromArgument,
             EnvironmentVarState::FromCapture => EnvironmentVarState::FromCapture,
             EnvironmentVarState::Bound(ty) => EnvironmentVarState::Bound(ty.clone()),
             EnvironmentVarState::BoundList(tys) => EnvironmentVarState::BoundList(tys.clone()),
@@ -29,52 +29,90 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentVarStat
     }
 }
 
-pub struct Environment<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    type_vars: Vec<(Arc<str>, EnvironmentVarState<U, V>)>,
-    subtype_assumptions: Vec<(Arc<str>, Arc<str>, usize, usize)>, // (sub, sup, layer_sub, layer_sup)
-    _phantom: std::marker::PhantomData<V>,
+#[derive(Default)]
+pub enum Environment<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    #[default]
+    Placeholder,
+    PatternBinding {
+        type_vars: Vec<(Arc<str>, EnvironmentVarState<U, V>)>,
+    },
+    SubtypeAssumption {
+        // (sub, sup, layer_sub, layer_sup)
+        subtype_assumptions: Vec<(Arc<str>, Arc<str>, usize, usize)>,
+    },
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Environment<U, V> {
     fn clone(&self) -> Self {
-        Self {
-            type_vars: self.type_vars.clone(),
-            subtype_assumptions: self.subtype_assumptions.clone(),
-            _phantom: std::marker::PhantomData,
+        match self {
+            Environment::Placeholder => Environment::Placeholder,
+            Environment::PatternBinding { type_vars } => {
+                Environment::PatternBinding { type_vars: type_vars.clone() }
+            }
+            Environment::SubtypeAssumption { subtype_assumptions } => {
+                Environment::SubtypeAssumption { subtype_assumptions: subtype_assumptions.clone() }
+            }
         }
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
-    pub fn new<
+    pub fn placeholder() -> Self {
+        Environment::Placeholder
+    }
+
+    pub fn pattern_binding<
         I: IntoIterator<Item = (S, EnvironmentVarState<U, V>)>,
-        J: IntoIterator<Item = (P, Q, usize, usize)>,
-        P: Into<Arc<str>>,
-        Q: Into<Arc<str>>,
         S: Into<Arc<str>>,
     >(
         type_vars: I,
+    ) -> Self {
+        Environment::PatternBinding {
+            type_vars: type_vars.into_iter().map(|(s, state)| (s.into(), state)).collect(),
+        }
+    }
+
+    pub fn subtype_assumption<
+        J: IntoIterator<Item = (P, Q, usize, usize)>,
+        P: Into<Arc<str>>,
+        Q: Into<Arc<str>>,
+    >(
         subtype_assumptions: J,
     ) -> Self {
-        Self {
-            type_vars: type_vars.into_iter().map(|(s, state)| (s.into(), state)).collect(),
+        Environment::SubtypeAssumption {
             subtype_assumptions: subtype_assumptions
                 .into_iter()
                 .map(|(p, q, layer_sub, layer_sup)| (p.into(), q.into(), layer_sub, layer_sup))
                 .collect(),
-            _phantom: std::marker::PhantomData,
         }
     }
 
     pub fn new_bound<I: IntoIterator<Item = (S, U)>, S: Into<Arc<str>>>(type_vars: I) -> Self {
-        Self {
+        Environment::PatternBinding {
             type_vars: type_vars
                 .into_iter()
                 .map(|(s, ty)| (s.into(), EnvironmentVarState::Bound(ty)))
                 .collect(),
-            subtype_assumptions: Vec::new(),
-            _phantom: std::marker::PhantomData,
         }
+    }
+
+    pub fn is_reduced(&self) -> bool {
+        let Environment::PatternBinding { type_vars } = self else {
+            return true;
+        };
+        for (_, var_ty) in type_vars.iter() {
+            match var_ty {
+                EnvironmentVarState::FromArgument | EnvironmentVarState::FromCapture => {
+                    return false;
+                }
+                EnvironmentVarState::BoundList(_) => {
+                    return false;
+                }
+                EnvironmentVarState::Bound(_) => {}
+                EnvironmentVarState::Phantom(_) => unreachable!(),
+            }
+        }
+        true
     }
 
     pub fn bind<X: AsDispatcher<U, V>, S: AsRef<str>>(
@@ -82,8 +120,12 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         name: S,
         ty: X,
     ) -> Result<(), TypeError<U, V>> {
+        let Environment::PatternBinding { type_vars } = self else {
+            return Err(TypeError::UnboundEnvironmentVariable(name.as_ref().into()));
+        };
+
         let ty = ty.into_dispatcher();
-        for (var_name, var_ty) in self.type_vars.iter_mut() {
+        for (var_name, var_ty) in type_vars.iter_mut() {
             if var_name.as_ref() == name.as_ref() {
                 match var_ty {
                     EnvironmentVarState::Bound(_) => {
@@ -96,7 +138,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
                         v.push(ty.into_dispatcher());
                         return Ok(());
                     }
-                    EnvironmentVarState::FromPattern | EnvironmentVarState::FromCapture => {
+                    EnvironmentVarState::FromArgument | EnvironmentVarState::FromCapture => {
                         *var_ty = EnvironmentVarState::BoundList(smallvec![ty.into_dispatcher()]);
                         return Ok(());
                     }
@@ -112,9 +154,13 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         pattern_env: EnvironmentView<U, V>,
         capture_env: EnvironmentView<U, V>,
     ) -> Result<Self, TypeError<U, V>> {
-        for (var_name, var_ty) in self.type_vars.iter_mut() {
+        let Environment::PatternBinding { type_vars } = &mut self else {
+            return Ok(self);
+        };
+
+        for (var_name, var_ty) in type_vars.iter_mut() {
             match var_ty {
-                EnvironmentVarState::FromPattern => {
+                EnvironmentVarState::FromArgument => {
                     if let Some(other_ty) = pattern_env.lookup(var_name.as_ref()) {
                         *var_ty = EnvironmentVarState::Bound(other_ty.clone());
                     } else {
@@ -143,7 +189,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
     }
 
     pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
-        for (var_name, var_ty) in self.type_vars.iter() {
+        let Environment::PatternBinding { type_vars } = self else {
+            return None;
+        };
+        for (var_name, var_ty) in type_vars.iter() {
             if var_name.as_ref() == name.as_ref() {
                 if let EnvironmentVarState::Bound(ty) = var_ty {
                     return Some(ty);
@@ -156,11 +205,26 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
     }
 
     pub fn view(&self) -> EnvironmentView<'_, U, V> {
-        EnvironmentView::new(&self.type_vars)
+        match self {
+            Environment::PatternBinding { type_vars } => EnvironmentView::new(type_vars),
+            Environment::Placeholder | Environment::SubtypeAssumption { .. } => {
+                EnvironmentView::default()
+            }
+        }
     }
 
     pub fn type_vars(&self) -> &[(Arc<str>, EnvironmentVarState<U, V>)] {
-        &self.type_vars
+        match self {
+            Environment::PatternBinding { type_vars } => type_vars,
+            Environment::Placeholder | Environment::SubtypeAssumption { .. } => &[],
+        }
+    }
+
+    pub fn subtype_assumptions(&self) -> &[(Arc<str>, Arc<str>, usize, usize)] {
+        match self {
+            Environment::SubtypeAssumption { subtype_assumptions } => subtype_assumptions,
+            Environment::Placeholder | Environment::PatternBinding { .. } => &[],
+        }
     }
 }
 
@@ -169,8 +233,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Environment<Type<T>, T> {
         &mut self,
         env: EnvironmentView<'a, Type<T>, T>,
     ) -> Result<(), TypeError<Type<T>, T>> {
+        let Environment::PatternBinding { type_vars } = self else {
+            return Ok(());
+        };
         // 把所有BoundList变量转换为Bound
-        for (_, var_ty) in self.type_vars.iter_mut() {
+        for (_, var_ty) in type_vars.iter_mut() {
             if let EnvironmentVarState::BoundList(tys) = var_ty {
                 *var_ty = EnvironmentVarState::Bound(AnyOf::new(tys.iter(), None, env)?)
             }
@@ -213,16 +280,6 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentView<'a, U, V
     }
 }
 
-impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Default for Environment<U, V> {
-    fn default() -> Self {
-        Self {
-            type_vars: Vec::new(),
-            subtype_assumptions: Vec::new(),
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Default for EnvironmentView<'_, U, V> {
     fn default() -> Self {
         Self { type_vars: &[] }
@@ -246,15 +303,6 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentStack<U, V> {
         self.stack.pop()
     }
 
-    // pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
-    //     for env in self.stack.iter().rev() {
-    //         if let Some(ty) = env.lookup(name.as_ref()) {
-    //             return Some(ty);
-    //         }
-    //     }
-    //     None
-    // }
-
     pub fn lookup_at_layer<S: AsRef<str>>(&self, name: S, layer: usize) -> Option<Option<&U>> {
         match self.stack.get(layer) {
             Some(env) => match env.lookup(name.as_ref()) {
@@ -276,7 +324,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentStack<U, V> {
             return None;
         }
         for env in self.stack.iter().rev() {
-            for (p, q, l_sub, l_sup) in env.subtype_assumptions.iter() {
+            for (p, q, l_sub, l_sup) in env.subtype_assumptions().iter() {
                 if p.as_ref() == sub.as_ref()
                     && q.as_ref() == sup.as_ref()
                     && *l_sub == layer_sub

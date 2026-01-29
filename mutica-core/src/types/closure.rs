@@ -235,47 +235,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
                     if j >= rhs_branches.len() { Ok(result) } else { Ok(ThreeValuedLogic::False) }
                 }
-
-                // TypeRef::Closure(v) => {
-                //     let (self_branches, _) = self.inner.as_ref();
-                //     let (v_branches, _) = v.inner.as_ref();
-
-                //     if self_branches.len() != v_branches.len() {
-                //         return Ok(ThreeValuedLogic::False);
-                //     }
-
-                //     let mut all = ThreeValuedLogic::True;
-
-                //     for (self_inner, other_inner) in self_branches.iter().zip(v_branches.iter()) {
-                //         let mut pattern_ctx = TypeCheckContext::new(
-                //             ctx.assumptions,
-                //             None,
-                //             ctx.lhs_env,
-                //             ctx.rhs_env,
-                //             ctx.collected,
-                //         );
-
-                //         all &= test_true!(
-                //             self_inner
-                //                 .expr
-                //                 .subof(other_inner.expr.as_ref_dispatcher(), &mut pattern_ctx)?
-                //         );
-
-                //         let mut pattern_ctx = TypeCheckContext::new(
-                //             ctx.assumptions,
-                //             None,
-                //             ctx.rhs_env,
-                //             ctx.lhs_env,
-                //             ctx.collected,
-                //         );
-                //         all &= test_true!(
-                //             other_inner
-                //                 .pattern
-                //                 .subof(self_inner.pattern.as_ref_dispatcher(), &mut pattern_ctx)?
-                //         )
-                //     }
-                //     Ok(all)
-                // }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -329,6 +288,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
 
     fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let (branches, _) = self.inner.as_ref();
+        if !self.is_reduced() {
+            return Err(TypeError::ClosureNotReduced(self.dispatch().into()));
+        }
         let mut matched_pattern = Collector::new();
         let mut assumptions = smallvec::smallvec![];
         for branch in branches.iter() {
@@ -412,7 +374,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
         let (branches, _) = self.inner.as_ref();
         let mut repr = String::from("match");
         for inner in branches.iter() {
-            repr.push_str(" | capture { ");
             let captured_vars: Vec<String> = inner
                 .captured_vars
                 .type_vars()
@@ -420,7 +381,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
                 .map(|(v, ty)| {
                     let ty_str = match ty {
                         EnvironmentVarState::Bound(ty) => ty.represent(path, depth + 1, max_depth),
-                        EnvironmentVarState::FromPattern => "FromPattern".to_string(),
+                        EnvironmentVarState::FromArgument => "FromPattern".to_string(),
                         EnvironmentVarState::FromCapture => "FromCapture".to_string(),
                         EnvironmentVarState::BoundList(_) => panic!(
                             "CRITICAL: Trying to represent a BoundList variable from an environment which didn't finalize it."
@@ -430,8 +391,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
                     format!("{}: {}", v.as_ref(), ty_str)
                 })
                 .collect();
-            repr.push_str(&captured_vars.join(", "));
-            repr.push_str(" } ");
+            repr.push_str(" | ");
+            if !captured_vars.is_empty() {
+                repr.push_str("capture { ");
+                repr.push_str(&captured_vars.join(", "));
+                repr.push_str(" } ");
+            }
             repr.push_str(&inner.pattern.represent(path, depth + 1, max_depth));
             repr.push_str(" => ");
             repr.push_str(&inner.expr.represent(path, depth + 1, max_depth));
@@ -457,10 +422,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
             .map(|(captures, pattern, expr)| {
                 let expr_ty = expr.into_dispatcher();
                 ClosureBranch {
-                    captured_vars: Environment::new(
-                        captures,
-                        Vec::<(Arc<str>, Arc<str>, usize, usize)>::new(),
-                    ),
+                    captured_vars: Environment::pattern_binding(captures),
                     pattern,
                     expr: expr_ty,
                 }
@@ -474,11 +436,33 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         &self.inner.as_ref().0
     }
 
-    pub fn impls(self, other: Self, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
+    pub fn is_reduced(&self) -> bool {
+        let mut reduced = true;
+        let (branches, _) = self.inner.as_ref();
+        for branch in branches.iter() {
+            if !branch.captured_vars.is_reduced() {
+                reduced = false;
+                break;
+            }
+        }
+        reduced
+    }
+
+    pub fn impls(
+        self,
+        other: Self,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        if !self.is_reduced() {
+            return Err(TypeError::ClosureNotReduced(self.dispatch().into()));
+        }
+        if !other.is_reduced() {
+            return Err(TypeError::ClosureNotReduced(other.dispatch().into()));
+        }
         let mut new_branches = self.branches().to_vec();
         new_branches.extend_from_slice(other.branches());
 
-        Closure { inner: ArcOpt::new((new_branches, source_info)) }.into_dispatcher()
+        Ok(Closure { inner: ArcOpt::new((new_branches, source_info)) }.into_dispatcher())
     }
 
     pub fn identity(

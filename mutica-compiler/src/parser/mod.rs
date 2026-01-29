@@ -637,7 +637,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
             match layer {
                 BuildContextLayer::Function { patterns, captures } => {
                     if patterns.contains_key(var.as_ref()) {
-                        return Some(EnvironmentVarState::FromPattern);
+                        return Some(EnvironmentVarState::FromArgument);
                     }
                     if captures.contains_key(var.as_ref()) {
                         return Some(EnvironmentVarState::FromCapture);
