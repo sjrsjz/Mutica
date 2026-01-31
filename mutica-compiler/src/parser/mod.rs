@@ -4,7 +4,7 @@ pub use ast::TypeAst;
 use logos::Logos;
 use mutica_core::{
     types::{
-        CoinductiveType, GcAllocObject, Type, pattern::Pattern, unify::EnvironmentVarState,
+        CoinductiveType, GcAllocObject, Type, pattern::Pattern, unify::capture_env::CaptureOrigin,
         variable::Variable,
     },
     util::{
@@ -629,18 +629,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
         None
     }
 
-    pub fn lookup_function_env<S: AsRef<str>>(
-        &self,
-        var: S,
-    ) -> Option<EnvironmentVarState<Type<T>, T>> {
+    pub fn lookup_function_env<S: AsRef<str>>(&self, var: S) -> Option<CaptureOrigin> {
         for layer in self.layers.iter().rev() {
             match layer {
                 BuildContextLayer::Function { patterns, captures } => {
                     if patterns.contains_key(var.as_ref()) {
-                        return Some(EnvironmentVarState::FromArgument);
+                        return Some(CaptureOrigin::FromParentArgument);
                     }
                     if captures.contains_key(var.as_ref()) {
-                        return Some(EnvironmentVarState::FromCapture);
+                        return Some(CaptureOrigin::FromParentEnv);
                     }
                     return None;
                 }

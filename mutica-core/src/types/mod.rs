@@ -116,8 +116,8 @@ use crate::{
         sequence::Sequence,
         subof::SubOf,
         unify::{
-            Environment, EnvironmentStack, EnvironmentView, collector::Collector,
-            path_collector::PathCollector,
+            ArgumentBinding, Environment, EnvironmentStack, capture_env::CaptureEnvList,
+            collector::Collector, path_collector::PathCollector,
         },
         variable::Variable,
     },
@@ -375,8 +375,8 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     NonApplicableType(Box<U>),
     TupleIndexOutOfBounds(Box<(U, U)>),
     TypeMismatch(Box<(U, String)>),
-    UnboundContextVariable(Box<str>),
-    UnboundEnvironmentVariable(Box<str>),
+    MissingVariable(Box<str>),
+    UnboundArgument(Box<str>),
     GenericLayerOverflow(Box<U>),
     AssertFailed(Box<(U, U)>),
     MissingContinuation(Box<U>),
@@ -406,11 +406,11 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::TypeMismatch(info) => {
                 write!(f, "Type mismatch: expected {}, found {:?}", info.1, info.0)
             }
-            TypeError::UnboundContextVariable(id) => {
-                write!(f, "Unbound context variable: id = {}", id)
+            TypeError::MissingVariable(name) => {
+                write!(f, "Missing variable: {}", name)
             }
-            TypeError::UnboundEnvironmentVariable(id) => {
-                write!(f, "Unbound environment variable: id = {}", id)
+            TypeError::UnboundArgument(name) => {
+                write!(f, "Unbound environment variable: {}", name)
             }
             TypeError::GenericLayerOverflow(ty) => {
                 write!(f, "Generic layer overflow for type: {:?}", ty)
@@ -769,21 +769,21 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                     )
                     .finish()
             }
-            TypeError::UnboundContextVariable(id) => {
+            TypeError::MissingVariable(id) => {
                 ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                    .with_message(format!("Unbound variable: id = {}", id))
+                    .with_message(format!("Unbound variable: {}", id))
                     .with_label(
                         ariadne::Label::new(("<unknown>".to_string(), 0..0))
                             .with_message(format!("Variable {} not found", id)),
                     )
                     .finish()
             }
-            TypeError::UnboundEnvironmentVariable(id) => {
+            TypeError::UnboundArgument(id) => {
                 ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                    .with_message(format!("Undefined pattern variable: id = {}", id))
+                    .with_message(format!("Unbound argument {}", id))
                     .with_label(
                         ariadne::Label::new(("<unknown>".to_string(), 0..0))
-                            .with_message(format!("Pattern variable {} not defined", id)),
+                            .with_message(format!("Argument {} not defined", id)),
                     )
                     .finish()
             }
@@ -1222,8 +1222,8 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> CollectorExt<U, V>
 pub struct TypeCheckContext<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub instance_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
     pub pattern_collector: PatternCollector<'a, 'b, U, V>,
-    pub lhs_env: EnvironmentView<'a, U, V>,
-    pub rhs_env: EnvironmentView<'a, U, V>,
+    pub lhs_env: CaptureEnvList<'a, U, V>,
+    pub rhs_env: CaptureEnvList<'a, U, V>,
     pub collected_bindings: &'a mut EnvironmentStack<U, V>,
 }
 
@@ -1232,8 +1232,8 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a,
     pub fn new(
         instance_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
         pattern_collector: PatternCollector<'a, 'b, U, V>,
-        lhs_env: EnvironmentView<'a, U, V>,
-        rhs_env: EnvironmentView<'a, U, V>,
+        lhs_env: CaptureEnvList<'a, U, V>,
+        rhs_env: CaptureEnvList<'a, U, V>,
         collected_bindings: &'a mut EnvironmentStack<U, V>,
     ) -> Self {
         Self { instance_assumptions, pattern_collector, lhs_env, rhs_env, collected_bindings }
@@ -1242,8 +1242,8 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a,
 
 /// 归约上下文，用于 `reduce` 方法
 pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    pub pattern_environment: EnvironmentView<'a, U, V>,
-    pub capture_environment: EnvironmentView<'a, U, V>,
+    pub solved_argument: &'a [(Arc<str>, ArgumentBinding<U, V>)],
+    pub capture_env: CaptureEnvList<'a, U, V>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
@@ -1251,26 +1251,20 @@ pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObje
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext<'a, 'roots, U, V> {
     pub fn new(
-        pattern_environment: EnvironmentView<'a, U, V>,
-        context_environment: EnvironmentView<'a, U, V>,
+        solved_argument: &'a [(Arc<str>, ArgumentBinding<U, V>)],
+        capture_env: CaptureEnvList<'a, U, V>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
     ) -> Self {
-        Self {
-            pattern_environment,
-            capture_environment: context_environment,
-            rec_assumptions,
-            gc,
-            roots,
-        }
+        Self { solved_argument, capture_env, rec_assumptions, gc, roots }
     }
 }
 
 /// 类型应用上下文，用于 `invoke` 方法
 pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub arg: U,
-    pub environment: EnvironmentView<'a, U, V>,
+    pub environment: CaptureEnvList<'a, U, V>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
@@ -1280,7 +1274,7 @@ pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a, 'roots, U, V> {
     pub fn new(
         arg: U,
-        environment: EnvironmentView<'a, U, V>,
+        environment: CaptureEnvList<'a, U, V>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
@@ -1310,8 +1304,8 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     fn equals<'a>(
         &'a self,
         other: Self::RefDispatcher<'a>,
-        lhs_env: EnvironmentView<'a, U, V>,
-        rhs_env: EnvironmentView<'a, U, V>,
+        lhs_env: CaptureEnvList<'a, U, V>,
+        rhs_env: CaptureEnvList<'a, U, V>,
     ) -> Result<ThreeValuedLogic, TypeError<U, V>> {
         let sub_ba = test_true!(other.subof(
             self.as_ref_dispatcher(),

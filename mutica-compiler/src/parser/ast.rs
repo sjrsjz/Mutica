@@ -7,6 +7,7 @@ use core::panic;
 use lalrpop_util::ErrorRecovery;
 use mutica_core::arc_gc::gc::GC;
 use mutica_core::as_type;
+use mutica_core::smallvec::SmallVec;
 use mutica_core::types::allof::AllOf;
 use mutica_core::types::anyof::AnyOf;
 use mutica_core::types::character::Character;
@@ -26,7 +27,7 @@ use mutica_core::types::natural_number_set::NaturalNumberSet;
 use mutica_core::types::opcode::{Opcode, OpcodeKind};
 use mutica_core::types::sequence::Sequence;
 use mutica_core::types::subof::SubOf;
-use mutica_core::types::unify::{EnvironmentVarState, EnvironmentView};
+use mutica_core::types::unify::capture_env::{CaptureEnv, CaptureEnvList, CaptureOrigin};
 use mutica_core::types::{GcAllocObject, Type, TypeError};
 use mutica_core::util::rootstack::RootStack;
 use std::collections::HashMap;
@@ -2639,8 +2640,9 @@ impl LinearTypeAst {
                     types.push(bta.to_type(ctx, gc, roots, bta.location())?);
                 }
                 let types = BuildResult::fold(types);
+                let empty_env = CaptureEnv::Solved(SmallVec::new());
                 Ok(BuildResult::simple(
-                    AnyOf::new(types, loc.cloned().map(Arc::new), EnvironmentView::default())
+                    AnyOf::new(types, loc.cloned().map(Arc::new), CaptureEnvList::new(&empty_env))
                         .map_err(Ok)?,
                 ))
             }
@@ -2650,8 +2652,9 @@ impl LinearTypeAst {
                     types.push(bta.to_type(ctx, gc, roots, bta.location())?);
                 }
                 let types = BuildResult::fold(types);
+                let empty_env = CaptureEnv::Solved(SmallVec::new());
                 Ok(BuildResult::simple(
-                    AllOf::new(types, loc.cloned().map(Arc::new), EnvironmentView::default())
+                    AllOf::new(types, loc.cloned().map(Arc::new), CaptureEnvList::new(&empty_env))
                         .map_err(Ok)?,
                 ))
             }
@@ -2691,7 +2694,7 @@ impl LinearTypeAst {
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect::<Vec<(String, WithLocation<()>)>>();
-                let mut closure_env: Vec<(Arc<str>, EnvironmentVarState<Type<T>, T>)> = Vec::new();
+                let mut closure_env: Vec<(Arc<str>, CaptureOrigin)> = Vec::new();
                 for (var, capture_loc) in &auto_captures {
                     if let Some(from) = ctx.lookup_function_env(var) {
                         closure_env.push((Arc::from(var.as_str()), from))
@@ -2727,12 +2730,13 @@ impl LinearTypeAst {
                     let body_type = body.to_type(ctx, gc, roots, body.location())?;
                     ctx.exit_layer();
 
+                    let empty_env = CaptureEnv::Solved(SmallVec::new());
                     new_branches.push((
                         closure_env.clone(),
                         Constraint::new_constraint(
                             pattern_type.ty,
                             constraint_types,
-                            EnvironmentView::default(),
+                            CaptureEnvList::new(&empty_env),
                             loc.cloned().map(Arc::new),
                         )
                         .map_err(Ok)?,
@@ -2759,11 +2763,13 @@ impl LinearTypeAst {
                         constraint_types.push((Arc::from(name.value().as_str()), ctype_result.ty));
                     }
                     ctx.exit_layer();
+
+                    let empty_env = CaptureEnv::Solved(SmallVec::new());
                     new_patterns.push(
                         Constraint::new_constraint(
                             pattern_type.ty,
                             constraint_types,
-                            EnvironmentView::default(),
+                            CaptureEnvList::new(&empty_env),
                             loc.cloned().map(Arc::new),
                         )
                         .map_err(Ok)?,
@@ -2826,11 +2832,12 @@ impl LinearTypeAst {
                 }
                 ctx.exit_layer();
 
+                let empty_env = CaptureEnv::Solved(SmallVec::new());
                 Ok(BuildResult::simple(
                     Constraint::new(
                         expr_type.ty,
                         constraint_types,
-                        EnvironmentView::default(),
+                        CaptureEnvList::new(&empty_env),
                         loc.cloned().map(Arc::new),
                     )
                     .map_err(Ok)?,

@@ -10,7 +10,7 @@ use crate::{
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
         Type, TypeCheckContext, TypeError, TypeRef,
         anyof::AnyOf,
-        unify::{EnvironmentStack, EnvironmentView},
+        unify::{EnvironmentStack, capture_env::CaptureEnvList},
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -164,7 +164,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
         for sub in self.types.iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
-        Self::new(&result, self.source_info.clone(), ctx.capture_environment)
+        Self::new(&result, self.source_info.clone(), ctx.capture_env)
     }
 
     fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
@@ -271,7 +271,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
     pub fn new<I, X>(
         types: I,
         source_info: Option<Arc<SourceLocation>>,
-        env: EnvironmentView<Type<T>, T>,
+        env: CaptureEnvList<'_, Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>>
     where
         I: IntoIterator<Item = X>,

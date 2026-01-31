@@ -11,7 +11,7 @@ use crate::{
         TypeCheckContext, TypeError, TypeRef,
         allof::AllOf,
         unify::{
-            Environment, EnvironmentVarState, EnvironmentView, collector::Collector,
+            Environment, ArgumentBinding, capture_env::CaptureEnvList, collector::Collector,
             path_collector::PathCollector,
         },
     },
@@ -310,12 +310,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                     .constraint()
                     .iter()
                     .find_map(|(k, v)| if k.eq(lhs) { Some(v) } else { None })
-                    .ok_or_else(|| TypeError::UnboundContextVariable(lhs.as_ref().into()))?;
+                    .ok_or_else(|| TypeError::MissingVariable(lhs.as_ref().into()))?;
                 let rhs_ty = other
                     .constraint()
                     .iter()
                     .find_map(|(k, v)| if k.eq(rhs) { Some(v) } else { None })
-                    .ok_or_else(|| TypeError::UnboundContextVariable(rhs.as_ref().into()))?;
+                    .ok_or_else(|| TypeError::MissingVariable(rhs.as_ref().into()))?;
                 constraint_result &= lhs_ty.subof(rhs_ty.as_ref_dispatcher(), &mut new_ctx)?;
                 if let ThreeValuedLogic::False = constraint_result {
                     break;
@@ -362,7 +362,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         }
         // 收集变量绑定，并进行非线性约束检查
         let mut env = Environment::pattern_binding(
-            self.constraint().iter().map(|(v, _)| (v.clone(), EnvironmentVarState::FromArgument)),
+            self.constraint()
+                .iter()
+                .map(|(v, _)| (v.clone(), ArgumentBinding::Collect(SmallVec::new()))),
         );
         let collected = collector.take_items().expect("Unable to take items from collector");
         for (k, v) in collected {
@@ -374,7 +376,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         // 确保所有变量都已绑定
         for (k, v) in env.type_vars() {
             match v {
-                EnvironmentVarState::Bound(ty) => bindings.push((k.clone(), ty.clone())),
+                ArgumentBinding::Bound(ty) => bindings.push((k.clone(), ty.clone())),
                 _ => {
                     return Ok((ThreeValuedLogic::False, bindings)); // 未绑定变量，失败
                 }
@@ -413,7 +415,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
     pub fn new<P, C>(
         expr: P,
         constraint: impl IntoIterator<Item = (Arc<str>, C)>,
-        env: EnvironmentView<Type<T>, T>,
+        env: CaptureEnvList<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>>
     where
@@ -426,7 +428,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
     pub fn new_constraint<P, C>(
         expr: P,
         constraint: impl IntoIterator<Item = (Arc<str>, C)>,
-        env: EnvironmentView<Type<T>, T>,
+        env: CaptureEnvList<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Self, TypeError<Type<T>, T>>
     where

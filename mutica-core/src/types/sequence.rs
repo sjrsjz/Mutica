@@ -7,7 +7,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef, unify::EnvironmentView,
+        TypeCheckContext, TypeError, TypeRef, unify::capture_env::CaptureEnvList,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -1326,7 +1326,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<T> {
     pub fn add<'a>(
         &'a self,
         other: &Sequence<T>,
-        _env: EnvironmentView<'a, Type<T>, T>,
+        _env: CaptureEnvList<'a, Type<T>, T>,
     ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
         // 朴素拼接：直接拼接 Vec，不做任何合并或展开。
         // 对于 LHS，直接保留其物理前缀和 offset，不需要 seek 切割。

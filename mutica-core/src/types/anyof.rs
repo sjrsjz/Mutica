@@ -10,7 +10,7 @@ use crate::{
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
         Type, TypeCheckContext, TypeError, TypeRef,
         allof::AllOf,
-        unify::{EnvironmentStack, EnvironmentView},
+        unify::{EnvironmentStack, capture_env::CaptureEnvList},
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -101,15 +101,44 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                     // 这是因为 check 不是子类型语义，而是验证某个类型是否是某个类型的实例
                     // 而实例一般要求LHS是单例类型，至于RHS为通配符的情况，可以通过Constraint的空约束来实现
                     let mut unique = ThreeValuedLogic::True;
-                    for (i, sub) in self.types.iter().enumerate() {
+
+                    // 首先验证所有类型都满足条件
+                    for sub in self.types.iter() {
                         found &= test_true!(sub.check(other, &mut inner_ctx)?);
-                        if i > 0 {
-                            unique &= test_true!(first.equals(
-                                sub.as_ref_dispatcher(),
-                                inner_ctx.lhs_env,
-                                inner_ctx.lhs_env
-                            )?);
-                        }
+                    }
+
+                    let mut assumptions = inner_ctx.instance_assumptions;
+                    let mut collector = inner_ctx.pattern_collector;
+                    let mut lhs_env = inner_ctx.lhs_env;
+                    let mut rhs_env = inner_ctx.rhs_env;
+                    let mut collected_bindings = inner_ctx.collected_bindings;
+
+                    // 然后验证所有类型互相等价（手动实现equals：双向subof，第二次需要交换lhs_env和rhs_env）
+                    for sub in self.types.iter().skip(1) {
+                        // 第一次：sub <: first，使用正常的env顺序
+                        let mut ctx1 = TypeCheckContext::new(
+                            assumptions,
+                            collector,
+                            lhs_env,
+                            rhs_env,
+                            collected_bindings,
+                        );
+                        unique &= test_true!(sub.subof(first.as_ref_dispatcher(), &mut ctx1)?);
+
+                        // 第二次：first <: sub，需要交换lhs_env和rhs_env（equals的语义）
+                        let mut ctx2 = TypeCheckContext::new(
+                            ctx1.instance_assumptions,
+                            ctx1.pattern_collector,
+                            ctx1.rhs_env,
+                            ctx1.lhs_env,
+                            ctx1.collected_bindings,
+                        );
+                        unique &= test_true!(first.subof(sub.as_ref_dispatcher(), &mut ctx2)?);
+                        assumptions = ctx2.instance_assumptions;
+                        collector = ctx2.pattern_collector;
+                        lhs_env = ctx2.lhs_env;
+                        rhs_env = ctx2.rhs_env;
+                        collected_bindings = ctx2.collected_bindings;
                     }
                     Ok(found & unique)
                 }
@@ -154,7 +183,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
         for sub in self.types.iter() {
             result.push(sub.clone().reduce(ctx)?);
         }
-        Self::new(result, self.source_info.clone(), ctx.capture_environment)
+        Self::new(result, self.source_info.clone(), ctx.capture_env)
     }
 
     fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
@@ -287,7 +316,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
     pub fn new<I, X>(
         types: I,
         source_info: Option<Arc<SourceLocation>>,
-        env: EnvironmentView<Type<T>, T>,
+        env: CaptureEnvList<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>>
     where
         I: IntoIterator<Item = X>,

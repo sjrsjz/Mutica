@@ -1,30 +1,27 @@
+pub mod capture_env;
 pub mod collector;
 pub mod path_collector;
 use std::sync::Arc;
 
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 
-use crate::types::{AsDispatcher, CoinductiveType, GcAllocObject, Type, TypeError, anyof::AnyOf};
+use crate::types::{
+    AsDispatcher, CoinductiveType, GcAllocObject, Type, TypeError, anyof::AnyOf,
+    unify::capture_env::CaptureEnvList,
+};
 
-pub enum EnvironmentVarState<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    FromArgument,
-    FromCapture,
+pub enum ArgumentBinding<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     Bound(U),
-    BoundList(SmallVec<[U; 4]>),
+    Collect(SmallVec<[U; 4]>),
     #[doc(hidden)]
     Phantom(std::marker::PhantomData<V>),
 }
 
-impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentVarState<U, V> {
-    fn clone(&self) -> Self {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ArgumentBinding<U, V> {
+    pub fn get_bound(&self) -> Option<&U> {
         match self {
-            EnvironmentVarState::FromArgument => EnvironmentVarState::FromArgument,
-            EnvironmentVarState::FromCapture => EnvironmentVarState::FromCapture,
-            EnvironmentVarState::Bound(ty) => EnvironmentVarState::Bound(ty.clone()),
-            EnvironmentVarState::BoundList(tys) => EnvironmentVarState::BoundList(tys.clone()),
-            EnvironmentVarState::Phantom(_) => {
-                EnvironmentVarState::Phantom(std::marker::PhantomData)
-            }
+            ArgumentBinding::Bound(ty) => Some(ty),
+            _ => None,
         }
     }
 }
@@ -34,26 +31,12 @@ pub enum Environment<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     #[default]
     Placeholder,
     PatternBinding {
-        type_vars: Vec<(Arc<str>, EnvironmentVarState<U, V>)>,
+        type_vars: Vec<(Arc<str>, ArgumentBinding<U, V>)>,
     },
     SubtypeAssumption {
         // (sub, sup, layer_sub, layer_sup)
         subtype_assumptions: Vec<(Arc<str>, Arc<str>, usize, usize)>,
     },
-}
-
-impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Environment<U, V> {
-    fn clone(&self) -> Self {
-        match self {
-            Environment::Placeholder => Environment::Placeholder,
-            Environment::PatternBinding { type_vars } => {
-                Environment::PatternBinding { type_vars: type_vars.clone() }
-            }
-            Environment::SubtypeAssumption { subtype_assumptions } => {
-                Environment::SubtypeAssumption { subtype_assumptions: subtype_assumptions.clone() }
-            }
-        }
-    }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
@@ -62,7 +45,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
     }
 
     pub fn pattern_binding<
-        I: IntoIterator<Item = (S, EnvironmentVarState<U, V>)>,
+        I: IntoIterator<Item = (S, ArgumentBinding<U, V>)>,
         S: Into<Arc<str>>,
     >(
         type_vars: I,
@@ -91,7 +74,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         Environment::PatternBinding {
             type_vars: type_vars
                 .into_iter()
-                .map(|(s, ty)| (s.into(), EnvironmentVarState::Bound(ty)))
+                .map(|(s, ty)| (s.into(), ArgumentBinding::Bound(ty)))
                 .collect(),
         }
     }
@@ -102,14 +85,11 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         };
         for (_, var_ty) in type_vars.iter() {
             match var_ty {
-                EnvironmentVarState::FromArgument | EnvironmentVarState::FromCapture => {
+                ArgumentBinding::Collect(_) => {
                     return false;
                 }
-                EnvironmentVarState::BoundList(_) => {
-                    return false;
-                }
-                EnvironmentVarState::Bound(_) => {}
-                EnvironmentVarState::Phantom(_) => unreachable!(),
+                ArgumentBinding::Bound(_) => {}
+                ArgumentBinding::Phantom(_) => unreachable!(),
             }
         }
         true
@@ -121,71 +101,28 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         ty: X,
     ) -> Result<(), TypeError<U, V>> {
         let Environment::PatternBinding { type_vars } = self else {
-            return Err(TypeError::UnboundEnvironmentVariable(name.as_ref().into()));
+            return Err(TypeError::UnboundArgument(name.as_ref().into()));
         };
 
         let ty = ty.into_dispatcher();
         for (var_name, var_ty) in type_vars.iter_mut() {
             if var_name.as_ref() == name.as_ref() {
                 match var_ty {
-                    EnvironmentVarState::Bound(_) => {
+                    ArgumentBinding::Bound(_) => {
                         panic!(
                             "CRITICAL: Trying to bind already bound variable '{}'",
                             name.as_ref(),
                         )
                     }
-                    EnvironmentVarState::BoundList(v) => {
+                    ArgumentBinding::Collect(v) => {
                         v.push(ty.into_dispatcher());
                         return Ok(());
                     }
-                    EnvironmentVarState::FromArgument | EnvironmentVarState::FromCapture => {
-                        *var_ty = EnvironmentVarState::BoundList(smallvec![ty.into_dispatcher()]);
-                        return Ok(());
-                    }
-                    EnvironmentVarState::Phantom(_) => unreachable!(),
+                    ArgumentBinding::Phantom(_) => unreachable!(),
                 }
             }
         }
-        Err(TypeError::UnboundEnvironmentVariable(name.as_ref().into()))
-    }
-
-    pub fn capture_from(
-        mut self,
-        pattern_env: EnvironmentView<U, V>,
-        capture_env: EnvironmentView<U, V>,
-    ) -> Result<Self, TypeError<U, V>> {
-        let Environment::PatternBinding { type_vars } = &mut self else {
-            return Ok(self);
-        };
-
-        for (var_name, var_ty) in type_vars.iter_mut() {
-            match var_ty {
-                EnvironmentVarState::FromArgument => {
-                    if let Some(other_ty) = pattern_env.lookup(var_name.as_ref()) {
-                        *var_ty = EnvironmentVarState::Bound(other_ty.clone());
-                    } else {
-                        return Err(TypeError::UnboundEnvironmentVariable(
-                            var_name.as_ref().into(),
-                        ));
-                    }
-                }
-                EnvironmentVarState::FromCapture => {
-                    if let Some(other_ty) = capture_env.lookup(var_name.as_ref()) {
-                        *var_ty = EnvironmentVarState::Bound(other_ty.clone());
-                    } else {
-                        return Err(TypeError::UnboundEnvironmentVariable(
-                            var_name.as_ref().into(),
-                        ));
-                    }
-                }
-                EnvironmentVarState::Bound(_) => {}
-                EnvironmentVarState::BoundList(_) => panic!(
-                    "CRITICAL: Trying to capture a BoundList variable from an environment which didn't finalize it."
-                ),
-                EnvironmentVarState::Phantom(_) => unreachable!(),
-            }
-        }
-        Ok(self)
+        Err(TypeError::UnboundArgument(name.as_ref().into()))
     }
 
     pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
@@ -194,7 +131,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         };
         for (var_name, var_ty) in type_vars.iter() {
             if var_name.as_ref() == name.as_ref() {
-                if let EnvironmentVarState::Bound(ty) = var_ty {
+                if let ArgumentBinding::Bound(ty) = var_ty {
                     return Some(ty);
                 } else {
                     return None;
@@ -213,7 +150,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
         }
     }
 
-    pub fn type_vars(&self) -> &[(Arc<str>, EnvironmentVarState<U, V>)] {
+    pub fn type_vars(&self) -> &[(Arc<str>, ArgumentBinding<U, V>)] {
         match self {
             Environment::PatternBinding { type_vars } => type_vars,
             Environment::Placeholder | Environment::SubtypeAssumption { .. } => &[],
@@ -231,22 +168,22 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Environment<U, V> {
 impl<T: GcAllocObject<T, Inner = Type<T>>> Environment<Type<T>, T> {
     pub fn finalize<'a>(
         &mut self,
-        env: EnvironmentView<'a, Type<T>, T>,
+        capture_env: CaptureEnvList<'a, Type<T>, T>,
     ) -> Result<(), TypeError<Type<T>, T>> {
         let Environment::PatternBinding { type_vars } = self else {
             return Ok(());
         };
         // 把所有BoundList变量转换为Bound
         for (_, var_ty) in type_vars.iter_mut() {
-            if let EnvironmentVarState::BoundList(tys) = var_ty {
-                *var_ty = EnvironmentVarState::Bound(AnyOf::new(tys.iter(), None, env)?)
+            if let ArgumentBinding::Collect(tys) = var_ty {
+                *var_ty = ArgumentBinding::Bound(AnyOf::new(tys.iter(), None, capture_env)?)
             }
         }
         Ok(())
     }
 }
 pub struct EnvironmentView<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    type_vars: &'a [(Arc<str>, EnvironmentVarState<U, V>)],
+    type_vars: &'a [(Arc<str>, ArgumentBinding<U, V>)],
 }
 
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentView<'a, U, V> {
@@ -258,14 +195,14 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for EnvironmentVie
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> Copy for EnvironmentView<'a, U, V> {}
 
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentView<'a, U, V> {
-    pub fn new(type_vars: &'a [(Arc<str>, EnvironmentVarState<U, V>)]) -> Self {
+    pub fn new(type_vars: &'a [(Arc<str>, ArgumentBinding<U, V>)]) -> Self {
         Self { type_vars }
     }
 
     pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
         for (var_name, var_ty) in self.type_vars.iter() {
             if var_name.as_ref() == name.as_ref() {
-                if let EnvironmentVarState::Bound(ty) = var_ty {
+                if let ArgumentBinding::Bound(ty) = var_ty {
                     return Some(ty);
                 } else {
                     return None;
@@ -275,7 +212,7 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> EnvironmentView<'a, U, V
         None
     }
 
-    pub fn type_vars(&self) -> &'a [(Arc<str>, EnvironmentVarState<U, V>)] {
+    pub fn type_vars(&self) -> &'a [(Arc<str>, ArgumentBinding<U, V>)] {
         self.type_vars
     }
 }

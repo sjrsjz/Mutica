@@ -4,6 +4,7 @@ pub mod stack;
 use std::{future::Future, io::Write, pin::Pin, sync::Arc};
 
 use arc_gc::gc::GC;
+use smallvec::smallvec;
 
 use crate::{
     scheduler::stack::{Stack, StackView},
@@ -15,7 +16,7 @@ use crate::{
         invoke::{Invoke, InvokeCountinuationStyle},
         natural_number::NaturalNumber,
         sequence::Sequence,
-        unify::Environment,
+        unify::capture_env::{CaptureEnv, CaptureEnvList},
         variable::Variable,
     },
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation},
@@ -182,7 +183,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
     }
 
     pub async fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
-        let empty_env = Environment::placeholder();
+        let empty_env = CaptureEnv::Solved(smallvec![]);
+        let empty_env_list = CaptureEnvList::new(&empty_env);
         // 在 await 之前完成所有需要 rec_assumptions 的工作
         let current_type = self.current_type.take().ok_or_else(|| {
             TypeError::RuntimeError(Arc::new(std::io::Error::other("No current type to step")))
@@ -226,11 +228,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 
                     let (mut continuation, handler, k0_is_identity) = match continuation_style {
                         InvokeCountinuationStyle::TailCall => {
-                            (Closure::identity(None, empty_env.view())?, None, true)
+                            (Closure::identity(None, empty_env_list)?, None, true)
                         }
                         InvokeCountinuationStyle::WithContinuation(v) => (v, None, false),
                         InvokeCountinuationStyle::WithPerformHandler(h) => {
-                            (Closure::identity(None, empty_env.view())?, Some(h), true)
+                            (Closure::identity(None, empty_env_list)?, Some(h), true)
                         }
                         InvokeCountinuationStyle::WithBoth(c, h) => (c, Some(h), false),
                     };
@@ -258,7 +260,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             let invoke =
                                 Invoke::new(func, arg, next_cont.clone(), None::<Type<T>>, None);
                             let new_closure =
-                                Closure::lazy(None, bind_name.clone(), invoke, empty_env.view())?;
+                                Closure::lazy(None, bind_name.clone(), invoke, empty_env_list)?;
                             next_cont = Some(new_closure);
                         }
 
@@ -275,7 +277,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             handler,
                             None,
                         ),
-                        empty_env.view(),
+                        empty_env_list,
                     )?;
 
                     let perform_invoke = Invoke::new(
@@ -298,7 +300,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let mut rec_assumptions = smallvec::SmallVec::new();
                     let invoke_context = InvokeContext::new(
                         arg,
-                        empty_env.view(),
+                        empty_env_list,
                         &mut rec_assumptions,
                         gc,
                         &mut self.roots,

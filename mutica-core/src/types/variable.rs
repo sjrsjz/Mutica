@@ -106,7 +106,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 _ => match self {
                     Variable::ArgumentVariable { .. } => Ok(ThreeValuedLogic::Unknown),
                     Variable::ContextVariable { bind_name, .. } => {
-                        if let Some(ty) = ctx.lhs_env.lookup(bind_name) {
+                        if let Some(ty) = ctx.lhs_env.lookup(bind_name).ok().flatten() {
                             ty.check(other, &mut inner_ctx)
                         } else {
                             Ok(ThreeValuedLogic::Unknown)
@@ -183,7 +183,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                     match self {
                         Variable::ArgumentVariable { .. } => Ok(ThreeValuedLogic::Unknown),
                         Variable::ContextVariable { bind_name, .. } => {
-                            if let Some(ty) = ctx.lhs_env.lookup(bind_name) {
+                            if let Some(ty) = ctx.lhs_env.lookup(bind_name).ok().flatten() {
                                 ty.subof(other, &mut inner_ctx)
                             } else {
                                 Ok(ThreeValuedLogic::Unknown)
@@ -195,7 +195,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 _ => match self {
                     Variable::ArgumentVariable { .. } => Ok(ThreeValuedLogic::Unknown),
                     Variable::ContextVariable { bind_name, .. } => {
-                        if let Some(ty) = ctx.lhs_env.lookup(bind_name) {
+                        if let Some(ty) = ctx.lhs_env.lookup(bind_name).ok().flatten() {
                             ty.subof(other, &mut inner_ctx)
                         } else {
                             Ok(ThreeValuedLogic::Unknown)
@@ -225,19 +225,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self {
             Variable::ArgumentVariable { bind_name, .. } => {
-                if let Some(ty) = ctx.pattern_environment.lookup(&bind_name) {
-                    Ok(ty.clone())
+                if let Some(ty) = ctx
+                    .solved_argument
+                    .iter()
+                    .find(|(name, _)| name.as_ref() == bind_name.as_ref())
+                    .map(|(_, ty)| ty)
+                {
+                    match ty.get_bound() {
+                        Some(ty) => Ok(ty.clone()),
+                        None => {
+                            Err(TypeError::UnboundArgument(bind_name.to_string().into_boxed_str()))
+                        }
+                    }
                 } else {
-                    Err(TypeError::UnboundEnvironmentVariable(
-                        bind_name.to_string().into_boxed_str(),
-                    ))
+                    Err(TypeError::MissingVariable(bind_name.to_string().into_boxed_str()))
                 }
             }
             Variable::ContextVariable { bind_name, .. } => {
-                if let Some(ty) = ctx.capture_environment.lookup(&bind_name) {
+                if let Some(ty) = ctx.capture_env.lookup(&bind_name).map_err(|_| {
+                    TypeError::MissingVariable(bind_name.to_string().into_boxed_str())
+                })? {
                     Ok(ty.clone())
                 } else {
-                    Err(TypeError::UnboundContextVariable(bind_name.to_string().into_boxed_str()))
+                    Err(TypeError::MissingVariable(bind_name.to_string().into_boxed_str()))
                 }
             }
             Variable::PatternVariable { .. } => Ok(self.dispatch()),
@@ -290,7 +300,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             (match self {
                 Variable::ArgumentVariable { .. } => return Ok(ThreeValuedLogic::Unknown),
                 Variable::ContextVariable { bind_name, .. } => {
-                    match ctx.rhs_env.lookup(bind_name) {
+                    match ctx.rhs_env.lookup(bind_name).ok().flatten() {
                         Some(ty) => ty.clone(),
                         None => return Ok(ThreeValuedLogic::Unknown),
                     }
@@ -322,7 +332,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
             (match self {
                 Variable::ArgumentVariable { .. } => return Ok(ThreeValuedLogic::Unknown),
                 Variable::ContextVariable { bind_name, .. } => {
-                    match ctx.rhs_env.lookup(bind_name) {
+                    match ctx.rhs_env.lookup(bind_name).ok().flatten() {
                         Some(ty) => ty.clone(),
                         None => return Ok(ThreeValuedLogic::Unknown),
                     }
