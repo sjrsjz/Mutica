@@ -258,10 +258,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         }
 
         let mut pass = ThreeValuedLogic::False;
+        let mut rev_subtype_assumptions = Vec::new();
 
         let _ = path_collector.walk(|subtype_assumptions| {
             let mut lhs_tys = SmallVec::<[(&Arc<str>, usize); 8]>::new();
             let mut rhs_tys = SmallVec::<[(&Arc<str>, usize); 8]>::new();
+            rev_subtype_assumptions.clear();
+
             for (lhs, rhs) in subtype_assumptions {
                 // 插入lhs_tys和rhs_tys
                 match lhs_tys.iter_mut().find(|v| v.0.as_ref() == lhs.as_ref()) {
@@ -276,9 +279,36 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                     }
                     None => rhs_tys.push((rhs, 0)),
                 }
+
+                let lhs_ty = self
+                    .constraint()
+                    .iter()
+                    .find_map(|(k, v)| if k.eq(lhs) { Some(v) } else { None })
+                    .ok_or_else(|| TypeError::MissingVariable(lhs.as_ref().into()))?;
+                let rhs_ty = other
+                    .constraint()
+                    .iter()
+                    .find_map(|(k, v)| if k.eq(rhs) { Some(v) } else { None })
+                    .ok_or_else(|| TypeError::MissingVariable(rhs.as_ref().into()))?;
+
+                let mut new_ctx = TypeCheckContext::new(
+                    ctx.instance_assumptions,
+                    PatternCollector::None,
+                    ctx.rhs_env,
+                    ctx.lhs_env,
+                    &empty_bindings,
+                );
+                // 如果它居然是等价的(即当 U <: V 的时候发现 V <: U 也成立)，则加入反向假设
+                let subof_result = rhs_ty.subof(lhs_ty.as_ref_dispatcher(), &mut new_ctx)?;
+                if let ThreeValuedLogic::True = subof_result {
+                    rev_subtype_assumptions.push((rhs.clone(), lhs.clone())); // 加入反向假设
+                }
             }
-            let bound_subtype_assumptions =
-                GenericBinding::subtype_assumption(subtype_assumptions, false);
+            let bound_subtype_assumptions = GenericBinding::subtype_assumption(
+                subtype_assumptions,
+                &rev_subtype_assumptions,
+                false,
+            );
             let mut new_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
                 PatternCollector::None,
@@ -321,17 +351,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                 }
             }
 
-            let bound_subtype_assumptions =
-                GenericBinding::subtype_assumption(subtype_assumptions, true);
-            let mut new_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
-                PatternCollector::None,
-                ctx.lhs_env,
-                ctx.rhs_env,
-                &bound_subtype_assumptions,
-            );
-
             if let Some(check_fn) = &additional_check {
+                let bound_subtype_assumptions = GenericBinding::subtype_assumption(
+                    subtype_assumptions,
+                    &rev_subtype_assumptions,
+                    true,
+                );
+
+                let mut new_ctx = TypeCheckContext::new(
+                    ctx.instance_assumptions,
+                    PatternCollector::None,
+                    ctx.lhs_env,
+                    ctx.rhs_env,
+                    &bound_subtype_assumptions,
+                );
                 constraint_result &= check_fn(&mut new_ctx)?;
             }
 
@@ -376,12 +409,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
             .iter()
             .map(|(v, _)| (v.clone(), ArgumentBinding::Collect(SmallVec::new())))
             .collect::<Vec<_>>();
-        let mut env = GenericBinding::pattern(&mut pool);
         let collected = collector.take_items().expect("Unable to take items from collector");
         for (k, v) in collected {
-            env.bind(k, v)?
+            GenericBinding::bind(&mut pool, k, v)?
         }
-        env.finalize(ctx.lhs_env)?; // 解构的值都来源于于 LHS 环境
+        GenericBinding::finalize(&mut pool, ctx.lhs_env)?; // 解构的值都来源于于 LHS 环境
+        let env = GenericBinding::pattern(&mut pool, &mut []);
+
         let mut bindings: SmallVec<[(Arc<str>, ArgumentBinding<Type<T>, T>); 4]> = SmallVec::new();
         // 确保所有变量都已绑定
         for (k, v) in env.type_vars() {

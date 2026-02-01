@@ -149,6 +149,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             GenericBinding::SubtypeAssumption {
                                 subtype_assumptions,
                                 is_params: true,
+                                ..
                             },
                         ) => {
                             if subtype_assumptions
@@ -164,6 +165,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             GenericBinding::SubtypeAssumption {
                                 subtype_assumptions,
                                 is_params: false,
+                                ..
                             },
                         ) => {
                             if subtype_assumptions

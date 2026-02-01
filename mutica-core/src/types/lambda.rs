@@ -112,12 +112,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                     // 如果RHS的模式被全部匹配完毕，而LHS的模式还有剩余（或者刚好用完），则说明LHS是RHS的子类型
                     let lhs_patterns = self.patterns.as_ref();
                     let rhs_patterns = other.patterns.as_ref();
+                    let flipped = ctx.bound_generic_variables.flip();
                     let mut inner_ctx = TypeCheckContext::new(
                         ctx.instance_assumptions,
                         PatternCollector::None, // 由于交换了方向，收集器直接禁用
                         ctx.rhs_env,            // 交换方向（因为是逆变性检查）
                         ctx.lhs_env,
-                        ctx.bound_generic_variables,
+                        &flipped,
                     );
                     let mut i = 0usize;
                     let mut j = 0usize;

@@ -145,12 +145,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     // 规则与 Lambda::subof 类似，但 LHS 使用 closure 的 branch.pattern
                     let lhs_branches = self.branches();
                     let rhs_patterns = other.patterns();
+                    let flipped = ctx.bound_generic_variables.flip();
                     let mut inner_ctx = TypeCheckContext::new(
                         ctx.instance_assumptions,
                         PatternCollector::None, // 交换方向会导致收集器不可用
                         ctx.rhs_env,
                         ctx.lhs_env,
-                        ctx.bound_generic_variables,
+                        &flipped,
                     );
                     let mut i = 0usize;
                     let mut j = 0usize;
@@ -220,9 +221,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     let mut result = ThreeValuedLogic::True;
                     let mut collector = inner_ctx.pattern_collector;
                     let mut assumptions = inner_ctx.instance_assumptions;
-                    let lhs_env = inner_ctx.lhs_env;
-                    let rhs_env = inner_ctx.rhs_env;
-                    let mut bound_generic_layers = inner_ctx.bound_generic_variables;
+                    let lhs_env = inner_ctx.rhs_env; // 逆变交换方向
+                    let rhs_env = inner_ctx.lhs_env;
+                    let bound_generic_layers = inner_ctx.bound_generic_variables.flip();
 
                     while i < lhs_branches.len() && j < rhs_branches.len() {
                         let lhs = &lhs_branches[i];
@@ -231,17 +232,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                         let mut inner_loop_ctx = TypeCheckContext::new(
                             assumptions,
                             collector,
-                            rhs_env, // 逆变交换方向
                             lhs_env,
-                            bound_generic_layers,
+                            rhs_env,
+                            &bound_generic_layers,
                         );
                         let expr_check = |ctx: &mut TypeCheckContext<_, _>| {
+                            let flipped = ctx.bound_generic_variables.flip();
                             let mut ctx = TypeCheckContext::new(
                                 ctx.instance_assumptions,
                                 PatternCollector::None, // expr 不需要收集模式
                                 ctx.rhs_env.attach(&lhs.capture_env, None), // 先把逆变的env交换后再拼接
                                 ctx.lhs_env.attach(&rhs.capture_env, None),
-                                ctx.bound_generic_variables,
+                                &flipped,
                             );
                             lhs.expr.subof(rhs.expr.as_ref_dispatcher(), &mut ctx)
                         };
@@ -264,7 +266,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                         // 奇葩的设计：通过移动所有权等操作堵住借用检查器的嘴
                         collector = inner_loop_ctx.pattern_collector;
                         assumptions = inner_loop_ctx.instance_assumptions;
-                        bound_generic_layers = inner_loop_ctx.bound_generic_variables;
                     }
 
                     if j >= rhs_branches.len() { Ok(result) } else { Ok(ThreeValuedLogic::False) }
