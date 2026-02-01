@@ -10,7 +10,7 @@ use crate::{
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
         Type, TypeCheckContext, TypeError, TypeRef,
         allof::AllOf,
-        unify::{EnvironmentStack, capture_env::CaptureEnvList},
+        unify::{GenericBinding, capture_env::CaptureEnvList},
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -79,7 +79,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -110,8 +110,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                     let mut assumptions = inner_ctx.instance_assumptions;
                     let mut collector = inner_ctx.pattern_collector;
                     let mut lhs_env = inner_ctx.lhs_env;
-                    let mut rhs_env = inner_ctx.rhs_env;
-                    let mut collected_bindings = inner_ctx.collected_bindings;
+                    let mut rhs_env = inner_ctx.lhs_env; // 这里使用lhs_env是因为equals的语义只对LHS要求单例，左右环境相同
+                    let mut bound_generic_layers = inner_ctx.bound_generic_variables;
 
                     // 然后验证所有类型互相等价（手动实现equals：双向subof，第二次需要交换lhs_env和rhs_env）
                     for sub in self.types.iter().skip(1) {
@@ -121,7 +121,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                             collector,
                             lhs_env,
                             rhs_env,
-                            collected_bindings,
+                            bound_generic_layers,
                         );
                         unique &= test_true!(sub.subof(first.as_ref_dispatcher(), &mut ctx1)?);
 
@@ -131,14 +131,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                             ctx1.pattern_collector,
                             ctx1.rhs_env,
                             ctx1.lhs_env,
-                            ctx1.collected_bindings,
+                            ctx1.bound_generic_variables,
                         );
                         unique &= test_true!(first.subof(sub.as_ref_dispatcher(), &mut ctx2)?);
                         assumptions = ctx2.instance_assumptions;
                         collector = ctx2.pattern_collector;
                         lhs_env = ctx2.lhs_env;
                         rhs_env = ctx2.rhs_env;
-                        collected_bindings = ctx2.collected_bindings;
+                        bound_generic_layers = ctx2.bound_generic_variables;
                     }
                     Ok(found & unique)
                 }
@@ -157,7 +157,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -230,7 +230,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             let mut matched = ThreeValuedLogic::False;
             for sub in self.types.iter() {
@@ -258,7 +258,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                             PatternCollector::Subtyping(path),
                             ctx.lhs_env,
                             ctx.rhs_env,
-                            ctx.collected_bindings,
+                            ctx.bound_generic_variables,
                         );
                         let sub_result = other.subof(sub.as_ref_dispatcher(), &mut inner_ctx);
                         match sub_result {
@@ -277,7 +277,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                     pattern_env,
                     ctx.lhs_env,
                     ctx.rhs_env,
-                    ctx.collected_bindings,
+                    ctx.bound_generic_variables,
                 );
                 for sub in self.types.iter() {
                     matched |= other.subof(sub.as_ref_dispatcher(), &mut inner_ctx)?
@@ -373,13 +373,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AnyOf<T> {
 
         let mut absorbed: SmallVec<[bool; 8]> = smallvec![false; collected.len()];
         let mut assumptions = smallvec![];
-        let mut collected_pattern = EnvironmentStack::new();
+        let empty_generic_binding = GenericBinding::wait_for_bind();
         let mut context = TypeCheckContext::new(
             &mut assumptions,
             PatternCollector::None,
             env,
             env,
-            &mut collected_pattern,
+            &empty_generic_binding,
         );
 
         for i in 0..collected.len() {

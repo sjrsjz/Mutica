@@ -8,7 +8,7 @@ use crate::{
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
         Type, TypeCheckContext, TypeError, TypeRef, closure::Closure, fixpoint::FixPoint,
         float_value::FloatValue, invoke::Invoke, natural_number::NaturalNumber, sequence::Sequence,
-        unify::EnvironmentStack, variable::Variable,
+        unify::GenericBinding, variable::Variable,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -108,7 +108,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -151,7 +151,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -282,13 +282,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             let true_branch = tuple.get_prefix_value(2).unwrap();
                             let false_branch = tuple.get_prefix_value(3).unwrap();
                             let mut assumptions = smallvec::SmallVec::new();
-                            let mut env_stack = EnvironmentStack::new();
+                            let empty_binding = GenericBinding::wait_for_bind();
                             let mut type_check_ctx = TypeCheckContext::new(
                                 &mut assumptions,
                                 PatternCollector::None,
                                 ctx.environment,
                                 ctx.environment,
-                                &mut env_stack
+                                &empty_binding
                             );
                             match left.check(right.as_ref_dispatcher(), &mut type_check_ctx) {
                                 Ok(res) => Ok(if let ThreeValuedLogic::True = res { true_branch.clone() } else { false_branch.clone() }),

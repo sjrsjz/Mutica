@@ -170,7 +170,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx), // AllOf 是特殊情况，先展开All是可以的，因为外层全称量词作用于All
@@ -225,7 +225,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::FixPoint(v) => {
@@ -350,7 +350,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match self.reference.upgrade() {
                 Some(inner) => other.check(
@@ -377,7 +377,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match self.reference.upgrade() {
                 Some(inner) => other.subof(

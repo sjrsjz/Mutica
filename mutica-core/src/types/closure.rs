@@ -6,15 +6,15 @@ use smallvec::SmallVec;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, Environment,
-        GcAllocObject, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
+        GenericBinding, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
         TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
         allof::AllOf,
         anyof::AnyOf,
         constraint::Constraint,
         pattern::Pattern,
         unify::{
-            ArgumentBinding, EnvironmentStack,
+            ArgumentBinding,
             capture_env::{CaptureEnv, CaptureEnvList, CaptureOrigin},
             collector::Collector,
         },
@@ -129,7 +129,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -145,7 +145,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     // 规则与 Lambda::subof 类似，但 LHS 使用 closure 的 branch.pattern
                     let lhs_branches = self.branches();
                     let rhs_patterns = other.patterns();
-
+                    let mut inner_ctx = TypeCheckContext::new(
+                        ctx.instance_assumptions,
+                        PatternCollector::None, // 交换方向会导致收集器不可用
+                        ctx.rhs_env,
+                        ctx.lhs_env,
+                        ctx.bound_generic_variables,
+                    );
                     let mut i = 0usize;
                     let mut j = 0usize;
                     let mut result = ThreeValuedLogic::True;
@@ -194,7 +200,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -203,6 +209,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Closure(other) => {
+                    // println!("LHS: {:?}", self.represent(&mut FastCycleDetector::new(), 0, 3));
+                    // println!("RHS: {:?}", other.represent(&mut FastCycleDetector::new(), 0, 3));
                     // Closure 的子类型关系：模式逆变，expr 协变
                     let lhs_branches = self.branches();
                     let rhs_branches = other.branches();
@@ -212,9 +220,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     let mut result = ThreeValuedLogic::True;
                     let mut collector = inner_ctx.pattern_collector;
                     let mut assumptions = inner_ctx.instance_assumptions;
-                    let mut bindings = inner_ctx.collected_bindings;
                     let lhs_env = inner_ctx.lhs_env;
                     let rhs_env = inner_ctx.rhs_env;
+                    let mut bound_generic_layers = inner_ctx.bound_generic_variables;
 
                     while i < lhs_branches.len() && j < rhs_branches.len() {
                         let lhs = &lhs_branches[i];
@@ -223,12 +231,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                         let mut inner_loop_ctx = TypeCheckContext::new(
                             assumptions,
                             collector,
-                            lhs_env.attach(&lhs.capture_env),
-                            rhs_env.attach(&rhs.capture_env),
-                            bindings,
+                            rhs_env, // 逆变交换方向
+                            lhs_env,
+                            bound_generic_layers,
                         );
                         let expr_check = |ctx: &mut TypeCheckContext<_, _>| {
-                            lhs.expr.subof(rhs.expr.as_ref_dispatcher(), ctx)
+                            let mut ctx = TypeCheckContext::new(
+                                ctx.instance_assumptions,
+                                PatternCollector::None, // expr 不需要收集模式
+                                ctx.rhs_env.attach(&lhs.capture_env, None), // 先把逆变的env交换后再拼接
+                                ctx.lhs_env.attach(&rhs.capture_env, None),
+                                ctx.bound_generic_variables,
+                            );
+                            lhs.expr.subof(rhs.expr.as_ref_dispatcher(), &mut ctx)
                         };
                         match rhs.pattern.subof_constraint(
                             &lhs.pattern,
@@ -249,7 +264,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                         // 奇葩的设计：通过移动所有权等操作堵住借用检查器的嘴
                         collector = inner_loop_ctx.pattern_collector;
                         assumptions = inner_loop_ctx.instance_assumptions;
-                        bindings = inner_loop_ctx.collected_bindings;
+                        bound_generic_layers = inner_loop_ctx.bound_generic_variables;
                     }
 
                     if j >= rhs_branches.len() { Ok(result) } else { Ok(ThreeValuedLogic::False) }
@@ -313,22 +328,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         for branch in branches.iter() {
             matched_pattern.clear();
             assumptions.clear();
-            let mut env_stack = EnvironmentStack::new();
+            let empty_generic_binding = GenericBinding::wait_for_bind();
             let mut pattern_check_ctx = TypeCheckContext::new(
                 &mut assumptions,
                 PatternCollector::Deconstruct(&mut matched_pattern),
                 ctx.environment,
                 ctx.environment,
-                &mut env_stack,
+                &empty_generic_binding,
             );
 
             if let (ThreeValuedLogic::True, bindings) =
                 branch.pattern.deconstruct(ctx.arg.as_ref_dispatcher(), &mut pattern_check_ctx)?
             {
-                let param_env = Environment::new_bound(bindings);
+                let params = bindings.into_boxed_slice();
 
                 let mut reduce_ctx = ReductionContext::new(
-                    param_env.type_vars(),
+                    params.as_ref(),
                     CaptureEnvList::new(&branch.capture_env),
                     ctx.rec_assumptions,
                     ctx.gc,
@@ -527,7 +542,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         let branch = ClosureBranch {
             capture_env: CaptureEnv::Solved(SmallVec::new()),
             pattern: Constraint::new_constraint(
-                Pattern::<T>::new(bind_name.clone(), 0, None),
+                Pattern::<T>::new(bind_name.clone(), None),
                 vec![(bind_name, AllOf::unknown(None))],
                 env,
                 None,

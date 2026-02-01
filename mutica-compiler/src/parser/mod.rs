@@ -474,6 +474,7 @@ impl ParseContext {
                     if skip_generic {
                         continue;
                     }
+                    skip_generic = true;
                     if let Some((count, loc)) = map.get_mut(name) {
                         *count += 1;
                         return Ok((loc, None));
@@ -546,8 +547,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
     pub fn lookup<S: AsRef<str>>(&self, var: S) -> Option<(Type<T>, Option<usize>)> {
         let mut outgoing_function_layer_count = 0;
         let mut skip_generic = false;
-        let mut is_last_generic_layer = true;
-        for (i, layer) in self.layers.iter().rev().enumerate() {
+        for layer in self.layers.iter().rev() {
             match layer {
                 BuildContextLayer::Function { patterns, captures } => {
                     skip_generic = true; // 跨越 Function 层时跳过 Generic 层
@@ -578,38 +578,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     if skip_generic {
                         continue;
                     }
+                    skip_generic = true;
                     if let Some(v) = patterns.get(var.as_ref()) {
-                        let mut layer = 0;
-                        // 向上查找有多少层 GenericBinding
-                        for l in self.layers.iter().rev().skip(i + 1) {
-                            match l {
-                                BuildContextLayer::GenericBinding(_, _) => {
-                                    layer += 1;
-                                }
-                                BuildContextLayer::FixPoint(_, _) => continue,
-                                BuildContextLayer::Function { .. } => break,
-                            }
-                        }
-
                         // 如果是定义且是最内层 GenericBinding，则创建 Pattern 类型
                         if *is_definition {
-                            if is_last_generic_layer {
-                                return Some((
-                                    Pattern::new(
-                                        Arc::from(var.as_ref()),
-                                        layer,
-                                        v.location().cloned().map(Arc::new),
-                                    )
-                                    .dispatch(),
-                                    None,
-                                ));
-                            }
-                            // 不是最内层定义，意味着它尝试使用一个未解构的泛型变量，认为它未定义
+                            return Some((
+                                Pattern::new(
+                                    Arc::from(var.as_ref()),
+                                    v.location().cloned().map(Arc::new),
+                                )
+                                .dispatch(),
+                                None,
+                            ));
                         } else {
                             return Some((
                                 Variable::new_pattern(
                                     Arc::from(var.as_ref()),
-                                    layer,
                                     v.location().cloned().map(Arc::new),
                                 )
                                 .dispatch(),
@@ -617,7 +601,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                             ));
                         }
                     }
-                    is_last_generic_layer = false;
                 }
                 BuildContextLayer::FixPoint(name, v) => {
                     if var.as_ref().eq(name.value()) {

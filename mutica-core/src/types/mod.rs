@@ -116,8 +116,8 @@ use crate::{
         sequence::Sequence,
         subof::SubOf,
         unify::{
-            ArgumentBinding, Environment, EnvironmentStack, capture_env::CaptureEnvList,
-            collector::Collector, path_collector::PathCollector,
+            ArgumentBinding, GenericBinding, capture_env::CaptureEnvList, collector::Collector,
+            path_collector::PathCollector,
         },
         variable::Variable,
     },
@@ -1184,7 +1184,7 @@ impl<T> TaggedPtr<T> {
 pub enum PatternCollector<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     None,
     Deconstruct(&'a mut Collector<(Arc<str>, U)>),
-    Subtyping(&'a mut PathCollector<'b, (Arc<str>, Arc<str>, usize, usize)>),
+    Subtyping(&'a mut PathCollector<'b, (Arc<str>, Arc<str>)>),
     Pandom(std::marker::PhantomData<V>),
 }
 
@@ -1224,7 +1224,7 @@ pub struct TypeCheckContext<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V
     pub pattern_collector: PatternCollector<'a, 'b, U, V>,
     pub lhs_env: CaptureEnvList<'a, U, V>,
     pub rhs_env: CaptureEnvList<'a, U, V>,
-    pub collected_bindings: &'a mut EnvironmentStack<U, V>,
+    pub bound_generic_variables: &'a GenericBinding<'a, U, V>,
 }
 
 impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, 'b, U, V> {
@@ -1234,9 +1234,9 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a,
         pattern_collector: PatternCollector<'a, 'b, U, V>,
         lhs_env: CaptureEnvList<'a, U, V>,
         rhs_env: CaptureEnvList<'a, U, V>,
-        collected_bindings: &'a mut EnvironmentStack<U, V>,
+        bound_generic_variables: &'a GenericBinding<U, V>,
     ) -> Self {
-        Self { instance_assumptions, pattern_collector, lhs_env, rhs_env, collected_bindings }
+        Self { instance_assumptions, pattern_collector, lhs_env, rhs_env, bound_generic_variables }
     }
 }
 
@@ -1314,7 +1314,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
                 PatternCollector::None,
                 rhs_env,
                 lhs_env,
-                &mut EnvironmentStack::new()
+                &GenericBinding::wait_for_bind()
             )
         )?);
         let sub_ab = test_true!(self.subof(
@@ -1324,7 +1324,7 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
                 PatternCollector::None,
                 lhs_env,
                 rhs_env,
-                &mut EnvironmentStack::new()
+                &GenericBinding::wait_for_bind()
             )
         )?);
         Ok(sub_ab & sub_ba)

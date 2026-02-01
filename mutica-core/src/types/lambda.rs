@@ -6,8 +6,8 @@ use crate::{
     as_type,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
-        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef, constraint::Constraint,
+        InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
+        Type, TypeCheckContext, TypeError, TypeRef, constraint::Constraint,
     },
     util::{
         arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -68,7 +68,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -94,7 +94,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -112,7 +112,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                     // 如果RHS的模式被全部匹配完毕，而LHS的模式还有剩余（或者刚好用完），则说明LHS是RHS的子类型
                     let lhs_patterns = self.patterns.as_ref();
                     let rhs_patterns = other.patterns.as_ref();
-
+                    let mut inner_ctx = TypeCheckContext::new(
+                        ctx.instance_assumptions,
+                        PatternCollector::None, // 由于交换了方向，收集器直接禁用
+                        ctx.rhs_env,            // 交换方向（因为是逆变性检查）
+                        ctx.lhs_env,
+                        ctx.bound_generic_variables,
+                    );
                     let mut i = 0usize;
                     let mut j = 0usize;
                     let mut result = ThreeValuedLogic::True;

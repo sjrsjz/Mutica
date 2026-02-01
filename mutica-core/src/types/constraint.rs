@@ -4,14 +4,13 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use smallvec::SmallVec;
 
 use crate::{
-    test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
         GcAllocObject, PatternCollector, Representable, Rootable, TaggedPtr, Type,
         TypeCheckContext, TypeError, TypeRef,
         allof::AllOf,
         unify::{
-            Environment, ArgumentBinding, capture_env::CaptureEnvList, collector::Collector,
+            ArgumentBinding, GenericBinding, capture_env::CaptureEnvList, collector::Collector,
             path_collector::PathCollector,
         },
     },
@@ -99,7 +98,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -126,7 +125,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                ctx.bound_generic_variables,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -242,27 +241,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         let lhs_pattern = self.expr();
         let rhs_pattern = other.expr();
-        let empty_env_layer = Environment::placeholder();
-        ctx.collected_bindings.push(empty_env_layer); // 为子类型检查创建一个空的环境层，防止模式变量的层级索引对不上号
         let mut collected_path = Vec::new();
         let mut path_collector = PathCollector::from(&mut collected_path);
+        let empty_bindings = GenericBinding::wait_for_bind();
         let mut pattern_check_ctx = TypeCheckContext::new(
             ctx.instance_assumptions,
             PatternCollector::Subtyping(&mut path_collector),
             ctx.lhs_env,
             ctx.rhs_env,
-            ctx.collected_bindings,
+            &empty_bindings,
         );
         let pattern_result =
-            test_true!(lhs_pattern.subof(rhs_pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?);
-        ctx.collected_bindings.pop();
+            lhs_pattern.subof(rhs_pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?;
+        if let ThreeValuedLogic::False = pattern_result {
+            return Ok(ThreeValuedLogic::False);
+        }
 
         let mut pass = ThreeValuedLogic::False;
 
         let _ = path_collector.walk(|subtype_assumptions| {
             let mut lhs_tys = SmallVec::<[(&Arc<str>, usize); 8]>::new();
             let mut rhs_tys = SmallVec::<[(&Arc<str>, usize); 8]>::new();
-            for (lhs, rhs, _lhs_layer, _rhs_layer) in subtype_assumptions {
+            for (lhs, rhs) in subtype_assumptions {
                 // 插入lhs_tys和rhs_tys
                 match lhs_tys.iter_mut().find(|v| v.0.as_ref() == lhs.as_ref()) {
                     Some((_, c)) => {
@@ -277,19 +277,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                     None => rhs_tys.push((rhs, 0)),
                 }
             }
-            let new_env_layer =
-                Environment::subtype_assumption(subtype_assumptions.iter().cloned());
-            ctx.collected_bindings.push(new_env_layer);
+            let bound_subtype_assumptions =
+                GenericBinding::subtype_assumption(subtype_assumptions, false);
             let mut new_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
                 PatternCollector::None,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                &bound_subtype_assumptions,
             );
 
             let mut constraint_result = ThreeValuedLogic::True;
-            for (lhs, rhs, _, _) in subtype_assumptions {
+            for (lhs, rhs) in subtype_assumptions {
                 // println!("LHS var: {}, RHS var: {}", lhs, rhs);
                 // 检查计数lhs >= rhs
                 let lhs_count = lhs_tys
@@ -321,10 +320,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                     break;
                 }
             }
+
+            let bound_subtype_assumptions =
+                GenericBinding::subtype_assumption(subtype_assumptions, true);
+            let mut new_ctx = TypeCheckContext::new(
+                ctx.instance_assumptions,
+                PatternCollector::None,
+                ctx.lhs_env,
+                ctx.rhs_env,
+                &bound_subtype_assumptions,
+            );
+
             if let Some(check_fn) = &additional_check {
                 constraint_result &= check_fn(&mut new_ctx)?;
             }
-            ctx.collected_bindings.pop();
 
             pass |= constraint_result;
 
@@ -343,69 +352,63 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         &self,
         other: TypeRef<T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<(ThreeValuedLogic, SmallVec<[(Arc<str>, Type<T>); 4]>), TypeError<Type<T>, T>> {
-        let empty_env_layer = Environment::placeholder();
-        ctx.collected_bindings.push(empty_env_layer); // 为解构创建一个空的环境层，防止模式变量的层级索引对不上号
+    ) -> Result<
+        (ThreeValuedLogic, SmallVec<[(Arc<str>, ArgumentBinding<Type<T>, T>); 4]>),
+        TypeError<Type<T>, T>,
+    > {
         let mut collector = Collector::new();
+        let empty_bindings = GenericBinding::wait_for_bind();
         let mut new_ctx = TypeCheckContext::new(
             ctx.instance_assumptions,
             PatternCollector::Deconstruct(&mut collector),
             ctx.lhs_env,
             ctx.rhs_env,
-            ctx.collected_bindings,
+            &empty_bindings,
         );
         // 先检查主体类型，即 X where {...} 的 X 部分
         let result = other.check(self.expr().as_ref_dispatcher(), &mut new_ctx)?;
-        ctx.collected_bindings.pop();
         if result == ThreeValuedLogic::False {
             return Ok((ThreeValuedLogic::False, SmallVec::new()));
         }
         // 收集变量绑定，并进行非线性约束检查
-        let mut env = Environment::pattern_binding(
-            self.constraint()
-                .iter()
-                .map(|(v, _)| (v.clone(), ArgumentBinding::Collect(SmallVec::new()))),
-        );
+        let mut pool = self
+            .constraint()
+            .iter()
+            .map(|(v, _)| (v.clone(), ArgumentBinding::Collect(SmallVec::new())))
+            .collect::<Vec<_>>();
+        let mut env = GenericBinding::pattern(&mut pool);
         let collected = collector.take_items().expect("Unable to take items from collector");
         for (k, v) in collected {
             env.bind(k, v)?
         }
         env.finalize(ctx.lhs_env)?; // 解构的值都来源于于 LHS 环境
-        let mut bindings: SmallVec<[(Arc<str>, Type<T>); 4]> =
-            SmallVec::<[(Arc<str>, Type<T>); 4]>::new();
+        let mut bindings: SmallVec<[(Arc<str>, ArgumentBinding<Type<T>, T>); 4]> = SmallVec::new();
         // 确保所有变量都已绑定
         for (k, v) in env.type_vars() {
             match v {
-                ArgumentBinding::Bound(ty) => bindings.push((k.clone(), ty.clone())),
+                ArgumentBinding::Bound(_) => bindings.push((k.clone(), v.clone())),
                 _ => {
                     return Ok((ThreeValuedLogic::False, bindings)); // 未绑定变量，失败
                 }
             }
         }
         // 先推入当前已绑定环境到 collected 栈
-        ctx.collected_bindings.push(env);
         let mut check_result = ThreeValuedLogic::True;
         for (x, c) in self.constraint() {
             // println!("Checking constraint for variable: {}, c: {:?}", x, c);
-            let ty = ctx
-                .collected_bindings
-                .lookup_at_layer(x, ctx.collected_bindings.layers() - 1)
-                .expect("Layer should exist")
-                .expect("Variable should be bound")
-                .clone();
+            let ty = env.lookup(x).expect("Variable should be bound").clone();
             let mut new_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
                 PatternCollector::None,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.collected_bindings,
+                &env,
             );
             check_result &= ty.check(c.as_ref_dispatcher(), &mut new_ctx)?;
             if let ThreeValuedLogic::False = check_result {
                 break;
             }
         }
-        ctx.collected_bindings.pop();
         Ok((result & check_result, bindings))
     }
 }

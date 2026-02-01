@@ -147,8 +147,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for CaptureEnv<U, V> {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub struct CaptureEnvList<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    pub parent: Option<&'a CaptureEnvList<'a, U, V>>,
+    pub parent_env: Option<&'a CaptureEnvList<'a, U, V>>,
+    pub parent_argument: Option<&'a [(Arc<str>, ArgumentBinding<U, V>)]>,
     pub local: &'a CaptureEnv<U, V>,
 }
 
@@ -168,15 +170,25 @@ pub enum CaptureEnvLookupError<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>
 
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> CaptureEnvList<'a, U, V> {
     pub fn new(local: &'a CaptureEnv<U, V>) -> Self {
-        Self { parent: None, local }
+        Self { parent_env: None, parent_argument: None, local }
     }
 
-    pub fn with_parent(local: &'a CaptureEnv<U, V>, parent: &'a CaptureEnvList<'a, U, V>) -> Self {
-        Self { parent: Some(parent), local }
+    #[allow(clippy::type_complexity)]
+    pub fn with_parent(
+        local: &'a CaptureEnv<U, V>,
+        parent: &'a CaptureEnvList<'a, U, V>,
+        parent_argument: Option<&'a [(Arc<str>, ArgumentBinding<U, V>)]>,
+    ) -> Self {
+        Self { parent_env: Some(parent), parent_argument, local }
     }
 
-    pub fn attach(&'a self, local: &'a CaptureEnv<U, V>) -> Self {
-        Self { parent: Some(self), local }
+    #[allow(clippy::type_complexity)]
+    pub fn attach(
+        &'a self,
+        local: &'a CaptureEnv<U, V>,
+        parent_argument: Option<&'a [(Arc<str>, ArgumentBinding<U, V>)]>,
+    ) -> Self {
+        Self { parent_env: Some(self), parent_argument, local }
     }
 
     pub fn lookup(&self, name: &str) -> Result<Option<&U>, CaptureEnvLookupError<'a, U, V>> {
@@ -203,14 +215,27 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> CaptureEnvList<'a, U, V>
                 match found {
                     Some((_, CaptureOrigin::FromParentEnv)) => {
                         // 继续向上查找
-                        if let Some(parent) = self.parent {
+                        if let Some(parent) = self.parent_env {
                             parent.lookup_recursive(name, layer + 1)
                         } else {
                             Ok(None)
                         }
                     }
                     Some((_, CaptureOrigin::FromParentArgument)) => {
-                        return Err(CaptureEnvLookupError::Argument(layer));
+                        if let Some(parent_argument) = self.parent_argument {
+                            match parent_argument
+                                .iter()
+                                .find(|(arg_name, _)| arg_name.as_ref() == name)
+                            {
+                                Some((_, arg_binding)) => match arg_binding.get_bound() {
+                                    Some(ty) => Ok(Some(ty)),
+                                    None => Err(CaptureEnvLookupError::Argument(layer)),
+                                },
+                                None => Err(CaptureEnvLookupError::Argument(layer)),
+                            }
+                        } else {
+                            Err(CaptureEnvLookupError::Argument(layer))
+                        }
                     }
                     None => {
                         return Err(CaptureEnvLookupError::NotCaptured(self.local));
