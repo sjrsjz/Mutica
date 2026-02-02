@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::types::unify::GenericBinding;
 use crate::types::unify::capture_env::CaptureEnvLookupError;
 use crate::types::{CoinductiveTypeRef, CollectorExt};
 use crate::util::source_info::SourceLocation;
@@ -27,6 +26,7 @@ pub enum Variable<T: GcAllocObject<T, Inner = Type<T>>> {
     },
     PatternVariable {
         bind_name: Arc<str>,
+        layer: usize,
         source_info: Option<Arc<SourceLocation>>,
         _phantom: std::marker::PhantomData<T>,
     },
@@ -49,10 +49,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Variable<T> {
                     _phantom: std::marker::PhantomData,
                 }
             }
-            Variable::PatternVariable { bind_name, source_info, _phantom } => {
+            Variable::PatternVariable { bind_name, source_info, layer, _phantom } => {
                 Variable::PatternVariable {
                     bind_name: bind_name.clone(),
                     source_info: source_info.clone(),
+                    layer: *layer,
                     _phantom: std::marker::PhantomData,
                 }
             }
@@ -112,10 +113,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             Ok(ThreeValuedLogic::Unknown)
                         }
                     }
-                    Variable::PatternVariable { bind_name, .. } => {
+                    Variable::PatternVariable { bind_name, layer, .. } => {
                         if let Some(ty) = inner_ctx
                             .bound_generic_variables
-                            .lookup(bind_name, inner_ctx.bound_generic_variables.is_lhs())
+                            .lookup(bind_name, *layer, inner_ctx.bound_generic_variables.is_lhs())
+                            .ok_or_else(|| {
+                                TypeError::GenericLayerOverflow(self.clone().dispatch().into())
+                            })?
                         {
                             ty.clone().check(other, &mut inner_ctx)
                         } else {
@@ -162,7 +166,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             //     inner_ctx.bound_generic_variables
                             // );
                             // println!("is_lhs: {}", is_lhs);
-                            if let Some(binding) = inner_ctx.bound_generic_variables.param_layer(0)
+                            if let Some(binding) = inner_ctx.bound_generic_variables.find_param_layer(0)
                                 && binding.check_subtype_assumption(self_bind_name, other_bind_name, is_lhs)
                             {
                                 // println!("Pass");
@@ -170,11 +174,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             }
                         }
                         (
-                            Variable::PatternVariable { bind_name: self_bind_name, .. },
-                            Variable::PatternVariable { bind_name: other_bind_name, .. },
-                            layer @ GenericBinding::SubtypeAssumption { .. },
-                        ) => {
-                            if  layer.check_subtype_assumption(self_bind_name, other_bind_name, is_lhs)
+                            Variable::PatternVariable { bind_name: self_bind_name, layer: self_layer, .. },
+                            Variable::PatternVariable { bind_name: other_bind_name, layer: other_layer, .. },
+                            ..
+                        ) if self_layer == other_layer => {
+                            let layer = inner_ctx.bound_generic_variables.find_generic_layer(*self_layer);
+                            if let Some(binding) = layer
+                                && binding.check_subtype_assumption(self_bind_name, other_bind_name, is_lhs)
                             {
                                 return Ok(ThreeValuedLogic::True);
                             }
@@ -184,10 +190,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             Variable::ContextVariable { bind_name: other_bind_name, .. },
                             _,
                         ) => {
-                            // println!(
-                            //     "Checking ContextVariable subtype: {} <: {}",
-                            //     self_bind_name, other_bind_name
-                            // );
                             // 当两边都是 ContextVariable 时，检查它们是否都溯源到未绑定的 ArgumentVariable
                             // lookup 返回 Err(CaptureEnvLookupError::Argument(layer)) 时，layer 表示在哪一层找到的未绑定 Argument
                             if let (
@@ -200,7 +202,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             {
                                 // 使用 lhs_layer 找到对应层级的 GenericBinding
                                 if let Some(binding) =
-                                    inner_ctx.bound_generic_variables.param_layer(lhs_layer + 1) // +1 因为 layer 表示当前层，而我们需要查找当前层的父层所绑定的假设
+                                    inner_ctx.bound_generic_variables.find_param_layer(lhs_layer + 1) // +1 因为 layer 表示当前层，而我们需要查找当前层的父层所绑定的假设
                                     &&  binding.check_subtype_assumption(self_bind_name, other_bind_name, is_lhs)
                                 {
                                     return Ok(ThreeValuedLogic::True);
@@ -218,10 +220,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                                 Ok(ThreeValuedLogic::Unknown)
                             }
                         }
-                        Variable::PatternVariable { bind_name, .. } => {
-                            if let Some(ty) = inner_ctx
+                        Variable::PatternVariable { bind_name, layer, .. } => {
+                            let ty = inner_ctx
                                 .bound_generic_variables
-                                .lookup(bind_name, inner_ctx.bound_generic_variables.is_lhs())
+                                .lookup(bind_name, *layer, inner_ctx.bound_generic_variables.is_lhs())
+                                .ok_or_else(|| {
+                                    println!(
+                                        "Generic layer overflow when checking subtype: P_{}.{} <: ...",
+                                        layer, bind_name
+                                    );
+                                    TypeError::GenericLayerOverflow(self.clone().dispatch().into())
+                                })?;
+                            if let Some(ty) = ty
                             {
                                 ty.clone().subof(other, &mut inner_ctx)
                             } else {
@@ -239,10 +249,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             Ok(ThreeValuedLogic::Unknown)
                         }
                     }
-                    Variable::PatternVariable { bind_name, .. } => {
+                    Variable::PatternVariable { bind_name, layer, .. } => {
                         if let Some(ty) = inner_ctx
                             .bound_generic_variables
-                            .lookup(bind_name, inner_ctx.bound_generic_variables.is_lhs())
+                            .lookup(bind_name, *layer, inner_ctx.bound_generic_variables.is_lhs())
+                            .ok_or_else(|| {
+                                TypeError::GenericLayerOverflow(self.clone().dispatch().into())
+                            })?
                         {
                             ty.clone().subof(other, &mut inner_ctx)
                         } else {
@@ -340,10 +353,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                         None => return Ok(ThreeValuedLogic::Unknown),
                     }
                 }
-                Variable::PatternVariable { bind_name, .. } => {
+                Variable::PatternVariable { bind_name, layer, .. } => {
                     if let Some(ty) = ctx
                         .bound_generic_variables
-                        .lookup(bind_name, ctx.bound_generic_variables.is_lhs())
+                        .lookup(bind_name, *layer, ctx.bound_generic_variables.is_lhs())
+                        .ok_or_else(|| {
+                            TypeError::GenericLayerOverflow(self.clone().dispatch().into())
+                        })?
                     {
                         ty.clone()
                     } else {
@@ -371,10 +387,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                         None => return Ok(ThreeValuedLogic::Unknown),
                     }
                 }
-                Variable::PatternVariable { bind_name, .. } => {
+                Variable::PatternVariable { bind_name, layer, .. } => {
                     if let Some(ty) = ctx
                         .bound_generic_variables
-                        .lookup(bind_name, ctx.bound_generic_variables.is_lhs())
+                        .lookup(bind_name, *layer, ctx.bound_generic_variables.is_lhs())
+                        .ok_or_else(|| {
+                            TypeError::GenericLayerOverflow(self.clone().dispatch().into())
+                        })?
                     {
                         ty.clone()
                     } else {
@@ -398,8 +417,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
         match self {
             Variable::ContextVariable { bind_name, .. } => format!("capture.{}", bind_name),
             Variable::ArgumentVariable { bind_name, .. } => format!("arg.{}", bind_name),
-            Variable::PatternVariable { bind_name, .. } => {
-                format!("P.{}", bind_name)
+            Variable::PatternVariable { bind_name, layer, .. } => {
+                format!("P_{}.{}", layer, bind_name)
             }
         }
     }
@@ -432,10 +451,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
 
     pub fn new_pattern(
         bind_name: impl Into<Arc<str>>,
+        layer: usize,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         Variable::PatternVariable {
             bind_name: bind_name.into(),
+            layer,
             source_info,
             _phantom: std::marker::PhantomData,
         }

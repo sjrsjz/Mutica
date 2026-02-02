@@ -2559,7 +2559,7 @@ impl LinearTypeAst {
                 Ok(BuildResult::simple(CharacterValue::new(*v, loc.cloned().map(Arc::new))))
             }
             LinearTypeAst::Variable(var) => {
-                if let Some((ty, outgoing)) = ctx.lookup(var.value()) {
+                if let Some((ty, outgoing)) = ctx.lookup(var.value(), var.location().cloned()) {
                     if let Some(outgoing) = outgoing
                         && outgoing != 0
                     {

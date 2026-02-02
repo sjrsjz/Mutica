@@ -474,7 +474,6 @@ impl ParseContext {
                     if skip_generic {
                         continue;
                     }
-                    skip_generic = true;
                     if let Some((count, loc)) = map.get_mut(name) {
                         *count += 1;
                         return Ok((loc, None));
@@ -544,29 +543,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
         self.layers.pop()
     }
 
-    pub fn lookup<S: AsRef<str>>(&self, var: S) -> Option<(Type<T>, Option<usize>)> {
+    pub fn lookup<S: AsRef<str>>(
+        &self,
+        var: S,
+        loc: Option<SourceLocation>,
+    ) -> Option<(Type<T>, Option<usize>)> {
         let mut outgoing_function_layer_count = 0;
         let mut skip_generic = false;
+        let mut generic_layer_out_count = 0;
         for layer in self.layers.iter().rev() {
             match layer {
                 BuildContextLayer::Function { patterns, captures } => {
                     skip_generic = true; // 跨越 Function 层时跳过 Generic 层
                     match (patterns.get(var.as_ref()), captures.get(var.as_ref())) {
-                        (Some(v), _) => {
+                        (Some(_v), _) => {
                             return Some((
-                                Variable::new_argument(
-                                    Arc::from(var.as_ref()),
-                                    v.location().cloned().map(Arc::new),
-                                ),
+                                Variable::new_argument(Arc::from(var.as_ref()), loc.map(Arc::new)),
                                 None,
                             ));
                         }
-                        (None, Some(v)) => {
+                        (None, Some(_v)) => {
                             return Some((
-                                Variable::new_context(
-                                    Arc::from(var.as_ref()),
-                                    v.location().cloned().map(Arc::new),
-                                ),
+                                Variable::new_context(Arc::from(var.as_ref()), loc.map(Arc::new)),
                                 None,
                             ));
                         }
@@ -578,29 +576,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     if skip_generic {
                         continue;
                     }
-                    skip_generic = true;
-                    if let Some(v) = patterns.get(var.as_ref()) {
+                    if let Some(_v) = patterns.get(var.as_ref()) {
                         // 如果是定义且是最内层 GenericBinding，则创建 Pattern 类型
                         if *is_definition {
-                            return Some((
-                                Pattern::new(
-                                    Arc::from(var.as_ref()),
-                                    v.location().cloned().map(Arc::new),
-                                )
-                                .dispatch(),
-                                None,
-                            ));
+                            if generic_layer_out_count == 0 {
+                                return Some((
+                                    Pattern::new(Arc::from(var.as_ref()), loc.map(Arc::new))
+                                        .dispatch(),
+                                    None,
+                                ));
+                            }
+                            // // 否则跳过，并且处于定义状态时不增加 generic_layer_out_count(因为定义不影响使用层级)
+                            // 无论是否为定义，都增加 generic_layer_out_count（为了保证状态的简单性）
                         } else {
                             return Some((
                                 Variable::new_pattern(
                                     Arc::from(var.as_ref()),
-                                    v.location().cloned().map(Arc::new),
+                                    generic_layer_out_count,
+                                    loc.map(Arc::new),
                                 )
                                 .dispatch(),
                                 None,
                             ));
                         }
                     }
+                    // if !*is_definition {
+                    //     generic_layer_out_count += 1;
+                    // }
+                    generic_layer_out_count += 1;
                 }
                 BuildContextLayer::FixPoint(name, v) => {
                     if var.as_ref().eq(name.value()) {

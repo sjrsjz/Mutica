@@ -250,7 +250,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         let mut collected_path = Vec::new();
         let mut path_collector = PathCollector::from(&mut collected_path);
         let empty_bindings = GenericBinding::wait_for_bind(Some(ctx.bound_generic_variables));
-        let fipped_empty_bindings = empty_bindings.flip();
         let mut pattern_check_ctx = TypeCheckContext::new(
             ctx.instance_assumptions,
             PatternCollector::Subtyping(&mut path_collector),
@@ -291,7 +290,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
 
             let bound_subtype_assumptions = GenericBinding::subtype_assumption(
                 lhs_subtype_assumptions,
-                &rhs_subtype_assumptions,
+                &[],
                 Some(ctx.bound_generic_variables),
             );
             let mut new_ctx = TypeCheckContext::new(
@@ -338,6 +337,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
 
             // 正向约束检查通过后，进行反向检查
             if let ThreeValuedLogic::True = constraint_result {
+                let flipped = ctx.bound_generic_variables.flip();
+                let bound_subtype_assumptions = GenericBinding::subtype_assumption(
+                    lhs_subtype_assumptions,
+                    &[],
+                    Some(&flipped),
+                );
+                let mut new_ctx = TypeCheckContext::new(
+                    ctx.instance_assumptions,
+                    PatternCollector::None,
+                    ctx.rhs_env,
+                    ctx.lhs_env,
+                    &bound_subtype_assumptions,
+                );
                 for (lhs, rhs) in lhs_subtype_assumptions {
                     let lhs_ty = self
                         .constraint()
@@ -350,13 +362,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                         .find_map(|(k, v)| if k.eq(rhs) { Some(v) } else { None })
                         .ok_or_else(|| TypeError::MissingVariable(rhs.as_ref().into()))?;
 
-                    let mut new_ctx = TypeCheckContext::new(
-                        ctx.instance_assumptions,
-                        PatternCollector::None,
-                        ctx.rhs_env,
-                        ctx.lhs_env,
-                        &fipped_empty_bindings,
-                    );
                     // 如果它居然是等价的(即当 U <: V 的时候发现 V <: U 也成立)，则加入反向假设
                     let subof_result = rhs_ty.subof(lhs_ty.as_ref_dispatcher(), &mut new_ctx)?;
                     if let ThreeValuedLogic::True = subof_result {
@@ -446,7 +451,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         let mut check_result = ThreeValuedLogic::True;
         for (x, c) in self.constraint() {
             // println!("Checking constraint for variable: {}, c: {:?}", x, c);
-            let ty = env.lookup(x, env.is_lhs()).expect("Variable should be bound").clone();
+            let ty = env
+                .lookup(x, 0, env.is_lhs())
+                .expect("Layer should be found")
+                .expect("Variable should be bound")
+                .clone();
             let mut new_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
                 PatternCollector::None,

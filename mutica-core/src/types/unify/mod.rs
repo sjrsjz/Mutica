@@ -202,32 +202,35 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> GenericBinding<'a, U, V>
         Err(TypeError::UnboundArgument(name.as_ref().into()))
     }
 
-    pub fn lookup<S: AsRef<str>>(&self, name: S, lhs: bool) -> Option<&U> {
-        let GenericBinding::Pattern { lhs_type_vars, rhs_type_vars, .. } = self else {
-            return None;
+    pub fn lookup<S: AsRef<str>>(&self, name: S, layer: usize, lhs: bool) -> Option<Option<&U>> {
+        let binding = self.find_generic_layer(layer)?;
+        let GenericBinding::Pattern { lhs_type_vars, rhs_type_vars, is_lhs: layer_is_lhs, .. } =
+            binding
+        else {
+            return Some(None);
         };
-        if self.is_lhs() == lhs {
+        if *layer_is_lhs == lhs {
             for (var_name, var_ty) in lhs_type_vars.iter() {
                 if var_name.as_ref() == name.as_ref() {
                     if let ArgumentBinding::Bound(ty) = var_ty {
-                        return Some(ty);
+                        return Some(Some(ty));
                     } else {
-                        return None;
+                        return Some(None);
                     }
                 }
             }
-            None
+            Some(None)
         } else {
             for (var_name, var_ty) in rhs_type_vars.iter() {
                 if var_name.as_ref() == name.as_ref() {
                     if let ArgumentBinding::Bound(ty) = var_ty {
-                        return Some(ty);
+                        return Some(Some(ty));
                     } else {
-                        return None;
+                        return Some(None);
                     }
                 }
             }
-            None
+            Some(None)
         }
     }
 
@@ -333,7 +336,7 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> GenericBinding<'a, U, V>
         }
     }
 
-    pub fn param_layer(&'a self, layer: usize) -> Option<&'a GenericBinding<'a, U, V>> {
+    pub fn find_param_layer(&'a self, layer: usize) -> Option<&'a GenericBinding<'a, U, V>> {
         let mut current = Some(self);
         let mut param_layer_count = 0;
         while let Some(binding) = current {
@@ -347,6 +350,33 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> GenericBinding<'a, U, V>
                 }
                 _ => {
                     current = binding.parent();
+                }
+            }
+        }
+        None
+    }
+
+    pub fn find_generic_layer(&'a self, layer: usize) -> Option<&'a GenericBinding<'a, U, V>> {
+        let mut current = Some(self);
+        let mut generic_layer_count = 0;
+        while let Some(binding) = current {
+            match binding {
+                GenericBinding::Pattern { parent, .. }
+                | GenericBinding::SubtypeAssumption { parent, .. }
+                | GenericBinding::WaitForBind { parent, .. } => {
+                    if generic_layer_count == layer {
+                        return Some(binding);
+                    }
+                    generic_layer_count += 1;
+                    current = *parent;
+                }
+                // GenericBinding::WaitForBind { parent, .. } => {
+                //     // 跳过 WaitForBind 层，这是因为 WaitForBind 表示处于约束收集阶段，并不实际存在泛型层级（和前端解析器的行为一致）
+                //     current = *parent;
+                // }
+                GenericBinding::ParamSubtypeAssumption { .. } => {
+                    // 遇到 ParamSubtypeAssumption 时说明已经超出 Generic 层级
+                    return None;
                 }
             }
         }
