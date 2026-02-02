@@ -409,21 +409,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
         let (branches, _) = self.inner.as_ref();
         let mut repr = String::from("match");
         for inner in branches.iter() {
-            // let captured_vars: Vec<String> = inner
-            //     .capture_env
-            //     ()
-            //     .iter()
-            //     .map(|(v, ty)| {
-            //         let ty_str = match ty {
-            //             ArgumentBinding::Bound(ty) => ty.represent(path, depth + 1, max_depth),
-            //             ArgumentBinding::Collect(_) => panic!(
-            //                 "CRITICAL: Trying to represent a BoundList variable from an environment which didn't finalize it."
-            //             ),
-            //             ArgumentBinding::Phantom(_) => unreachable!(),
-            //         };
-            //         format!("{}: {}", v.as_ref(), ty_str)
-            //     })
-            //     .collect();
             let captured_vars: Vec<String> = if inner.capture_env.is_solved() {
                 inner
                     .capture_env

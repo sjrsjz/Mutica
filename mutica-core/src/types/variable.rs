@@ -163,11 +163,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             // );
                             // println!("is_lhs: {}", is_lhs);
                             if let Some(binding) = inner_ctx.bound_generic_variables.param_layer(0)
-                                && (binding.subtype_assumptions(is_lhs).iter().any(|(lhs, rhs)| {
-                                    lhs == self_bind_name && rhs == other_bind_name
-                                }) || binding.subtype_assumptions(!is_lhs).iter().any(
-                                    |(lhs, rhs)| lhs == self_bind_name && rhs == other_bind_name,
-                                ))
+                                && binding.check_subtype_assumption(self_bind_name, other_bind_name, is_lhs)
                             {
                                 // println!("Pass");
                                 return Ok(ThreeValuedLogic::True);
@@ -178,13 +174,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             Variable::PatternVariable { bind_name: other_bind_name, .. },
                             layer @ GenericBinding::SubtypeAssumption { .. },
                         ) => {
-                            if layer
-                                .subtype_assumptions(is_lhs)
-                                .iter()
-                                .any(|(lhs, rhs)| self_bind_name == lhs && other_bind_name == rhs) || layer
-                                .subtype_assumptions(!is_lhs)
-                                .iter()
-                                .any(|(lhs, rhs)| self_bind_name == lhs && other_bind_name == rhs)
+                            if  layer.check_subtype_assumption(self_bind_name, other_bind_name, is_lhs)
                             {
                                 return Ok(ThreeValuedLogic::True);
                             }
@@ -211,11 +201,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                                 // 使用 lhs_layer 找到对应层级的 GenericBinding
                                 if let Some(binding) =
                                     inner_ctx.bound_generic_variables.param_layer(lhs_layer + 1) // +1 因为 layer 表示当前层，而我们需要查找当前层的父层所绑定的假设
-                                    && (binding.subtype_assumptions(is_lhs).iter().any(|(lhs, rhs)| {
-                                    lhs == self_bind_name && rhs == other_bind_name
-                                }) || binding.subtype_assumptions(!is_lhs).iter().any(
-                                    |(lhs, rhs)| lhs == self_bind_name && rhs == other_bind_name,
-                                ))
+                                    &&  binding.check_subtype_assumption(self_bind_name, other_bind_name, is_lhs)
                                 {
                                     return Ok(ThreeValuedLogic::True);
                                 }
