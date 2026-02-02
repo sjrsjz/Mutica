@@ -430,7 +430,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
             GenericBinding::bind(&mut pool, k, v)?
         }
         GenericBinding::finalize(&mut pool, ctx.lhs_env)?; // 解构的值都来源于于 LHS 环境
-        let env = GenericBinding::pattern(&pool, &[], ctx.bound_generic_variables.parent());
+        let env = GenericBinding::pattern(&pool, &[], Some(ctx.bound_generic_variables));
 
         let mut bindings: SmallVec<[(Arc<str>, ArgumentBinding<Type<T>, T>); 4]> = SmallVec::new();
         // 确保所有变量都已绑定
