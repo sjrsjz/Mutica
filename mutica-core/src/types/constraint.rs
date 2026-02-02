@@ -239,11 +239,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
             ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>>,
         >,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
+        // println!(
+        //     "Checking Pattern Subtype: {} <: {}",
+        //     self.represent(&mut Default::default(), 0, 5),
+        //     other.represent(&mut Default::default(), 0, 5)
+        // );
+        // println!(" bound_generic_layers: {:?}", ctx.bound_generic_variables);
         let lhs_pattern = self.expr();
         let rhs_pattern = other.expr();
         let mut collected_path = Vec::new();
         let mut path_collector = PathCollector::from(&mut collected_path);
-        let empty_bindings = GenericBinding::wait_for_bind();
+        let empty_bindings = GenericBinding::wait_for_bind(Some(ctx.bound_generic_variables));
+        let fipped_empty_bindings = empty_bindings.flip();
         let mut pattern_check_ctx = TypeCheckContext::new(
             ctx.instance_assumptions,
             PatternCollector::Subtyping(&mut path_collector),
@@ -256,16 +263,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         if let ThreeValuedLogic::False = pattern_result {
             return Ok(ThreeValuedLogic::False);
         }
+        // println!("Pattern subtype check passed.");
 
         let mut pass = ThreeValuedLogic::False;
-        let mut rev_subtype_assumptions = Vec::new();
+        let mut rhs_subtype_assumptions = Vec::new();
 
-        let _ = path_collector.walk(|subtype_assumptions| {
+        let _ = path_collector.walk(|lhs_subtype_assumptions| {
             let mut lhs_tys = SmallVec::<[(&Arc<str>, usize); 8]>::new();
             let mut rhs_tys = SmallVec::<[(&Arc<str>, usize); 8]>::new();
-            rev_subtype_assumptions.clear();
+            rhs_subtype_assumptions.clear();
 
-            for (lhs, rhs) in subtype_assumptions {
+            for (lhs, rhs) in lhs_subtype_assumptions {
                 // 插入lhs_tys和rhs_tys
                 match lhs_tys.iter_mut().find(|v| v.0.as_ref() == lhs.as_ref()) {
                     Some((_, c)) => {
@@ -279,35 +287,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                     }
                     None => rhs_tys.push((rhs, 0)),
                 }
-
-                let lhs_ty = self
-                    .constraint()
-                    .iter()
-                    .find_map(|(k, v)| if k.eq(lhs) { Some(v) } else { None })
-                    .ok_or_else(|| TypeError::MissingVariable(lhs.as_ref().into()))?;
-                let rhs_ty = other
-                    .constraint()
-                    .iter()
-                    .find_map(|(k, v)| if k.eq(rhs) { Some(v) } else { None })
-                    .ok_or_else(|| TypeError::MissingVariable(rhs.as_ref().into()))?;
-
-                let mut new_ctx = TypeCheckContext::new(
-                    ctx.instance_assumptions,
-                    PatternCollector::None,
-                    ctx.rhs_env,
-                    ctx.lhs_env,
-                    &empty_bindings,
-                );
-                // 如果它居然是等价的(即当 U <: V 的时候发现 V <: U 也成立)，则加入反向假设
-                let subof_result = rhs_ty.subof(lhs_ty.as_ref_dispatcher(), &mut new_ctx)?;
-                if let ThreeValuedLogic::True = subof_result {
-                    rev_subtype_assumptions.push((rhs.clone(), lhs.clone())); // 加入反向假设
-                }
             }
+
             let bound_subtype_assumptions = GenericBinding::subtype_assumption(
-                subtype_assumptions,
-                &rev_subtype_assumptions,
-                false,
+                lhs_subtype_assumptions,
+                &rhs_subtype_assumptions,
+                Some(ctx.bound_generic_variables),
             );
             let mut new_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
@@ -318,7 +303,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
             );
 
             let mut constraint_result = ThreeValuedLogic::True;
-            for (lhs, rhs) in subtype_assumptions {
+            for (lhs, rhs) in lhs_subtype_assumptions {
                 // println!("LHS var: {}, RHS var: {}", lhs, rhs);
                 // 检查计数lhs >= rhs
                 let lhs_count = lhs_tys
@@ -351,11 +336,42 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                 }
             }
 
+            // 正向约束检查通过后，进行反向检查
+            if let ThreeValuedLogic::True = constraint_result {
+                for (lhs, rhs) in lhs_subtype_assumptions {
+                    let lhs_ty = self
+                        .constraint()
+                        .iter()
+                        .find_map(|(k, v)| if k.eq(lhs) { Some(v) } else { None })
+                        .ok_or_else(|| TypeError::MissingVariable(lhs.as_ref().into()))?;
+                    let rhs_ty = other
+                        .constraint()
+                        .iter()
+                        .find_map(|(k, v)| if k.eq(rhs) { Some(v) } else { None })
+                        .ok_or_else(|| TypeError::MissingVariable(rhs.as_ref().into()))?;
+
+                    let mut new_ctx = TypeCheckContext::new(
+                        ctx.instance_assumptions,
+                        PatternCollector::None,
+                        ctx.rhs_env,
+                        ctx.lhs_env,
+                        &fipped_empty_bindings,
+                    );
+                    // 如果它居然是等价的(即当 U <: V 的时候发现 V <: U 也成立)，则加入反向假设
+                    let subof_result = rhs_ty.subof(lhs_ty.as_ref_dispatcher(), &mut new_ctx)?;
+                    if let ThreeValuedLogic::True = subof_result {
+                        rhs_subtype_assumptions.push((rhs.clone(), lhs.clone())); // 加入反向假设
+                    }
+                }
+            }
+
+            // println!("LHS: {:?}", lhs_subtype_assumptions);
+            // println!("RHS: {:?}", rhs_subtype_assumptions);
             if let Some(check_fn) = &additional_check {
-                let bound_subtype_assumptions = GenericBinding::subtype_assumption(
-                    subtype_assumptions,
-                    &rev_subtype_assumptions,
-                    true,
+                let bound_subtype_assumptions = GenericBinding::param_subtype_assumption(
+                    lhs_subtype_assumptions,
+                    &rhs_subtype_assumptions,
+                    Some(ctx.bound_generic_variables),
                 );
 
                 let mut new_ctx = TypeCheckContext::new(
@@ -390,7 +406,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         TypeError<Type<T>, T>,
     > {
         let mut collector = Collector::new();
-        let empty_bindings = GenericBinding::wait_for_bind();
+        let empty_bindings = GenericBinding::wait_for_bind(Some(ctx.bound_generic_variables));
         let mut new_ctx = TypeCheckContext::new(
             ctx.instance_assumptions,
             PatternCollector::Deconstruct(&mut collector),
@@ -414,11 +430,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
             GenericBinding::bind(&mut pool, k, v)?
         }
         GenericBinding::finalize(&mut pool, ctx.lhs_env)?; // 解构的值都来源于于 LHS 环境
-        let env = GenericBinding::pattern(&mut pool, &mut []);
+        let env = GenericBinding::pattern(&pool, &[], ctx.bound_generic_variables.parent());
 
         let mut bindings: SmallVec<[(Arc<str>, ArgumentBinding<Type<T>, T>); 4]> = SmallVec::new();
         // 确保所有变量都已绑定
-        for (k, v) in env.type_vars() {
+        for (k, v) in env.type_vars(env.is_lhs()) {
             match v {
                 ArgumentBinding::Bound(_) => bindings.push((k.clone(), v.clone())),
                 _ => {
@@ -430,7 +446,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         let mut check_result = ThreeValuedLogic::True;
         for (x, c) in self.constraint() {
             // println!("Checking constraint for variable: {}, c: {:?}", x, c);
-            let ty = env.lookup(x).expect("Variable should be bound").clone();
+            let ty = env.lookup(x, env.is_lhs()).expect("Variable should be bound").clone();
             let mut new_ctx = TypeCheckContext::new(
                 ctx.instance_assumptions,
                 PatternCollector::None,

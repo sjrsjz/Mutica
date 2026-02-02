@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::types::unify::GenericBinding;
+use crate::types::unify::capture_env::CaptureEnvLookupError;
 use crate::types::{CoinductiveTypeRef, CollectorExt};
 use crate::util::source_info::SourceLocation;
 use crate::{
@@ -112,7 +113,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                         }
                     }
                     Variable::PatternVariable { bind_name, .. } => {
-                        if let Some(ty) = inner_ctx.bound_generic_variables.lookup(bind_name) {
+                        if let Some(ty) = inner_ctx
+                            .bound_generic_variables
+                            .lookup(bind_name, inner_ctx.bound_generic_variables.is_lhs())
+                        {
                             ty.clone().check(other, &mut inner_ctx)
                         } else {
                             Ok(ThreeValuedLogic::Unknown)
@@ -142,17 +146,43 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 TypeRef::FixPoint(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Variable(other_varible) => {
+                    let is_lhs = inner_ctx.bound_generic_variables.is_lhs();
                     match (self, other_varible, inner_ctx.bound_generic_variables) {
                         (
                             Variable::ArgumentVariable { bind_name: self_bind_name, .. },
                             Variable::ArgumentVariable { bind_name: other_bind_name, .. },
-                            GenericBinding::SubtypeAssumption {
-                                subtype_assumptions,
-                                is_params: true,
-                                ..
-                            },
+                            _,
                         ) => {
-                            if subtype_assumptions
+                            // println!(
+                            //     "Checking ArgumentVariable subtype: {} <: {}",
+                            //     self_bind_name, other_bind_name
+                            // );
+                            // println!(
+                            //     " bound_generic_layers: {:?}",
+                            //     inner_ctx.bound_generic_variables
+                            // );
+                            // println!("is_lhs: {}", is_lhs);
+                            if let Some(binding) = inner_ctx.bound_generic_variables.param_layer(0)
+                                && (binding.subtype_assumptions(is_lhs).iter().any(|(lhs, rhs)| {
+                                    lhs == self_bind_name && rhs == other_bind_name
+                                }) || binding.subtype_assumptions(!is_lhs).iter().any(
+                                    |(lhs, rhs)| lhs == self_bind_name && rhs == other_bind_name,
+                                ))
+                            {
+                                // println!("Pass");
+                                return Ok(ThreeValuedLogic::True);
+                            }
+                        }
+                        (
+                            Variable::PatternVariable { bind_name: self_bind_name, .. },
+                            Variable::PatternVariable { bind_name: other_bind_name, .. },
+                            layer @ GenericBinding::SubtypeAssumption { .. },
+                        ) => {
+                            if layer
+                                .subtype_assumptions(is_lhs)
+                                .iter()
+                                .any(|(lhs, rhs)| self_bind_name == lhs && other_bind_name == rhs) || layer
+                                .subtype_assumptions(!is_lhs)
                                 .iter()
                                 .any(|(lhs, rhs)| self_bind_name == lhs && other_bind_name == rhs)
                             {
@@ -160,19 +190,35 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             }
                         }
                         (
-                            Variable::PatternVariable { bind_name: self_bind_name, .. },
-                            Variable::PatternVariable { bind_name: other_bind_name, .. },
-                            GenericBinding::SubtypeAssumption {
-                                subtype_assumptions,
-                                is_params: false,
-                                ..
-                            },
+                            Variable::ContextVariable { bind_name: self_bind_name, .. },
+                            Variable::ContextVariable { bind_name: other_bind_name, .. },
+                            _,
                         ) => {
-                            if subtype_assumptions
-                                .iter()
-                                .any(|(lhs, rhs)| self_bind_name == lhs && other_bind_name == rhs)
+                            // println!(
+                            //     "Checking ContextVariable subtype: {} <: {}",
+                            //     self_bind_name, other_bind_name
+                            // );
+                            // 当两边都是 ContextVariable 时，检查它们是否都溯源到未绑定的 ArgumentVariable
+                            // lookup 返回 Err(CaptureEnvLookupError::Argument(layer)) 时，layer 表示在哪一层找到的未绑定 Argument
+                            if let (
+                                Err(CaptureEnvLookupError::Argument(lhs_layer)),
+                                Err(CaptureEnvLookupError::Argument(rhs_layer)),
+                            ) = (
+                                ctx.lhs_env.lookup(self_bind_name),
+                                ctx.rhs_env.lookup(other_bind_name),
+                            ) && lhs_layer == rhs_layer
                             {
-                                return Ok(ThreeValuedLogic::True);
+                                // 使用 lhs_layer 找到对应层级的 GenericBinding
+                                if let Some(binding) =
+                                    inner_ctx.bound_generic_variables.param_layer(lhs_layer + 1) // +1 因为 layer 表示当前层，而我们需要查找当前层的父层所绑定的假设
+                                    && (binding.subtype_assumptions(is_lhs).iter().any(|(lhs, rhs)| {
+                                    lhs == self_bind_name && rhs == other_bind_name
+                                }) || binding.subtype_assumptions(!is_lhs).iter().any(
+                                    |(lhs, rhs)| lhs == self_bind_name && rhs == other_bind_name,
+                                ))
+                                {
+                                    return Ok(ThreeValuedLogic::True);
+                                }
                             }
                         }
                         _ => {}
@@ -187,7 +233,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                             }
                         }
                         Variable::PatternVariable { bind_name, .. } => {
-                            if let Some(ty) = inner_ctx.bound_generic_variables.lookup(bind_name) {
+                            if let Some(ty) = inner_ctx
+                                .bound_generic_variables
+                                .lookup(bind_name, inner_ctx.bound_generic_variables.is_lhs())
+                            {
                                 ty.clone().subof(other, &mut inner_ctx)
                             } else {
                                 Ok(ThreeValuedLogic::Unknown)
@@ -205,7 +254,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                         }
                     }
                     Variable::PatternVariable { bind_name, .. } => {
-                        if let Some(ty) = inner_ctx.bound_generic_variables.lookup(bind_name) {
+                        if let Some(ty) = inner_ctx
+                            .bound_generic_variables
+                            .lookup(bind_name, inner_ctx.bound_generic_variables.is_lhs())
+                        {
                             ty.clone().subof(other, &mut inner_ctx)
                         } else {
                             Ok(ThreeValuedLogic::Unknown)
@@ -303,7 +355,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                     }
                 }
                 Variable::PatternVariable { bind_name, .. } => {
-                    if let Some(ty) = ctx.bound_generic_variables.lookup(bind_name) {
+                    if let Some(ty) = ctx
+                        .bound_generic_variables
+                        .lookup(bind_name, ctx.bound_generic_variables.is_lhs())
+                    {
                         ty.clone()
                     } else {
                         return Ok(ThreeValuedLogic::Unknown);
@@ -331,7 +386,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
                     }
                 }
                 Variable::PatternVariable { bind_name, .. } => {
-                    if let Some(ty) = ctx.bound_generic_variables.lookup(bind_name) {
+                    if let Some(ty) = ctx
+                        .bound_generic_variables
+                        .lookup(bind_name, ctx.bound_generic_variables.is_lhs())
+                    {
                         ty.clone()
                     } else {
                         return Ok(ThreeValuedLogic::Unknown);

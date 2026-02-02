@@ -328,7 +328,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
 
         let mut absorbed: SmallVec<[bool; 8]> = smallvec![false; collected.len()];
         let mut assumptions = smallvec![];
-        let empty_generic_binding = GenericBinding::wait_for_bind();
+        let empty_generic_binding = GenericBinding::wait_for_bind(None);
         let mut context = TypeCheckContext::new(
             &mut assumptions,
             PatternCollector::None,

@@ -245,6 +245,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                                 ctx.lhs_env.attach(&rhs.capture_env, None),
                                 &flipped,
                             );
+                            // println!("Checking Closure expr subof: {} <: {}", lhs.expr.represent(&mut FastCycleDetector::new(), 0, 3), rhs.expr.represent(&mut FastCycleDetector::new(), 0, 3));
+                            // println!(" bound_generic_layers: {:?}", ctx.bound_generic_variables);
                             lhs.expr.subof(rhs.expr.as_ref_dispatcher(), &mut ctx)
                         };
                         match rhs.pattern.subof_constraint(
@@ -329,7 +331,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         for branch in branches.iter() {
             matched_pattern.clear();
             assumptions.clear();
-            let empty_generic_binding = GenericBinding::wait_for_bind();
+            let empty_generic_binding = GenericBinding::wait_for_bind(None);
             let mut pattern_check_ctx = TypeCheckContext::new(
                 &mut assumptions,
                 PatternCollector::Deconstruct(&mut matched_pattern),

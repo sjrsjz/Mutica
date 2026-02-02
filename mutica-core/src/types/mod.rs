@@ -1300,36 +1300,6 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
         ctx: &mut TypeCheckContext<U, V>,
     ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
 
-    // A == B，验证类型图A与图B等价
-    fn equals<'a>(
-        &'a self,
-        other: Self::RefDispatcher<'a>,
-        lhs_env: CaptureEnvList<'a, U, V>,
-        rhs_env: CaptureEnvList<'a, U, V>,
-    ) -> Result<ThreeValuedLogic, TypeError<U, V>> {
-        let sub_ba = test_true!(other.subof(
-            self.as_ref_dispatcher(),
-            &mut TypeCheckContext::new(
-                &mut SmallVec::new(),
-                PatternCollector::None,
-                rhs_env,
-                lhs_env,
-                &GenericBinding::wait_for_bind()
-            )
-        )?);
-        let sub_ab = test_true!(self.subof(
-            other,
-            &mut TypeCheckContext::new(
-                &mut SmallVec::new(),
-                PatternCollector::None,
-                lhs_env,
-                rhs_env,
-                &GenericBinding::wait_for_bind()
-            )
-        )?);
-        Ok(sub_ab & sub_ba)
-    }
-
     // 归约变换 (beta-reduction)
     fn reduce(self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
 

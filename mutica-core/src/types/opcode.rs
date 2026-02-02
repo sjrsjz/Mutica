@@ -282,7 +282,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                             let true_branch = tuple.get_prefix_value(2).unwrap();
                             let false_branch = tuple.get_prefix_value(3).unwrap();
                             let mut assumptions = smallvec::SmallVec::new();
-                            let empty_binding = GenericBinding::wait_for_bind();
+                            let empty_binding = GenericBinding::wait_for_bind(None);
                             let mut type_check_ctx = TypeCheckContext::new(
                                 &mut assumptions,
                                 PatternCollector::None,

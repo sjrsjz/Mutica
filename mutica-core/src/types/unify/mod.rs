@@ -1,7 +1,7 @@
 pub mod capture_env;
 pub mod collector;
 pub mod path_collector;
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use smallvec::SmallVec;
 
@@ -36,48 +36,148 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ArgumentBinding<U, V> {
     }
 }
 
-#[derive(Default)]
 pub enum GenericBinding<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    #[default]
-    WaitForBind, // 等待绑定
+    WaitForBind {
+        parent: Option<&'a GenericBinding<'a, U, V>>,
+        is_lhs: bool,
+    }, // 等待绑定
     Pattern {
-        type_vars: &'a [(Arc<str>, ArgumentBinding<U, V>)],
-        type_vars_rev: &'a [(Arc<str>, ArgumentBinding<U, V>)],
+        lhs_type_vars: &'a [(Arc<str>, ArgumentBinding<U, V>)],
+        rhs_type_vars: &'a [(Arc<str>, ArgumentBinding<U, V>)],
+        parent: Option<&'a GenericBinding<'a, U, V>>,
+        is_lhs: bool,
     },
     SubtypeAssumption {
         // (sub, sup)
-        subtype_assumptions: &'a [(Arc<str>, Arc<str>)],
-        subtype_assumptions_rev: &'a [(Arc<str>, Arc<str>)],
-        is_params: bool,
+        lhs_subtype_assumptions: &'a [(Arc<str>, Arc<str>)],
+        rhs_subtype_assumptions: &'a [(Arc<str>, Arc<str>)],
+        parent: Option<&'a GenericBinding<'a, U, V>>,
+        is_lhs: bool,
+    },
+    ParamSubtypeAssumption {
+        // (sub, sup)
+        lhs_subtype_assumptions: &'a [(Arc<str>, Arc<str>)],
+        rhs_subtype_assumptions: &'a [(Arc<str>, Arc<str>)],
+        parent: Option<&'a GenericBinding<'a, U, V>>,
+        is_lhs: bool,
     },
 }
 
+impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> Debug for GenericBinding<'a, U, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GenericBinding::WaitForBind { is_lhs, .. } => {
+                write!(f, "WaitForBind(is_lhs: {}, parent: {:?})", is_lhs, self.parent())
+            }
+            GenericBinding::Pattern { is_lhs, .. } => {
+                write!(f, "Pattern(is_lhs: {}, parent: {:?})", is_lhs, self.parent())
+            }
+            GenericBinding::SubtypeAssumption {
+                is_lhs,
+                lhs_subtype_assumptions,
+                rhs_subtype_assumptions,
+                ..
+            } => {
+                write!(
+                    f,
+                    "SubtypeAssumption(is_lhs: {}, lhs: {:?}, rhs: {:?}, parent: {:?})",
+                    is_lhs,
+                    lhs_subtype_assumptions,
+                    rhs_subtype_assumptions,
+                    self.parent()
+                )
+            }
+            GenericBinding::ParamSubtypeAssumption {
+                is_lhs,
+                lhs_subtype_assumptions,
+                rhs_subtype_assumptions,
+                ..
+            } => {
+                write!(
+                    f,
+                    "ParamSubtypeAssumption(is_lhs: {}, lhs: {:?}, rhs: {:?}, parent: {:?})",
+                    is_lhs,
+                    lhs_subtype_assumptions,
+                    rhs_subtype_assumptions,
+                    self.parent()
+                )
+            }
+        }
+    }
+}
+
 impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> GenericBinding<'a, U, V> {
-    pub fn wait_for_bind() -> Self {
-        GenericBinding::WaitForBind
+    pub fn wait_for_bind(parent: Option<&'a GenericBinding<'a, U, V>>) -> Self {
+        if let Some(GenericBinding::WaitForBind { is_lhs: false, .. }) = parent {
+            GenericBinding::WaitForBind { parent, is_lhs: false }
+        } else {
+            GenericBinding::WaitForBind { parent, is_lhs: true }
+        }
     }
 
     pub fn pattern(
-        type_vars: &'a mut [(Arc<str>, ArgumentBinding<U, V>)],
-        type_vars_rev: &'a mut [(Arc<str>, ArgumentBinding<U, V>)],
+        lhs_type_vars: &'a [(Arc<str>, ArgumentBinding<U, V>)], // 相对于调用者而言是LHS，但是实际上受父环境 `is_lhs` 控制
+        rhs_type_vars: &'a [(Arc<str>, ArgumentBinding<U, V>)],
+        parent: Option<&'a GenericBinding<'a, U, V>>,
     ) -> Self {
-        GenericBinding::Pattern { type_vars, type_vars_rev }
+        if let Some(GenericBinding::WaitForBind { is_lhs: false, .. }) = parent {
+            GenericBinding::Pattern {
+                lhs_type_vars: rhs_type_vars,
+                rhs_type_vars: lhs_type_vars,
+                parent,
+                is_lhs: false,
+            }
+        } else {
+            GenericBinding::Pattern { lhs_type_vars, rhs_type_vars, parent, is_lhs: true }
+        }
     }
 
     pub fn subtype_assumption(
-        assumptions: &'a [(Arc<str>, Arc<str>)],
-        assumptions_rev: &'a [(Arc<str>, Arc<str>)],
-        is_params: bool,
+        lhs_assumptions: &'a [(Arc<str>, Arc<str>)],
+        rhs_assumptions: &'a [(Arc<str>, Arc<str>)],
+        parent: Option<&'a GenericBinding<'a, U, V>>,
     ) -> Self {
-        GenericBinding::SubtypeAssumption {
-            subtype_assumptions: assumptions,
-            subtype_assumptions_rev: assumptions_rev,
-            is_params,
+        if let Some(GenericBinding::WaitForBind { is_lhs: false, .. }) = parent {
+            GenericBinding::SubtypeAssumption {
+                lhs_subtype_assumptions: rhs_assumptions,
+                rhs_subtype_assumptions: lhs_assumptions,
+                parent,
+                is_lhs: false,
+            }
+        } else {
+            GenericBinding::SubtypeAssumption {
+                lhs_subtype_assumptions: lhs_assumptions,
+                rhs_subtype_assumptions: rhs_assumptions,
+                parent,
+                is_lhs: true,
+            }
+        }
+    }
+
+    pub fn param_subtype_assumption(
+        lhs_assumptions: &'a [(Arc<str>, Arc<str>)],
+        rhs_assumptions: &'a [(Arc<str>, Arc<str>)],
+        parent: Option<&'a GenericBinding<'a, U, V>>,
+    ) -> Self {
+        if let Some(GenericBinding::WaitForBind { is_lhs: false, .. }) = parent {
+            GenericBinding::ParamSubtypeAssumption {
+                lhs_subtype_assumptions: rhs_assumptions,
+                rhs_subtype_assumptions: lhs_assumptions,
+                parent,
+                is_lhs: false,
+            }
+        } else {
+            GenericBinding::ParamSubtypeAssumption {
+                lhs_subtype_assumptions: lhs_assumptions,
+                rhs_subtype_assumptions: rhs_assumptions,
+                parent,
+                is_lhs: true,
+            }
         }
     }
 
     pub fn is_reduced(&self) -> bool {
-        let GenericBinding::Pattern { type_vars, .. } = self else {
+        let GenericBinding::Pattern { lhs_type_vars: type_vars, .. } = self else {
             return true;
         };
         for (_, var_ty) in type_vars.iter() {
@@ -118,52 +218,148 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> GenericBinding<'a, U, V>
         Err(TypeError::UnboundArgument(name.as_ref().into()))
     }
 
-    pub fn lookup<S: AsRef<str>>(&self, name: S) -> Option<&U> {
-        let GenericBinding::Pattern { type_vars, .. } = self else {
+    pub fn lookup<S: AsRef<str>>(&self, name: S, lhs: bool) -> Option<&U> {
+        let GenericBinding::Pattern { lhs_type_vars, rhs_type_vars, .. } = self else {
             return None;
         };
-        for (var_name, var_ty) in type_vars.iter() {
-            if var_name.as_ref() == name.as_ref() {
-                if let ArgumentBinding::Bound(ty) = var_ty {
-                    return Some(ty);
-                } else {
-                    return None;
+        if self.is_lhs() == lhs {
+            for (var_name, var_ty) in lhs_type_vars.iter() {
+                if var_name.as_ref() == name.as_ref() {
+                    if let ArgumentBinding::Bound(ty) = var_ty {
+                        return Some(ty);
+                    } else {
+                        return None;
+                    }
                 }
             }
+            None
+        } else {
+            for (var_name, var_ty) in rhs_type_vars.iter() {
+                if var_name.as_ref() == name.as_ref() {
+                    if let ArgumentBinding::Bound(ty) = var_ty {
+                        return Some(ty);
+                    } else {
+                        return None;
+                    }
+                }
+            }
+            None
         }
-        None
     }
 
-    pub fn type_vars(&self) -> &[(Arc<str>, ArgumentBinding<U, V>)] {
+    pub fn type_vars(&self, lhs: bool) -> &[(Arc<str>, ArgumentBinding<U, V>)] {
         match self {
-            GenericBinding::Pattern { type_vars, .. } => type_vars,
-            GenericBinding::WaitForBind | GenericBinding::SubtypeAssumption { .. } => &[],
+            GenericBinding::Pattern { lhs_type_vars, rhs_type_vars, .. } => {
+                if self.is_lhs() == lhs { lhs_type_vars } else { rhs_type_vars }
+            }
+            GenericBinding::WaitForBind { .. }
+            | GenericBinding::SubtypeAssumption { .. }
+            | GenericBinding::ParamSubtypeAssumption { .. } => &[],
         }
     }
 
-    pub fn subtype_assumptions(&self) -> &[(Arc<str>, Arc<str>)] {
+    pub fn subtype_assumptions(&self, lhs: bool) -> &[(Arc<str>, Arc<str>)] {
         match self {
-            GenericBinding::SubtypeAssumption { subtype_assumptions, .. } => subtype_assumptions,
-            GenericBinding::WaitForBind | GenericBinding::Pattern { .. } => &[],
+            GenericBinding::SubtypeAssumption {
+                lhs_subtype_assumptions,
+                rhs_subtype_assumptions,
+                ..
+            } => {
+                if self.is_lhs() == lhs {
+                    lhs_subtype_assumptions
+                } else {
+                    rhs_subtype_assumptions
+                }
+            }
+            GenericBinding::ParamSubtypeAssumption {
+                lhs_subtype_assumptions,
+                rhs_subtype_assumptions,
+                ..
+            } => {
+                if self.is_lhs() == lhs {
+                    lhs_subtype_assumptions
+                } else {
+                    rhs_subtype_assumptions
+                }
+            }
+            GenericBinding::WaitForBind { .. } | GenericBinding::Pattern { .. } => &[],
         }
     }
 
     pub fn flip(&self) -> Self {
         match self {
             GenericBinding::SubtypeAssumption {
-                subtype_assumptions,
-                subtype_assumptions_rev,
-                is_params,
+                lhs_subtype_assumptions,
+                rhs_subtype_assumptions,
+                parent,
+                is_lhs,
             } => GenericBinding::SubtypeAssumption {
-                subtype_assumptions: subtype_assumptions_rev,
-                subtype_assumptions_rev: subtype_assumptions,
-                is_params: *is_params,
+                lhs_subtype_assumptions: rhs_subtype_assumptions,
+                rhs_subtype_assumptions: lhs_subtype_assumptions,
+                parent: *parent,
+                is_lhs: !is_lhs,
             },
-            GenericBinding::Pattern { type_vars, type_vars_rev } => {
-                GenericBinding::Pattern { type_vars: type_vars_rev, type_vars_rev: type_vars }
+            GenericBinding::ParamSubtypeAssumption {
+                lhs_subtype_assumptions,
+                rhs_subtype_assumptions,
+                parent,
+                is_lhs,
+            } => GenericBinding::ParamSubtypeAssumption {
+                lhs_subtype_assumptions: rhs_subtype_assumptions,
+                rhs_subtype_assumptions: lhs_subtype_assumptions,
+                parent: *parent,
+                is_lhs: !is_lhs,
+            },
+            GenericBinding::Pattern { lhs_type_vars, rhs_type_vars, parent, is_lhs } => {
+                GenericBinding::Pattern {
+                    lhs_type_vars: rhs_type_vars,
+                    rhs_type_vars: lhs_type_vars,
+                    parent: *parent,
+                    is_lhs: !is_lhs,
+                }
             }
-            GenericBinding::WaitForBind => GenericBinding::WaitForBind,
+            GenericBinding::WaitForBind { parent, is_lhs } => {
+                GenericBinding::WaitForBind { parent: *parent, is_lhs: !is_lhs }
+            }
         }
+    }
+
+    pub fn parent(&self) -> Option<&'a GenericBinding<'a, U, V>> {
+        match self {
+            GenericBinding::WaitForBind { parent, .. } => *parent,
+            GenericBinding::Pattern { parent, .. } => *parent,
+            GenericBinding::SubtypeAssumption { parent, .. } => *parent,
+            GenericBinding::ParamSubtypeAssumption { parent, .. } => *parent,
+        }
+    }
+
+    pub fn is_lhs(&self) -> bool {
+        match self {
+            GenericBinding::WaitForBind { is_lhs, .. } => *is_lhs,
+            GenericBinding::Pattern { is_lhs, .. } => *is_lhs,
+            GenericBinding::SubtypeAssumption { is_lhs, .. } => *is_lhs,
+            GenericBinding::ParamSubtypeAssumption { is_lhs, .. } => *is_lhs,
+        }
+    }
+
+    pub fn param_layer(&'a self, layer: usize) -> Option<&'a GenericBinding<'a, U, V>> {
+        let mut current = Some(self);
+        let mut param_layer_count = 0;
+        while let Some(binding) = current {
+            match binding {
+                GenericBinding::ParamSubtypeAssumption { parent, .. } => {
+                    if param_layer_count == layer {
+                        return Some(binding);
+                    }
+                    param_layer_count += 1;
+                    current = *parent;
+                }
+                _ => {
+                    current = binding.parent();
+                }
+            }
+        }
+        None
     }
 }
 
