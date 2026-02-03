@@ -12,7 +12,7 @@ let mutable: any = k: any => (unique_name: String, init_value: any ~ on_change: 
             }
             | set::(Mutable::unique_name, new_state: any) => {
                 handle with (self new_state);
-                discard match on_change
+                match on_change
                     | (f: (lambda | v: any | panic),) => f(Mutable::unique_name)
                     | () => ()
                     | panic;
@@ -38,11 +38,11 @@ extend $"op#not": unique_name: Mut => perform! get::unique_name;
 
 // Example usage:
 let mut_a: Mut = ("name_a", 10, v: any => {
-    discard println("mut_a changed to: " + display!(!v));
+    println("mut_a changed to: " + display!(!v));
     if !v < 100 then v := !v + 1 else ()
 }).#mutable;
 let mut_b: Mut = ("name_b", 20).#mutable;
-discard mut_a := !mut_a + 5;
-discard mut_b := !mut_b * !mut_a;
-discard println("mut_a: " + display!(!mut_a)); // 15
-discard println("mut_b: " + display!(!mut_b)); // 300
+mut_a := !mut_a + 5;
+mut_b := !mut_b * !mut_a;
+println("mut_a: " + display!(!mut_a)); // 15
+println("mut_b: " + display!(!mut_b)); // 300

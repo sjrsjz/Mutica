@@ -7,8 +7,8 @@ let List: any = T: any => (!..T);
 let Greater: any = (T: any, n: nat) => {
     let prefix: any = mut ();
     let i: any = mut 0;
-    discard while delay (!i < n) delay {
-        discard prefix := !prefix + (T,);
+    while delay (!i < n) delay {
+        prefix := !prefix + (T,);
         i := !i + 1
     };
     !prefix + (!..T)
@@ -18,11 +18,11 @@ let Range: any = (T: any, min: nat, max: nat) => {
     let tuple: any = mut ();
     let final: any = mut never;
     let i: any = mut 0;
-    discard while delay (!i < max) delay {
-        discard if !i >= min then {
+    while delay (!i < max) delay {
+        if !i >= min then {
             final := (!final | !tuple) 
         } else ();
-        discard tuple := !tuple + (T,);
+        tuple := !tuple + (T,);
         i := !i + 1
     };
     !final
@@ -31,8 +31,8 @@ let Range: any = (T: any, min: nat, max: nat) => {
 let Exact: any = (T: any, n: nat) => {
     let tuple: any = mut ();
     let i: any = mut 0;
-    discard while delay (!i < n) delay {
-        discard tuple := !tuple + (T,);
+    while delay (!i < n) delay {
+        tuple := !tuple + (T,);
         i := !i + 1
     };
     !tuple
@@ -45,8 +45,8 @@ let Modular: any = (T: any, range_len: nat, prefix_len: nat) => {
             let seq: any = dyn_rec tail: {
                 let seq: any = mut (T ~ tail);
                 let j: any = mut 1;
-                discard while delay (!j < range_len) delay {
-                    discard seq := (T,) + !seq;
+                while delay (!j < range_len) delay {
+                    seq := (T,) + !seq;
                     j := !j + 1
                 };
                 () | !seq
@@ -56,8 +56,8 @@ let Modular: any = (T: any, range_len: nat, prefix_len: nat) => {
                 | _T: any => {
                     let final: any = mut (T ~ seq);
                     let i: any = mut 1;
-                    discard while delay (!i < prefix_len) delay {
-                        discard final := (T,) + !final;
+                    while delay (!i < prefix_len) delay {
+                        final := (T,) + !final;
                         i := !i + 1
                     };
                     !final
@@ -84,7 +84,7 @@ let iter: any = lst: List(any) => f: (lambda | v: never | panic) => {
     match t
         | () => ()
         | (h: any ~ t: any) => {
-            discard f(h);
+            f(h);
             go(t)
         }
         | panic
@@ -94,7 +94,7 @@ let iteri: any = lst: List(any) => f: (lambda | (index: nat, v: never) | panic) 
     match t
         | () => ()
         | (h: any ~ t: any) => {
-            discard f(index, h);
+            f(index, h);
             go(t, index + 1)
         }
         | panic

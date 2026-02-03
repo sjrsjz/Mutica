@@ -46,9 +46,9 @@ let cross: any = (A: vec3, B: vec3) => {
 
 let A: vec3 = (1.0, 2.0, 3.0);
 let B: vec3 = (4.0, 5.0, 6.0);
-discard println!(A + B);
-discard println!(A - B);
-discard println!(A * B);
-discard println!(A / 2.0);
-discard println!(dot(A, B));
-discard println!(cross(A, B));
+println!(A + B);
+println!(A - B);
+println!(A * B);
+println!(A / 2.0);
+println!(dot(A, B));
+println!(cross(A, B));

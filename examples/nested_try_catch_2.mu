@@ -23,37 +23,37 @@ let try_catch: any = on_throw: any => f: any => {
 };
 
 // Example 1: Inner rethrow -> outer catch
-discard println("=== Example 1: Basic Nested Try-Catch ===");
-discard {
+println("=== Example 1: Basic Nested Try-Catch ===");
+{
     let outer: any = err: any => {
-        discard println("Outer caught: " + err);
+        println("Outer caught: " + err);
         "outer_fallback"
     };
     let inner: any = err: any => {
-        discard println("Inner caught: " + err);
+        println("Inner caught: " + err);
         throw("Re-thrown from inner: " + err)
     };
 
     let result: any = outer.try_catch delay {
-        discard println("Before inner throw");
+        println("Before inner throw");
         inner.try_catch delay {
-            discard throw("ValueError::Invalid input");
+            throw("ValueError::Invalid input");
         }
     };
 
-    discard println("Example1 result: " + display! result);
+    println("Example1 result: " + display! result);
 };
-discard println("");
+println("");
 
 // Example 2: Selective catch (division handled, others rethrow)
-discard println("=== Example 2: Selective Error Handling ===");
-discard {
+println("=== Example 2: Selective Error Handling ===");
+{
     let outer: any = err: any => {
-        discard println("Outer caught: " + err);
+        println("Outer caught: " + err);
         "outer_recovered"
     };
     let inner: any = err: any => {
-        discard println("Inner saw: " + err);
+        println("Inner saw: " + err);
         // 这里简单用字符串前缀来区分错误类型
         if display! err == display! err
             then 0
@@ -62,19 +62,19 @@ discard {
 
     let x: any = outer.try_catch delay {
         inner.try_catch delay {
-            discard throw("DivisionError::Cannot divide by zero");
+            throw("DivisionError::Cannot divide by zero");
             999
         }
     };
-    discard println("Example2 result: " + display! x);
+    println("Example2 result: " + display! x);
 };
-discard println("");
+println("");
 
 // Example 3: Success path
-discard println("=== Example 3: Success Path ===");
-discard {
+println("=== Example 3: Success Path ===");
+{
     let on_err: any = err: any => {
-        discard println("Caught error: " + err);
+        println("Caught error: " + err);
         0
     };
     let result: nat = on_err.try_catch delay {
@@ -82,15 +82,15 @@ discard {
         let b: nat = 20;
         a + b
     };
-    discard println("Example3 result: " + nat_to_string(result));
+    println("Example3 result: " + nat_to_string(result));
 };
-discard println("");
+println("");
 
 // Example 4: Three layers adding context
-discard println("=== Example 4: Three Levels of Handling ===");
-discard {
+println("=== Example 4: Three Levels of Handling ===");
+{
     let h3: any = err: any => {
-        discard println("Level3 caught: " + err);
+        println("Level3 caught: " + err);
         "handled_at_level3"
     };
     let h2: any = err: any => throw("Level2 -> " + err);
@@ -99,37 +99,37 @@ discard {
     let result: any = h3.try_catch delay {
         h2.try_catch delay {
             h1.try_catch delay {
-                discard throw("Original error");
+                throw("Original error");
             }
         }
     };
-    discard println("Example4 result: " + display! result);
+    println("Example4 result: " + display! result);
 };
-discard println("");
+println("");
 
 // Example 5: Practical layered handling (validation vs application)
-discard println("=== Example 5: Practical Operations ===");
-discard {
+println("=== Example 5: Practical Operations ===");
+{
     let app: any = err: any => {
-        discard println("App caught: " + err);
+        println("App caught: " + err);
         50
     };
     let validate: any = err: any => {
-        discard println("Validator caught: " + err);
+        println("Validator caught: " + err);
         throw("Validation->" + err)
     };
 
     let result: nat = app.try_catch delay {
         validate.try_catch delay {
             let x: nat = 20;
-            discard println("x = " + nat_to_string(x));
+            println("x = " + nat_to_string(x));
             if x > 100
                 then throw("ValueError::too large")
                 else x
         }
     };
-    discard println("Example5 result: " + nat_to_string(result));
+    println("Example5 result: " + nat_to_string(result));
 };
-discard println("");
+println("");
 
-discard println("=== All examples completed ===");
+println("=== All examples completed ===");

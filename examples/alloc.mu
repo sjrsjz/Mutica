@@ -14,7 +14,7 @@ extend get: ClassA::(self: any) => () => {
 
 extend set: ClassA::(self: any) => value: String => {
     let data::(v: any) = self;
-    discard v := value;
+    v := value;
 };
 
 
@@ -28,7 +28,7 @@ let classA: any = v: String => f: any => {
 
 classA "Hello, world!" {
     let constraint my_obj: any;
-    discard println(my_obj.get());
-    discard my_obj.set("Goodbye, world!");
-    discard println(my_obj.get());
+    println(my_obj.get());
+    my_obj.set("Goodbye, world!");
+    println(my_obj.get());
 }

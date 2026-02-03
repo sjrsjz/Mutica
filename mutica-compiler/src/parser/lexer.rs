@@ -189,8 +189,6 @@ pub enum LexerToken {
     Loop,
     #[token("panic")]
     Panic,
-    #[token("discard")]
-    Discard,
     #[token("nat")]
     Nat,
     #[token("float")]

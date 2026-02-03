@@ -21,12 +21,12 @@ let try_catch: any = on_throw: any => f: any => {
 // Case A：错误示范：handle with 吃掉“后面整段表达式”作为 <expr>
 // --------------------------------------------------
 
-discard println("=== Case A: handler wraps the rest ===");
+println("=== Case A: handler wraps the rest ===");
 
-discard {
+{
     handle with dyn_rec h: k: any => match
         | throw::(err: any) => {
-            discard println("[A] caught: " + err);
+            println("[A] caught: " + err);
         }
         | v: any => {
             let r: any = perform! v;
@@ -35,51 +35,51 @@ discard {
         }
         | panic;
 
-    discard println("[A] before throw");
-    discard throw("boom");
-    discard println("[A] after throw (WON'T RUN)");
-    discard println("[A] after handler (WON'T RUN)");
+    println("[A] before throw");
+    throw("boom");
+    println("[A] after throw (WON'T RUN)");
+    println("[A] after handler (WON'T RUN)");
     ()
 };
 
-discard println("[A] after calling case_a (WILL RUN)");
+println("[A] after calling case_a (WILL RUN)");
 
-discard println("");
+println("");
 
 // --------------------------------------------------
 // Case B：正确示范：用一个“显式子表达式”限制 handler 的 <expr>
 // 让 throw 只短路子表达式，后续还能继续
 // --------------------------------------------------
 
-discard println("=== Case B: limit <expr> with braces ===");
+println("=== Case B: limit <expr> with braces ===");
 
 // 这里 try_catch 的作用域只覆盖这个 delay{...}
 // 所以不会把 Case C 也一起吃掉
 let _b: any = try_catch(err: any => {
-    discard println("[B] caught: " + err);
+    println("[B] caught: " + err);
     "b_recovered"
 })(delay {
-    discard println("[B] before throw");
-    discard throw("boom");
-    discard println("[B] after throw (WON'T RUN)");
+    println("[B] before throw");
+    throw("boom");
+    println("[B] after throw (WON'T RUN)");
     "b_ok"
 });
 
-discard println("[B] after try_catch (WILL RUN)");
+println("[B] after try_catch (WILL RUN)");
 
-discard println("");
+println("");
 
 // --------------------------------------------------
 // Case C：同样的道理：只要用分号把边界切开
 // handler 即使不调用 continuation，也只会短路它包住的那段 <expr>
 // --------------------------------------------------
 
-discard println("=== Case C: discard { handle with ...; <expr> } ; next ===");
+println("=== Case C: { handle with ...; <expr> } ; next ===");
 
-discard {
+{
     handle with dyn_rec h: k: any => match
         | throw::(err: any) => {
-            discard println("[C] caught: " + err);
+            println("[C] caught: " + err);
         }
         | v: any => {
             let r: any = perform! v;
@@ -88,9 +88,9 @@ discard {
         }
         | panic;
 
-    discard println("[C] before throw");
-    discard throw("boom");
-    discard println("[C] after throw (WON'T RUN)");
+    println("[C] before throw");
+    throw("boom");
+    println("[C] after throw (WON'T RUN)");
 };
 
-discard println("[C] after discard-block (WILL RUN)");
+println("[C] after discard-block (WILL RUN)");

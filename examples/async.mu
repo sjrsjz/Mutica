@@ -52,7 +52,7 @@ let f: any = (x: nat, id: nat) => {
         println::(println: any)
     } = import "lib/string.mu";
     @yield ();
-    discard println("In f: " + nat_to_string(x) + ", id: " + nat_to_string(id));
+    println("In f: " + nat_to_string(x) + ", id: " + nat_to_string(id));
     @return x + 1;
 };
 

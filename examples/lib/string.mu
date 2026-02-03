@@ -13,15 +13,15 @@ let Nothing::(Nothing: any) = maybe_pkg;
 let String: any = List(char);
 
 let println: any = s: String => {
-    discard @iter c: char = s in {
-        discard print!(c);
+    @iter c: char = s in {
+        print!(c);
     };
-    discard print!('\n');
+    print!('\n');
 };
 
 let print: any = s: String => {
     @iter c: char = s in {
-        discard print!(c);
+        print!(c);
     }
 };
 

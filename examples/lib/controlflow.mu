@@ -13,7 +13,7 @@ let while: any = init: any => f: (lambda | v: never | panic) => {
 let while_condition: any = condition: any => body: (lambda | () | panic) => {
     loop go: assert () = ();
     if condition() then {
-        discard body();
+        body();
         go()
     } else ()
 };
@@ -31,7 +31,7 @@ let repeat: any = n: nat => f: (lambda | counter: nat | panic) => {
     match i
         | n => ()
         | _T: any => {
-            discard f(i);
+            f(i);
             go(i + 1)
         }
         | panic

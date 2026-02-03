@@ -16,7 +16,7 @@ let tick: any = s: nat => k: any =>
     k(s, s + 1);
 
 let program: any = {
-    discard (); // 封装作用域
+    (); // 封装作用域
     let next: any = bind;
     
     // 宏展开逻辑验证：
@@ -25,13 +25,13 @@ let program: any = {
     // 这匹配 bind(f)(m) 的签名
 
     let print_a_add_b: any = (a: nat, b: nat) => {
-        discard println("a: " + nat_to_string a);
-        discard println("b: " + nat_to_string b);
-        discard println("a + b: " + nat_to_string(a + b));
+        println("a: " + nat_to_string a);
+        println("b: " + nat_to_string b);
+        println("a + b: " + nat_to_string(a + b));
     };
 
     let v1: nat = #next tick;
-    discard print_a_add_b(#next tick, #next tick);
+    print_a_add_b(#next tick, #next tick);
     let (v2: nat, v3: nat) = (#next tick, #next tick);
     let v4: nat = #next tick;
     
@@ -42,9 +42,9 @@ let initial_state: nat = 10;
 
 // 终点 Continuation
 for (v1: nat, v2: nat, v3: nat, v4: nat) = program.eval(initial_state) in {
-    discard println("Initial State: 10");
-    discard println("v1: " + nat_to_string v1); // 10
-    discard println("v2: " + nat_to_string v2); // 13
-    discard println("v3: " + nat_to_string v3); // 14
-    discard println("v4: " + nat_to_string v4); // 15
+    println("Initial State: 10");
+    println("v1: " + nat_to_string v1); // 10
+    println("v2: " + nat_to_string v2); // 13
+    println("v3: " + nat_to_string v3); // 14
+    println("v4: " + nat_to_string v4); // 15
 }

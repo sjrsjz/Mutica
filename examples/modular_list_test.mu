@@ -6,7 +6,7 @@ let {
     Range::(Range: any) &
     Exact::(Exact: any)
 } = list_pkg;
-discard println!(Modular(nat, 3, 1));
+println!(Modular(nat, 3, 1));
 
 // 测试 Modular(nat, 3, 1) - 长度为 1, 4, 7, 10, ...
 let mod3_1_len1: any = (42,);
@@ -49,15 +49,15 @@ let check10: Greater(nat, 3) = greater3;
 let check11: Range(nat, 2, 5) = range2_5;
 let check12: Exact(nat, 4) = exact4;
 
-discard println!(check1);
-discard println!(check2);
-discard println!(check3);
-discard println!(check4);
-discard println!(check5);
-discard println!(check6);
-discard println!(check7);
-discard println!(check8);
-discard println!(check9);
-discard println!(check10);
-discard println!(check11);
-discard println!(check12);
+println!(check1);
+println!(check2);
+println!(check3);
+println!(check4);
+println!(check5);
+println!(check6);
+println!(check7);
+println!(check8);
+println!(check9);
+println!(check10);
+println!(check11);
+println!(check12);

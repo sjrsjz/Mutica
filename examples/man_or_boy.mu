@@ -18,7 +18,7 @@ let {
 let A: any = dyn_rec A: (k: int, x1: any, x2: any, x3: any, x4: any, x5: any) => {
     let k: any = mut k;
     let B: any = dyn_rec B: delay {
-        discard k := !k - Positive 1;
+        k := !k - Positive 1;
         A(!k, B, x1, x2, x3, x4)
     };
     if !k <= 0 then x4() + x5() else B()

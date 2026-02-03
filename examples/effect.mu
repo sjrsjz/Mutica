@@ -19,7 +19,7 @@ run delay {
     } = import "lib/string.mu";
     let a: nat = 10;
     let b: nat = 5;
-    discard println("Adding " + nat_to_string(a) + " and " + nat_to_string(b));
-    discard return a + b;
-    discard println("This will not be printed.");
+    println("Adding " + nat_to_string(a) + " and " + nat_to_string(b));
+    return a + b;
+    println("This will not be printed.");
 }

@@ -29,5 +29,5 @@ let print_result: any = res: Result(nat, String) =>
         | Ok::(x: nat) => println("Result: " + nat_to_string x)
         | Err::(e: String) => println("Error: " + e)
         | panic;
-discard print_result result1;
-discard print_result result2;
+print_result result1;
+print_result result2;

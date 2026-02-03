@@ -45,82 +45,82 @@ let {
 let test_list: any = cons(1, cons(2, cons(3, cons(4, cons(5, Nil)))));
 let true = test_list == (1, 2, 3, 4, 5); // 类型检查
 let print_int_list: any = lst: List(nat) => {
-    discard @iter x: nat = lst in {
-        discard print!(x);
-        discard print!(' ');
+    @iter x: nat = lst in {
+        print!(x);
+        print!(' ');
     };
-    discard print!('\n');
+    print!('\n');
 };
 
 // 测试 filter: 过滤出大于 2 的元素，期望结果: [3, 4, 5]
-discard print_int_list[filter(test_list)(x: nat => x > 2)];
+print_int_list[filter(test_list)(x: nat => x > 2)];
 
 // 测试 fold: 计算列表元素之和，期望结果: 15
-discard println![fold(test_list)(0)((acc: nat, x: nat) => acc + x)];
+println![fold(test_list)(0)((acc: nat, x: nat) => acc + x)];
 
 // 测试 foldr: 构建新列表，期望结果: [2, 4, 6, 8, 10]
-discard print_int_list[foldr(test_list)(Nil)((h: nat, acc: any) => cons(h * 2, acc))];
+print_int_list[foldr(test_list)(Nil)((h: nat, acc: any) => cons(h * 2, acc))];
 
 // 测试 append: 连接两个列表，期望结果: [1, 2, 3, 4]
 let list1: List(nat) = cons(1, cons(2, Nil));
 let list2: List(nat) = cons(3, cons(4, Nil));
-discard print_int_list[list1.append(list2)];
+print_int_list[list1.append(list2)];
 
 // 测试 reverse: 反转列表，期望结果: [5, 4, 3, 2, 1]
-discard print_int_list[reverse(test_list)];
+print_int_list[reverse(test_list)];
 
 // 测试 nth: 获取索引为 2 的元素，期望结果: 3
-discard println![test_list.nth(2)];
+println![test_list.nth(2)];
 
 // 测试 take: 取前 3 个元素，期望结果: [1, 2, 3]
-discard print_int_list[test_list.take(3)];
+print_int_list[test_list.take(3)];
 
 // 测试 drop: 丢弃前 2 个元素，期望结果: [3, 4, 5]
-discard print_int_list[test_list.drop(2)];
+print_int_list[test_list.drop(2)];
 
 // 测试 find: 查找第一个大于 3 的元素，期望结果: Just::4
-discard println![test_list.find(x: nat => x > 3)];
+println![test_list.find(x: nat => x > 3)];
 
 // 测试 find: 查找不存在的元素，期望结果: Nothing::()
-discard println![test_list.find(x: nat => x > 10)];
+println![test_list.find(x: nat => x > 10)];
 
 // 测试 allof: 检查是否所有元素都大于 0，期望结果: true
-discard println![test_list.allof(x: nat => x > 0)];
+println![test_list.allof(x: nat => x > 0)];
 
 // 测试 allof: 检查是否所有元素都大于 3，期望结果: false
-discard println![test_list.allof(x: nat => x > 3)];
+println![test_list.allof(x: nat => x > 3)];
 
 // 测试 anyof: 检查是否存在元素大于 4，期望结果: true
-discard println![test_list.anyof(x: nat => x > 4)];
+println![test_list.anyof(x: nat => x > 4)];
 
 // 测试 anyof: 检查是否存在元素小于 0，期望结果: false
-discard println![test_list.anyof(x: nat => x < 0)];
+println![test_list.anyof(x: nat => x < 0)];
 
 // 测试 map: 将所有元素乘以 2，期望结果: [2, 4, 6, 8, 10]
-discard print_int_list[test_list.list_map(x: nat => x * 2)];
+print_int_list[test_list.list_map(x: nat => x * 2)];
 
 // 测试 len: 获取列表长度，期望结果: 5
-discard println![len(test_list)];
+println![len(test_list)];
 
 // 组合测试: filter + map + fold
 // 找出所有偶数，乘以 3，然后求和，期望结果: (2 + 4) * 3 = 18
-discard println![{
+println![{
     let evens: any = filter(test_list)(x: nat => x % 2 == 0);
     let tripled: any = list_map(evens)(x: nat => x * 3);
     fold(tripled)(0)((acc: nat, x: nat) => acc + x)
 }];
 
 
-discard unwrap {
+unwrap {
     maybe_map(slice("Hello, Mutica!", 7, 13))(s: String => {
-        discard println(s); // 输出: Mutica
+        println(s); // 输出: Mutica
     })
 };
 
-discard println![String == List(char)];
+println![String == List(char)];
 
-discard println![$"op#lt".merge_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
-discard println![$"op#lt".quick_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
-discard println![$"op#lt".insert_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
+println![$"op#lt".merge_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
+println![$"op#lt".quick_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
+println![$"op#lt".insert_sort(test_list)]; // 期望结果: [1, 2, 3, 4, 5]
 
-discard 1234567890.nat_to_string.println; // 输出: "1234567890"
+1234567890.nat_to_string.println; // 输出: "1234567890"

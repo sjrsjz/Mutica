@@ -105,8 +105,8 @@ let inorder: any = tree: Tree(any, any) => f: (lambda | (k: never, v: never) | p
     match t
         | Empty::() => ()
         | Node::(_T: _, k: any, v: any, left: any, right: any) => {
-            discard go(left);
-            discard f(k, v);
+            go(left);
+            f(k, v);
             go(right)
         }
         | panic

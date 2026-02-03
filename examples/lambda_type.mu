@@ -1,4 +1,4 @@
-discard println! {
+println! {
     let 2 = match (x: nat => x + 1)
         | f: (lambda | x: char | panic) => f('A')
         | f: (lambda | x: nat | panic) => f(1)
@@ -11,7 +11,7 @@ discard println! {
     f == g, f != u, f != v, u is sub f, v is sub f, f is sub u, f is sub v
 };
 
-discard println! {
+println! {
     let U: any = A::();
     let V: any = A::() | B::();
     let X: any = C::() | D::();

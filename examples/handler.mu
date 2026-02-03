@@ -1,4 +1,4 @@
-discard {
+{
     let handler: any = dyn_rec handler: k: any => match
         | GetA::() => {
             handle with handler;
@@ -12,25 +12,25 @@ discard {
     handle z: nat = 1 with handler;
     let x: nat = perform! GetA::();
     let y: nat = perform! GetB::();
-    discard println!(x, y, z);
+    println!(x, y, z);
 };
 
-discard {
+{
     let {
         println::(println: any)
     } = import "lib/string.mu";
     handle with dyn_rec handler: k: any => match
         | throw::(v: any) => {
-            discard println("Caught throw with value: " + display! v);
+            println("Caught throw with value: " + display! v);
         }
         | debug::(v: any ~ payload: any) => {
-            discard println("Debug: " + v);
+            println("Debug: " + v);
             handle with handler;
             k payload
         }
         | panic;
     let (x: nat, y: nat) = perform! debug::("Performing debug for x", 2, 3);
-    discard println("Final values: " + display! x + ", " + display! y);
-    discard perform! throw::("An error occurred");
-    discard println("This line will not be reached.");
+    println("Final values: " + display! x + ", " + display! y);
+    perform! throw::("An error occurred");
+    println("This line will not be reached.");
 };

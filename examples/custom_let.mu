@@ -6,9 +6,9 @@ let {
 } = import "lib/string.mu";
 
 let debug_let: any = f: any => v: any => {
-    discard print("Debug let:");
-    discard print! v;
-    discard print! '\n';
+    print("Debug let:");
+    print! v;
+    print! '\n';
     f(v)
 };
 

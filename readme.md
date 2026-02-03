@@ -199,7 +199,7 @@ let print_chars: any = dyn_rec print_chars: str: List(char) =>
     match str
         | () => ()
         | (head: char ~ tail: any) => {
-            discard print!(head);
+            print!(head);
             print_chars(tail)
         }
         | panic;
@@ -264,7 +264,7 @@ let f: any = (x: nat, id: nat) => {
         println::(println: any)
     } = import "lib/string.mu";
     @yield ();
-    discard println("In f: " + nat_to_string(x) + ", id: " + nat_to_string(id));
+    println("In f: " + nat_to_string(x) + ", id: " + nat_to_string(id));
     @return x + 1;
 };
 

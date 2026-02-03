@@ -295,18 +295,18 @@ Mutica 允许用户使用自定义绑定，例如：
 
 自定义绑定最终会被脱糖为 `<binder>(<pattern> => <expression>)(<value>)` 的形式。这也意味着自定义绑定的 `<binder>` 必须是一个柯里化的高阶函数。
 
-### discard 语句
-Mutica 提供 `discard` 语句用于断言值为空元组（即 Unit）并不进行任何绑定，例如：
+### 纯粹副作用语句
+Mutica 提供纯粹副作用语句用于断言值为空元组（即 Unit）并不进行任何绑定，例如：
 
 ```mutica
-discard println! "Hello, Mutica!";
+println! "Hello, Mutica!";
 ```
 
-`discard` 语句的语法形式为 `discard <value>; <expression>`，其中 `<value>` 是要断言为空元组的值，`<expression>` 是后续表达式。
+语句的语法形式为 `<value>; <expression>`，其中 `<value>` 是要断言为空元组的值，`<expression>` 是后续表达式。
 
-`discard <value>; <expression>` 语句等效为 `let () = <value>; <expression>`。
+`<value>; <expression>` 语句等效为 `let () = <value>; <expression>`。
 
-由于 Mutica 不允许直接丢弃表达式结果，因此 `discard` 语句提供了一种简洁的方式来处理只有副作用而不需要结果的表达式。
+由于 Mutica 不允许直接丢弃有意义的表达式结果，因此纯粹副作用语句只能用于那些返回空元组的表达式，否则会导致运行时错误。
 
 ### if 表达式
 Mutica 支持命令式风格的 `if` 表达式，例如：
@@ -327,7 +327,7 @@ Mutica 支持命令式风格的 `for` 表达式，例如：
 
 ```mutica
 for i: nat = (1, 2, 3).iter in {
-    discard println! i;
+    println! i;
 }
 ```
 
@@ -342,7 +342,7 @@ Mutica 允许用户使用自定义的 `for` 表达式，例如：
 
 ```mutica
 @my_for i: nat = (1, 2, 3) in {
-    discard println! i;
+    println! i;
 }
 ```
 

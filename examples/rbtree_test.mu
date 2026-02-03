@@ -31,7 +31,7 @@ let main: any = assert () => {
     let tree: any = empty;
     
     // 插入一些键值对
-    discard println("插入元素: 10, 5, 15, 3, 7, 12, 17");
+    println("插入元素: 10, 5, 15, 3, 7, 12, 17");
     let tree1: any = insert(int_cmp)(tree)(10)("十");
     let tree2: any = insert(int_cmp)(tree1)(5)("五");
     let tree3: any = insert(int_cmp)(tree2)(15)("十五");
@@ -41,38 +41,38 @@ let main: any = assert () => {
     let tree7: any = insert(int_cmp)(tree6)(17)("十七");
     
     // 打印树的大小
-    discard print("树的大小: ");
-    discard print!(size(tree7));
-    discard print!('\n');
+    print("树的大小: ");
+    print!(size(tree7));
+    print!('\n');
     
     // 查找操作
-    discard print("查找键 7:");
+    print("查找键 7:");
     let result7: any = lookup(int_cmp)(tree7)(7);
-    discard match result7
+    match result7
         | Just::(v: any) => {
-            discard print("找到: ");
+            print("找到: ");
             println(v)
         }
         | assert Nothing::() => println("未找到")
         | panic;
     
     // 查找不存在的键
-    discard println("查找键 20:");
+    println("查找键 20:");
     let result20: any = lookup(int_cmp)(tree7)(20);
-    discard match result20
+    match result20
         | Just::(v: any) => {
-            discard print("找到: ");
+            print("找到: ");
             println(v)
         }
         | assert Nothing::() => println("未找到")
         | panic;
     
     // 中序遍历 (应该按升序输出)
-    discard println("中序遍历:");
-    discard for (k: nat, v: any) = inorder(tree7) in {
-        discard print("  键: ");
-        discard print!(k);
-        discard print(", 值: ");
+    println("中序遍历:");
+    for (k: nat, v: any) = inorder(tree7) in {
+        print("  键: ");
+        print!(k);
+        print(", 值: ");
         println(v)
     };
     

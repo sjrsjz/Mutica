@@ -48,20 +48,20 @@ let try_catch: any = handler: any => res: any =>
 
 // 1. Basic usage with @ syntax
 let test1: nat = try_catch(e: any => {
-    discard println("Error: " + e);
+    println("Error: " + e);
     0
 }) {
     @return 42;
 };
-discard println("Test 1 (return): " + nat_to_string(test1));
+println("Test 1 (return): " + nat_to_string(test1));
 
 let test2: nat = try_catch(e: any => {
-    discard println("Caught: " + e);
+    println("Caught: " + e);
     0
 }) {
     @throw "Something went wrong";
 };
-discard println("Test 2 (throw): " + nat_to_string(test2));
+println("Test 2 (throw): " + nat_to_string(test2));
 
 
 // 2. Using map and map_err
@@ -73,7 +73,7 @@ let computation: any = {
 let mapped_computation: any = map(computation)(x: nat => x * 2);
 
 let test3: nat = try_catch(_e: any => 0)(mapped_computation);
-discard println("Test 3 (map): " + nat_to_string(test3));
+println("Test 3 (map): " + nat_to_string(test3));
 
 
 // 3. Complex flow with and_then (chaining) using Syntax Sugar
@@ -90,11 +90,11 @@ let complex_calc: any =
         else to_throw("Result too small");
 
 let test4: nat = try_catch(e: any => {
-    discard println("Calc Error: " + e);
+    println("Calc Error: " + e);
     0
 })(complex_calc);
 
-discard println("Test 4 (sugar): " + nat_to_string(test4));
+println("Test 4 (sugar): " + nat_to_string(test4));
 
 // 3.1 Multi-step chaining (Do-notation)
 let chained_calc: any =
@@ -104,16 +104,16 @@ let chained_calc: any =
     to_return(c + 1); // 6
 
 let test_chain: nat = try_catch(e: any => 0)(chained_calc);
-discard println("Test Chain: " + nat_to_string(test_chain));
+println("Test Chain: " + nat_to_string(test_chain));
 
 
 // 4. Using map_err to transform errors
 let test5: nat = try_catch(e: any => {
-    discard println("Transformed Error: " + e);
+    println("Transformed Error: " + e);
     0
 })(
     map_err(
         divide(10, 0) // Err("Division by zero")
     )(e: any => "Math Error: " + e)
 );
-discard println("Test 5 (map_err): " + nat_to_string(test5));
+println("Test 5 (map_err): " + nat_to_string(test5));

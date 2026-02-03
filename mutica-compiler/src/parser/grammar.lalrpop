@@ -9,6 +9,7 @@ use crate::parser::calculate_full_error_span;
 use std::num::NonZero;
 use std::sync::Arc;
 use crate::parser::ast::GenericPattern;
+use crate::parser::ast::LineKind;
 use crate::parser::with_loc;
 use crate::parser::with_no_loc;
 grammar(source: &Arc<SourceFile>, colors: &mut Vec<TokenColor>);
@@ -38,7 +39,6 @@ extern {
         "DynamicRec"    => LexerToken::DynamicRec,
         "Loop"          => LexerToken::Loop,
         "Panic"         => LexerToken::Panic,
-        "Discard"       => LexerToken::Discard,
         "Nat"           => LexerToken::Nat,
         "Char"          => LexerToken::Char,
         "Float"         => LexerToken::Float,
@@ -184,7 +184,6 @@ RecTok: () = <l:@L> "Rec" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenC
 DynamicRecTok: () = <l:@L> "DynamicRec" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 LoopTok: () = <l:@L> "Loop" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 PanicTok: () = <l:@L> "Panic" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
-DiscardTok: () = <l:@L> "Discard" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 ImportTok: () = <l:@L> "Import" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 IfTok: () = <l:@L> "If" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 ThenTok: () = <l:@L> "Then" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
@@ -613,8 +612,8 @@ Lazy: WithLocation<TypeAst> = {
     },
 }
 
+// One or more key-value pairs
 DictItems: Vec<(WithLocation<String>, WithLocation<TypeAst>)> = {
-    <l:@L> <r:@R> => vec![],
     <l:@L> <key: Ident> ColonTok <value: Calculate> <r:@R> => {
         vec![(with_loc(key, source, l..r), value)]
     },
@@ -625,8 +624,11 @@ DictItems: Vec<(WithLocation<String>, WithLocation<TypeAst>)> = {
 }
 
 GenericVariables: Vec<(WithLocation<String>, WithLocation<TypeAst>)> = {
+    LBraceTok RBraceTok => vec![],
     LBraceTok <items: DictItems> RBraceTok => items,
+    LBracketTok RBracketTok => vec![],
     LBracketTok <items: DictItems> RBracketTok => items,
+    LParenTok RParenTok => vec![],
     LParenTok <items: DictItems> RParenTok => items,
     <l:@L> <key: Ident> ColonTok <value: Calculate> <r:@R> => vec![(with_loc(key, source, l..r), value)],
 }
@@ -892,8 +894,8 @@ MulDiv: WithLocation<TypeAst> = {
 
 
 Binding: (GenericPattern, WithLocation<TypeAst>) = {
-    // <branch: Generic> AssignTok <value: Type> => (branch, value)
-    <pattern: Primary> AssignTok <value: Type> => {
+    // <branch: Generic> AssignTok <value: Expression> => (branch, value)
+    <pattern: Primary> AssignTok <value: Expression> => {
         match pattern.value() {
             TypeAst::Generic(generic_pattern) => {
                 (generic_pattern.as_ref().clone().into(), value)
@@ -910,214 +912,74 @@ Binding: (GenericPattern, WithLocation<TypeAst>) = {
     }
 };
 
-Let: (GenericPattern, WithLocation<TypeAst>) = {
-    LetTok <binding: Binding> SemicolonTok => binding,
-}
-
-CustomLet: (WithLocation<String>, GenericPattern, WithLocation<TypeAst>) = {
-    AtTok <l:@L> <func: IdentAsMacro> <r:@R> <binding: Binding> SemicolonTok => {
-        (with_loc(func, source, l..r), binding.0, binding.1)
-    }
-}
-
-LetWithoutValue: WithLocation<TypeAst> = {
-    <l:@L> LetTok <branch: Generic> SemicolonTok <expr: Type> <r:@R> => {
-        with_loc(TypeAst::Match {
-            branches: vec![(branch, expr)],
-        }, source, l..r)
+// Statement represents a single line in a statement sequence (without trailing semicolon)
+Statement: LineKind = {
+    // expr
+    <e: Expression> => LineKind::SideEffect(e),
+    
+    // let pattern = value
+    LetTok <binding: Binding> => {
+        LineKind::Let(binding.0, binding.1)
+    },
+    
+    // let pattern
+    LetTok <branch: Generic> => {
+        LineKind::Declare(branch)
+    },
+    
+    // @func pattern = value
+    AtTok <l:@L> <func: IdentAsMacro> <r:@R> <binding: Binding> => {
+        LineKind::CustomLet(with_loc(func, source, l..r), binding.0, binding.1)
+    },
+    
+    // @func expr
+    AtTok <l:@L> <func: IdentAsMacro> <r:@R> <e: Expression> => {
+        LineKind::CustomSideEffect(with_loc(func, source, l..r), e)
+    },
+    
+    // extend label: value
+    ExtendTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <expr: Expression> => {
+        LineKind::Extend(with_loc(id, source, id_l..id_r), expr)
+    },
+    
+    // loop label: pattern = value
+    LoopTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <binding: Binding> => {
+        LineKind::Loop(with_loc(id, source, id_l..id_r), binding.0, binding.1)
+    },
+    
+    // handle pattern = value with handler
+    HandleTok <binding: Binding> WithTok <handler: Expression> => {
+        LineKind::HandleWithAndLet(binding.0, binding.1, handler)
+    },
+    
+    // handle with handler
+    HandleTok WithTok <handler: Expression> => {
+        LineKind::HandleWith(handler)
     },
 }
 
-// CustomLetWithoutValue: WithLocation<TypeAst> = {
-//     <l:@L> AtTok <f_l:@L> <custom_func: IdentAsMacro> <f_r:@R> <inner_l:@L> <branch: Generic> SemicolonTok <expr: Type> <inner_r:@R> <r:@R> => {
-//         with_loc(TypeAst::Apply {
-//             func: Box::new(with_loc(
-//                 TypeAst::Variable(with_loc(custom_func, source, f_l..f_r)),
-//                 source, f_l..f_r
-//             )),
-//             arg: Box::new(with_loc(TypeAst::Match {
-//                 branches: vec![(branch, expr)],
-//             }, source, inner_l..inner_r)),
-//             auto_cps: true,
-//         }, source, l..r)
-//     },
-// }
-
-
-ExtendDef: (WithLocation<String>, WithLocation<TypeAst>) = {
-    // extend label: extend_type;
-    ExtendTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <expr: Type> SemicolonTok => {
-        (
-            with_loc(
-                id,
-                source, id_l..id_r
-            ),
-            expr,
-        )
+// Statement sequence: a sequence of statements followed by a final expression
+// Semicolons are handled here, not in Statement
+// Returns (statements, final_expression)
+StatementSeq: (Vec<LineKind>, WithLocation<TypeAst>) = {
+    // Just a final expression with no statements
+    <e: Expression> => (vec![], e),
+    
+    // Statement; followed by rest of sequence
+    <stmt: Statement> SemicolonTok <rest: StatementSeq> => {
+        let mut stmts = vec![stmt];
+        stmts.extend(rest.0);
+        (stmts, rest.1)
     },
 }
-
-Discard: WithLocation<TypeAst> = {
-    DiscardTok <e: Type> SemicolonTok => {
-        e
-    },
-}
-
-CustomDiscard: (WithLocation<String>, WithLocation<TypeAst>) = {
-    AtTok <l:@L> <var: IdentAsMacro> <r:@R> <e: Type> SemicolonTok => {
-        (
-            with_loc(var, source, l..r),
-            e
-        )
-    },
-
-}
-
-Recursive: (WithLocation<String>, GenericPattern, WithLocation<TypeAst>) = {
-    // loop label: pattern = initialize_value;
-    <l:@L> LoopTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <binding: Binding> SemicolonTok <r:@R> => {
-        (with_loc(id, source, id_l..id_r), binding.0, binding.1)
-    },
-}
-
-Line: WithLocation<TypeAst> = {
-    <let_without_value: LetWithoutValue> => let_without_value,
-    //<custom_let_without_value: CustomLetWithoutValue> => custom_let_without_value, // conflicted
-    <l:@L> <let_expr: Let> <e: Type> <r:@R> => {
-        let (branch, binding_value) = let_expr;
-        with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Match {
-                branches: vec![(branch, e)],
-            }, source, l..r)),
-            arg: Box::new(binding_value),
-            auto_cps: true,
-        }, source, l..r)
-    },
-    <l:@L> <let_expr: CustomLet> <e: Type> <r:@R> => {
-        let (custom_func, branch, binding_value) = let_expr;
-        let func_span = custom_func.location().map(|loc| loc.span().clone()).unwrap_or(l..r);
-        // custom_func_var(pattern=>expr)(value)
-        with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Apply {
-                func: Box::new(with_loc(TypeAst::Variable(with_loc(custom_func.value().clone(), source, func_span.clone())), source, func_span)),
-                arg: Box::new(with_loc(TypeAst::Match {
-                    branches: vec![(branch, e)],
-                }, source, l..r)),
-                auto_cps: true,
-            }, source, l..r)),
-            arg: Box::new(binding_value),
-            auto_cps: true,
-        }, source, l..r)
-    },
-    <l:@L> <extend_expr: ExtendDef> <e: Type> <r:@R> => {
-        let branch = GenericPattern::Standard {
-            pattern: extend_expr.0.clone().map(|var| TypeAst::Variable(extend_expr.0.clone())),
-            constraint: vec![(extend_expr.0.clone(), with_no_loc(TypeAst::Wildcard))],
-        };
-        let binding_value = with_loc(
-            TypeAst::Apply {
-                func: Box::new(with_no_loc(
-                    TypeAst::Variable(with_no_loc("op#add".to_string())),
-                )),
-                arg: Box::new(with_no_loc(TypeAst::Tuple(vec![
-                    (extend_expr.1, NonZero::new(1).unwrap()),
-                    (extend_expr.0.clone().map(|var| TypeAst::Variable(extend_expr.0.clone())), NonZero::new(1).unwrap()),
-                ]))),
-                auto_cps: true,
-            },
-            source, l..r
-        );
-        with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Match {
-                branches: vec![(branch, e)],
-            }, source, l..r)),
-            arg: Box::new(binding_value),
-            auto_cps: true,
-        }, source, l..r)
-    },
-    <l:@L> <discard_expr: Discard> <e: Type> <r:@R> => {
-        let branch = GenericPattern::Standard {
-            pattern: with_no_loc(TypeAst::DiscardPattern),
-            constraint: vec![],
-        };
-        with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Match {
-                branches: vec![(branch, e)],
-            }, source, l..r)),
-            arg: Box::new(discard_expr),
-            auto_cps: true,
-        }, source, l..r)
-    },
-    <l:@L> <custom_discard_expr: CustomDiscard> <e: Type> <r:@R> => {
-        let (custom_func, discard_expr) = custom_discard_expr;
-        let func_span = custom_func.location().map(|loc| loc.span().clone()).unwrap_or(l..r);
-        let branch = GenericPattern::Standard {
-            pattern: with_no_loc(TypeAst::DiscardPattern),
-            constraint: vec![],
-        };
-        // custom_func_var(pattern=>expr)(value)
-        with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::Apply {
-                func: Box::new(with_loc(
-                    TypeAst::Variable(with_loc(custom_func.value().clone(), source, func_span.clone())),
-                    source, func_span
-                )),
-                arg: Box::new(with_loc(TypeAst::Match {
-                    branches: vec![(branch, e)],
-                }, source, l..r)),
-                auto_cps: true,
-            }, source, l..r)),
-            arg: Box::new(discard_expr),
-            auto_cps: true,
-        }, source, l..r)
-    },
-}
-
-Loop: WithLocation<TypeAst> = {
-    <l:@L> <rec_expr: Recursive> <e: Type> <r:@R> => {
-        let (id, branch, init) = rec_expr;
-        with_loc(TypeAst::Apply {
-            func: Box::new(with_loc(TypeAst::FixPoint {
-                param_name: id,
-                expr: Box::new(with_loc(TypeAst::Match {
-                    branches: vec![(branch, e)],
-                }, source, l..r)),
-            }, source, l..r)),
-            arg: Box::new(init),
-            auto_cps: true,
-        }, source, l..r)
-    },
-}
-
-HandleWith: WithLocation<TypeAst> = {
-    <l:@L> HandleTok <binding: Binding> WithTok <handler: Type> SemicolonTok <expr: Type> <r:@R> => {
-        let (branch, binding_value) = binding;
-        with_loc(TypeAst::HandleWith {
-            closure: Box::new(with_loc(TypeAst::Match {
-                branches: vec![(branch, expr)],
-            }, source, l..r)),
-            init_val: Box::new(binding_value),
-            handler: Box::new(handler),
-        }, source, l..r)
-    },
-    <l:@L> HandleTok WithTok <handler: Type> SemicolonTok <expr: Type> <r:@R> => {
-        with_loc(TypeAst::HandleWith {
-            closure: Box::new(with_loc(TypeAst::Match {
-                branches: vec![(GenericPattern::Standard {
-                    pattern: with_no_loc(TypeAst::DiscardPattern),
-                    constraint: vec![],
-                }, expr)],
-            }, source, l..r)),
-            init_val: Box::new(with_no_loc(TypeAst::DiscardPattern)),
-            handler: Box::new(handler),
-        }, source, l..r)
-    },
-}
-
 
 pub Type: WithLocation<TypeAst> = {
-    <h: HandleWith> => h,
-    <l: Loop> => l,
-    <l: Line> => l,
-    <e: Expression> => e,
+    <l:@L> <seq: StatementSeq> <r:@R> => {
+        let (stmts, final_expr) = seq;
+        if stmts.is_empty() {
+            final_expr
+        } else {
+            LineKind::desugar_lines(stmts, final_expr, source)
+        }
+    },
 }
