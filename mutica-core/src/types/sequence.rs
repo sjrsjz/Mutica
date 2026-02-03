@@ -145,9 +145,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                 Ok(ThreeValuedLogic::False)
                             }
                         }
-                        (SequenceType::Unit, SequenceType::Cons(_, cons)) => {
+                        (SequenceType::Unit, SequenceType::Cons(_, _)) => {
                             if v.is_prefix_empty() {
-                                self.check(cons.as_ref_dispatcher(), &mut inner_ctx)
+                                Err(TypeError::TypeMayCauseCircularReasoning(
+                                    v.clone().into_dispatcher().into(),
+                                ))
                             } else {
                                 Ok(ThreeValuedLogic::False)
                             }
@@ -184,6 +186,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             }
                         }
                         (SequenceType::NonEmptyTuple(_), SequenceType::Cons(_, cons)) => {
+                            if v.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    v.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.check_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -201,9 +208,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
                                     };
-                                    all &= test_true!(
-                                        viewed.check(cons.as_ref_dispatcher(), &mut inner_ctx)?
-                                    );
+                                    let pair = (viewed.tagged_ptr(), cons.tagged_ptr());
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
+                                        return Ok(ThreeValuedLogic::True);
+                                    }
+                                    inner_ctx.instance_assumptions.push(pair);
+                                    let result =
+                                        viewed.check(cons.as_ref_dispatcher(), &mut inner_ctx);
+                                    inner_ctx.instance_assumptions.pop();
+                                    all &= result?;
                                     Ok(all)
                                 }
                                 // (_, Some(_)) 说明 other 还有前缀未匹配完，self已经没有元素了，必然失败
@@ -252,6 +265,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         // Repeat可以去check Cons，因为Repeat的tail部分可以视为Cons，递归会详细处理，这样允许Cons尾部被设为Any来匹配无限长序列
                         // 这个是合理的，因为我们允许Any接受任意类型
                         (SequenceType::Repeat(_, _), SequenceType::Cons(_, r_cons)) => {
+                            if v.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    v.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.check_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -280,9 +298,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
                                     };
-                                    all &= test_true!(
-                                        viewed.check(r_cons.as_ref_dispatcher(), &mut inner_ctx)?
-                                    );
+                                    let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
+                                        return Ok(ThreeValuedLogic::True);
+                                    }
+                                    inner_ctx.instance_assumptions.push(pair);
+                                    let result =
+                                        viewed.check(r_cons.as_ref_dispatcher(), &mut inner_ctx);
+                                    inner_ctx.instance_assumptions.pop();
+                                    all &= result?;
                                     Ok(all)
                                 }
                                 (None, Some(_)) => {
@@ -294,17 +318,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             }
                         }
 
-                        (SequenceType::Cons(_, cons), SequenceType::Unit) => {
+                        (SequenceType::Cons(_, _), SequenceType::Unit) => {
                             if self.is_prefix_empty() {
-                                // 空的前缀才能匹配成功
-                                let unit = Self::unit_seq(None);
-                                cons.check(unit.as_ref_dispatcher(), &mut inner_ctx)
+                                Err(TypeError::TypeMayCauseCircularReasoning(
+                                    self.clone().into_dispatcher().into(),
+                                ))
                             } else {
                                 Ok(ThreeValuedLogic::False)
                             }
                         }
 
                         (SequenceType::Cons(_, cons), SequenceType::NonEmptyTuple(_)) => {
+                            if self.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    self.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.check_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -333,6 +362,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         }
 
                         (SequenceType::Cons(_, cons), SequenceType::Repeat(_, r_repeat)) => {
+                            if self.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    self.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.check_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -399,6 +433,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         }
 
                         (SequenceType::Cons(_, l_cons), SequenceType::Cons(_, r_cons)) => {
+                            if self.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    self.clone().into_dispatcher().into(),
+                                ));
+                            }
+                            if v.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    v.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.check_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -426,9 +470,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
                                     };
-                                    all &= test_true!(
-                                        viewed.check(r_cons.as_ref_dispatcher(), &mut inner_ctx)?
-                                    );
+                                    let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
+                                        return Ok(ThreeValuedLogic::True);
+                                    }
+                                    inner_ctx.instance_assumptions.push(pair);
+                                    let result =
+                                        viewed.check(r_cons.as_ref_dispatcher(), &mut inner_ctx);
+                                    inner_ctx.instance_assumptions.pop();
+                                    all &= result?;
                                     Ok(all)
                                 }
                                 _ => unreachable!(),
@@ -473,9 +523,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                 Ok(ThreeValuedLogic::False)
                             }
                         }
-                        (SequenceType::Unit, SequenceType::Cons(_, cons)) => {
+                        (SequenceType::Unit, SequenceType::Cons(_, _)) => {
                             if v.is_prefix_empty() {
-                                self.subof(cons.as_ref_dispatcher(), &mut inner_ctx)
+                                Err(TypeError::TypeMayCauseCircularReasoning(
+                                    v.clone().into_dispatcher().into(),
+                                ))
                             } else {
                                 Ok(ThreeValuedLogic::False)
                             }
@@ -512,6 +564,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             }
                         }
                         (SequenceType::NonEmptyTuple(_), SequenceType::Cons(_, cons)) => {
+                            if v.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    v.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -525,13 +582,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                 }
                                 (Some(seek), None) => {
                                     let viewed = Self {
-                                        ty: v.ty.clone(),
-                                        source_info: v.source_info.clone(),
-                                        offset: v.block_to_index(seek.0, seek.1),
+                                        ty: self.ty.clone(),
+                                        source_info: self.source_info.clone(),
+                                        offset: self.block_to_index(seek.0, seek.1),
                                     };
-                                    all &= test_true!(
-                                        viewed.subof(cons.as_ref_dispatcher(), &mut inner_ctx)?
-                                    );
+                                    let pair = (viewed.tagged_ptr(), cons.tagged_ptr());
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
+                                        return Ok(ThreeValuedLogic::True);
+                                    }
+                                    inner_ctx.instance_assumptions.push(pair);
+                                    let result =
+                                        viewed.subof(cons.as_ref_dispatcher(), &mut inner_ctx);
+                                    inner_ctx.instance_assumptions.pop();
+                                    all &= result?;
                                     Ok(all)
                                 }
                                 // (_, Some(_)) 说明 other 还有前缀未匹配完，self已经没有元素了，必然失败
@@ -577,6 +640,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         }
 
                         (SequenceType::Repeat(_, _), SequenceType::Cons(_, r_cons)) => {
+                            if v.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    v.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -604,9 +672,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
                                     };
-                                    all &= test_true!(
-                                        viewed.subof(r_cons.as_ref_dispatcher(), &mut inner_ctx)?
-                                    );
+                                    let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
+                                        return Ok(ThreeValuedLogic::True);
+                                    }
+                                    inner_ctx.instance_assumptions.push(pair);
+                                    let result =
+                                        viewed.subof(r_cons.as_ref_dispatcher(), &mut inner_ctx);
+                                    inner_ctx.instance_assumptions.pop();
+                                    all &= result?;
                                     Ok(all)
                                 }
                                 (None, Some(_)) => {
@@ -617,17 +691,22 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             }
                         }
 
-                        (SequenceType::Cons(_, cons), SequenceType::Unit) => {
+                        (SequenceType::Cons(_, _), SequenceType::Unit) => {
                             if self.is_prefix_empty() {
-                                // 空的前缀才能匹配成功
-                                let unit = Self::unit_seq(None);
-                                cons.subof(unit.as_ref_dispatcher(), &mut inner_ctx)
+                                Err(TypeError::TypeMayCauseCircularReasoning(
+                                    self.clone().into_dispatcher().into(),
+                                ))
                             } else {
                                 Ok(ThreeValuedLogic::False)
                             }
                         }
 
                         (SequenceType::Cons(_, cons), SequenceType::NonEmptyTuple(_)) => {
+                            if self.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    self.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -656,6 +735,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         }
 
                         (SequenceType::Cons(_, cons), SequenceType::Repeat(_, r_repeat)) => {
+                            if self.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    self.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -722,6 +806,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                         }
 
                         (SequenceType::Cons(_, l_cons), SequenceType::Cons(_, r_cons)) => {
+                            if self.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    self.clone().into_dispatcher().into(),
+                                ));
+                            }
+                            if v.is_prefix_empty() {
+                                return Err(TypeError::TypeMayCauseCircularReasoning(
+                                    v.clone().into_dispatcher().into(),
+                                ));
+                            }
                             let (mut all, self_seek, other_seek) =
                                 self.subof_prefix(v, &mut inner_ctx)?;
                             test_true!(all);
@@ -749,9 +843,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
                                     };
-                                    all &= test_true!(
-                                        viewed.subof(r_cons.as_ref_dispatcher(), &mut inner_ctx)?
-                                    );
+                                    let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
+                                    if inner_ctx.instance_assumptions.contains(&pair) {
+                                        return Ok(ThreeValuedLogic::True);
+                                    }
+                                    inner_ctx.instance_assumptions.push(pair);
+                                    let result =
+                                        viewed.subof(r_cons.as_ref_dispatcher(), &mut inner_ctx);
+                                    inner_ctx.instance_assumptions.pop();
+                                    all &= result?;
                                     Ok(all)
                                 }
                                 _ => unreachable!(),
@@ -894,18 +994,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Sequence<T> {
         } else {
             // offset 已经超出 prefix，或者是 Unit
             match &self.ty {
-                SequenceType::Unit => "Unit".to_string(),
+                SequenceType::Unit => "()".to_string(),
                 SequenceType::Repeat(_, tail) => {
                     // prefix 已经全部被跳过，只剩下 repeat 部分
-                    format!("(..{})", tail.represent(path, depth + 1, max_depth))
+                    format!("(!..{})", tail.represent(path, depth + 1, max_depth))
                 }
                 SequenceType::Cons(_, tail) => {
                     // prefix 已经全部被跳过，只剩下 cons 的 tail
-                    tail.represent(path, depth + 1, max_depth)
+                    format!("(!~{})", tail.represent(path, depth + 1, max_depth))
                 }
                 SequenceType::NonEmptyTuple(_) => {
                     // offset 超出了 tuple 的长度，这应该是空的
-                    "Unit".to_string()
+                    "()".to_string()
                 }
             }
         }

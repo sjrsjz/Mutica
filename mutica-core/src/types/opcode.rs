@@ -383,10 +383,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                                     ),
                                 ))),
                             },
+                            (Type::Lambda(l), Type::Lambda(r)) => match &self.kind {
+                                OpcodeKind::Add => Ok(l.clone().impls(r.clone(), ctx.source_info.cloned())?),
+                                _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                                    std::io::Error::other(
+                                        "Only 'Add' operation is supported for Lambda types",
+                                    ),
+                                ))),
+                            },
                             (l, r) => Err(TypeError::TypeMismatch(
                                 (
                                     Sequence::new_tuple(vec![l, r], self.source_info.clone()),
-                                    "(Finite Sequence, Finite Sequence) | (FloatValue, FloatValue) | (Closure, Closure) | (Tuple, Tuple)".into()
+                                    "(Finite Sequence, Finite Sequence) | (FloatValue, FloatValue) | (Closure, Closure) | (Lambda, Lambda) | (Tuple, Tuple)".into()
                                 )
                                     .into(),
                             )),

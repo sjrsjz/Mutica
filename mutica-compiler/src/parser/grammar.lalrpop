@@ -580,6 +580,10 @@ Tuple: WithLocation<TypeAst> = {
             head: vec![],
             tail: Box::new(repeat),
         }, source, l..r),
+    <l:@L> BangTok TildeTok <repeat: TupleElement> <r:@R> => with_loc(TypeAst::Cons {
+            head: vec![],
+            tail: Box::new(repeat),
+        }, source, l..r),
 }
 
 Expression: WithLocation<TypeAst> = {

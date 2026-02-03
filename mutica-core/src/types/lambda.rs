@@ -246,4 +246,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lambda<T> {
     pub fn patterns(&self) -> &[Constraint<T>] {
         self.patterns.as_ref()
     }
+
+    pub fn impls(
+        self,
+        other: Self,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        let mut new_patterns = self.patterns().to_vec();
+        new_patterns.extend_from_slice(other.patterns());
+
+        Ok(Lambda { patterns: ArcOpt::new(new_patterns), source_info }.dispatch())
+    }
 }

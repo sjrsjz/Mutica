@@ -385,6 +385,7 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     RuntimeError(Arc<dyn Error + Send + Sync>),
     OtherError(Box<str>),
     Perform(Box<U>),
+    TypeMayCauseCircularReasoning(Box<U>),
     #[doc(hidden)]
     Pandom(std::marker::PhantomData<V>),
 }
@@ -423,6 +424,9 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             }
             TypeError::MissingPerformHandler(ty) => {
                 write!(f, "Missing perform handler: {:?}", ty)
+            }
+            TypeError::TypeMayCauseCircularReasoning(ty) => {
+                write!(f, "Type may cause circular reasoning: {:?}", ty)
             }
             TypeError::ClosureNotReduced(ty) => write!(f, "Closure not reduced: {:?}", ty),
             TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
@@ -746,6 +750,32 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .with_label(
                             ariadne::Label::new(("<unknown>".to_string(), 0..0))
                                 .with_message("Type unresolvable"),
+                        )
+                        .finish()
+                }
+            }
+            TypeError::TypeMayCauseCircularReasoning(ty) => {
+                let ty_repr = ty.represent(&mut FastCycleDetector::new(), 0, 3);
+                if let Some(loc) = ty.source_info() {
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
+                    let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message(format!("Type may cause circular reasoning: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new((filepath, span))
+                                .with_message("This type may lead to circular reasoning here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message(format!("Type may cause circular reasoning: {}", ty_repr))
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Potential circular reasoning"),
                         )
                         .finish()
                 }
