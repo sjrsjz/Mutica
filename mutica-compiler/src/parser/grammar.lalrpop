@@ -447,7 +447,7 @@ IfElse: WithLocation<TypeAst> = {
 }
 
 Match: WithLocation<TypeAst> = {
-    <l:@L> MatchTok <value: Primary?> <inner_l:@L> <branches: MatchBranch*> <inner_r:@R> PipeTok PanicTok? <r:@R> => {
+    <l:@L> MatchTok <value: Primary?> <inner_l:@L> <branches: MatchBranch*> <inner_r:@R> PipeTok PanicTok <r:@R> => {
         match value {
             Some(v) => with_loc(TypeAst::Apply {
                 func: Box::new(with_loc(TypeAst::Match {
@@ -464,7 +464,7 @@ Match: WithLocation<TypeAst> = {
 }
 
 Lambda: WithLocation<TypeAst> = {
-    <l:@L> LambdaTok <inner_l:@L> <branches: LambdaBranch*> <inner_r:@R> PipeTok PanicTok? <r:@R> => with_loc(TypeAst::Lambda { patterns: branches }, source, l..r)
+    <l:@L> LambdaTok <inner_l:@L> <branches: LambdaBranch*> <inner_r:@R> PipeTok PanicTok <r:@R> => with_loc(TypeAst::Lambda { patterns: branches }, source, l..r)
 }
 
 ForIn: WithLocation<TypeAst> = {
