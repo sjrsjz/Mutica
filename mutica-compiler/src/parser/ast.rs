@@ -32,7 +32,7 @@ use mutica_core::types::{GcAllocObject, Type, TypeError};
 use mutica_core::util::rootstack::RootStack;
 use std::collections::HashMap;
 use std::num::NonZero;
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -82,15 +82,15 @@ impl Clone for GenericPattern {
 }
 
 pub enum LineKind {
-    SideEffect(WithLocation<TypeAst>),          // expr;
-    Let(GenericPattern, WithLocation<TypeAst>), // let pattern = expr;
-    Declare(GenericPattern),                    // let pattern;
-    CustomLet(WithLocation<String>, GenericPattern, WithLocation<TypeAst>), // @func pattern = expr;
-    CustomSideEffect(WithLocation<String>, WithLocation<TypeAst>), // @func expr;
-    Extend(WithLocation<String>, WithLocation<TypeAst>), // extend label: value;
-    Loop(WithLocation<String>, GenericPattern, WithLocation<TypeAst>), // loop label: pattern = value;
-    HandleWithAndLet(GenericPattern, WithLocation<TypeAst>, WithLocation<TypeAst>), // handle pattern = expr with handler;
-    HandleWith(WithLocation<TypeAst>), // handle with handler;
+    SideEffect(Range<usize>, WithLocation<TypeAst>), // expr;
+    Let(Range<usize>, GenericPattern, WithLocation<TypeAst>), // let pattern = expr;
+    Declare(Range<usize>, GenericPattern),           // let pattern;
+    CustomLet(Range<usize>, WithLocation<String>, GenericPattern, WithLocation<TypeAst>), // @func pattern = expr;
+    CustomSideEffect(Range<usize>, WithLocation<String>, WithLocation<TypeAst>), // @func expr;
+    Extend(Range<usize>, WithLocation<String>, WithLocation<TypeAst>), // extend label: value;
+    Loop(Range<usize>, WithLocation<String>, GenericPattern, WithLocation<TypeAst>), // loop label: pattern = value;
+    HandleWithAndLet(Range<usize>, GenericPattern, WithLocation<TypeAst>, WithLocation<TypeAst>), // handle pattern = expr with handler;
+    HandleWith(Range<usize>, WithLocation<TypeAst>), // handle with handler;
 }
 
 impl LineKind {
@@ -102,240 +102,163 @@ impl LineKind {
         source: &Arc<mutica_core::util::source_info::SourceFile>,
     ) -> WithLocation<TypeAst> {
         lines.into_iter().rfold(final_expr, |acc, line| {
-            let span = acc.location().map(|loc| loc.span().clone()).unwrap_or(0..0);
             match line {
                 // expr; rest  =>  (() => rest)(expr)
-                LineKind::SideEffect(expr) => {
-                    let expr_span =
-                        expr.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
+                LineKind::SideEffect(span, expr) => {
                     let branch = GenericPattern::Standard {
                         pattern: with_no_loc(TypeAst::DiscardPattern),
                         constraint: vec![],
                     };
                     with_loc(
                         TypeAst::Apply {
-                            func: Box::new(with_loc(
-                                TypeAst::Match { branches: vec![(branch, acc)] },
-                                source,
-                                span.clone(),
-                            )),
+                            func: Box::new(with_no_loc(TypeAst::Match {
+                                branches: vec![(branch, acc)],
+                            })),
                             arg: Box::new(expr),
                             auto_cps: true,
                         },
                         source,
-                        expr_span.start..span.end,
+                        span,
                     )
                 }
 
                 // let pattern = value; rest  =>  (pattern => rest)(value)
-                LineKind::Let(pattern, value) => {
-                    let value_span =
-                        value.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    with_loc(
-                        TypeAst::Apply {
-                            func: Box::new(with_loc(
-                                TypeAst::Match { branches: vec![(pattern, acc)] },
-                                source,
-                                span.clone(),
-                            )),
-                            arg: Box::new(value),
-                            auto_cps: true,
-                        },
-                        source,
-                        value_span.start..span.end,
-                    )
-                }
+                LineKind::Let(span, pattern, value) => with_loc(
+                    TypeAst::Apply {
+                        func: Box::new(with_no_loc(TypeAst::Match {
+                            branches: vec![(pattern, acc)],
+                        })),
+                        arg: Box::new(value),
+                        auto_cps: true,
+                    },
+                    source,
+                    span,
+                ),
 
                 // let pattern; rest  =>  pattern => rest
-                LineKind::Declare(pattern) => {
+                LineKind::Declare(span, pattern) => {
                     with_loc(TypeAst::Match { branches: vec![(pattern, acc)] }, source, span)
                 }
 
                 // @func pattern = value; rest  =>  func(pattern => rest)(value)
-                LineKind::CustomLet(func, pattern, value) => {
-                    let value_span =
-                        value.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    let func_span =
-                        func.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    with_loc(
-                        TypeAst::Apply {
-                            func: Box::new(with_loc(
-                                TypeAst::Apply {
-                                    func: Box::new(with_loc(
-                                        TypeAst::Variable(func.clone()),
-                                        source,
-                                        func_span.clone(),
-                                    )),
-                                    arg: Box::new(with_loc(
-                                        TypeAst::Match { branches: vec![(pattern, acc)] },
-                                        source,
-                                        span.clone(),
-                                    )),
-                                    auto_cps: true,
-                                },
-                                source,
-                                func_span.start..span.end,
-                            )),
-                            arg: Box::new(value),
+                LineKind::CustomLet(span, func, pattern, value) => with_loc(
+                    TypeAst::Apply {
+                        func: Box::new(with_no_loc(TypeAst::Apply {
+                            func: Box::new(with_no_loc(TypeAst::Variable(func.clone()))),
+                            arg: Box::new(with_no_loc(TypeAst::Match {
+                                branches: vec![(pattern, acc)],
+                            })),
                             auto_cps: true,
-                        },
-                        source,
-                        value_span.start..span.end,
-                    )
-                }
+                        })),
+                        arg: Box::new(value),
+                        auto_cps: true,
+                    },
+                    source,
+                    span,
+                ),
 
                 // @func expr; rest  =>  func(() => rest)(expr)
-                LineKind::CustomSideEffect(func, expr) => {
-                    let expr_span =
-                        expr.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    let func_span =
-                        func.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
+                LineKind::CustomSideEffect(span, func, expr) => {
                     let branch = GenericPattern::Standard {
                         pattern: with_no_loc(TypeAst::DiscardPattern),
                         constraint: vec![],
                     };
                     with_loc(
                         TypeAst::Apply {
-                            func: Box::new(with_loc(
-                                TypeAst::Apply {
-                                    func: Box::new(with_loc(
-                                        TypeAst::Variable(func.clone()),
-                                        source,
-                                        func_span.clone(),
-                                    )),
-                                    arg: Box::new(with_loc(
-                                        TypeAst::Match { branches: vec![(branch, acc)] },
-                                        source,
-                                        span.clone(),
-                                    )),
-                                    auto_cps: true,
-                                },
-                                source,
-                                func_span.start..span.end,
-                            )),
+                            func: Box::new(with_no_loc(TypeAst::Apply {
+                                func: Box::new(with_no_loc(TypeAst::Variable(func.clone()))),
+                                arg: Box::new(with_no_loc(TypeAst::Match {
+                                    branches: vec![(branch, acc)],
+                                })),
+                                auto_cps: true,
+                            })),
                             arg: Box::new(expr),
                             auto_cps: true,
                         },
                         source,
-                        expr_span.start..span.end,
+                        span,
                     )
                 }
 
                 // extend label: value; rest  =>  let label: any = label + value; rest
-                LineKind::Extend(label, value) => {
-                    let value_span =
-                        value.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    let label_span =
-                        label.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
+                LineKind::Extend(span, label, value) => {
                     let branch = GenericPattern::Standard {
                         pattern: label.clone().map(|_| TypeAst::Variable(label.clone())),
                         constraint: vec![(label.clone(), with_no_loc(TypeAst::Wildcard))],
                     };
-                    let binding_value = with_loc(
-                        TypeAst::Apply {
-                            func: Box::new(with_no_loc(TypeAst::Variable(with_no_loc(
-                                "op#add".to_string(),
-                            )))),
-                            arg: Box::new(with_no_loc(TypeAst::Tuple(vec![
-                                (value, NonZero::new(1).unwrap()),
-                                (
-                                    label.clone().map(|_| TypeAst::Variable(label.clone())),
-                                    NonZero::new(1).unwrap(),
-                                ),
-                            ]))),
-                            auto_cps: true,
-                        },
-                        source,
-                        value_span.clone(),
-                    );
+                    let binding_value = with_no_loc(TypeAst::Apply {
+                        func: Box::new(with_no_loc(TypeAst::Variable(with_no_loc(
+                            "op#add".to_string(),
+                        )))),
+                        arg: Box::new(with_no_loc(TypeAst::Tuple(vec![
+                            (value, NonZero::new(1).unwrap()),
+                            (
+                                label.clone().map(|_| TypeAst::Variable(label.clone())),
+                                NonZero::new(1).unwrap(),
+                            ),
+                        ]))),
+                        auto_cps: true,
+                    });
                     with_loc(
                         TypeAst::Apply {
-                            func: Box::new(with_loc(
-                                TypeAst::Match { branches: vec![(branch, acc)] },
-                                source,
-                                span.clone(),
-                            )),
+                            func: Box::new(with_no_loc(TypeAst::Match {
+                                branches: vec![(branch, acc)],
+                            })),
                             arg: Box::new(binding_value),
                             auto_cps: true,
                         },
                         source,
-                        label_span.start..span.end,
+                        span,
                     )
                 }
 
                 // loop label: pattern = value; rest  =>  fixpoint(label, pattern => rest)(value)
-                LineKind::Loop(label, pattern, value) => {
-                    let value_span =
-                        value.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    let label_span =
-                        label.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    with_loc(
-                        TypeAst::Apply {
-                            func: Box::new(with_loc(
-                                TypeAst::FixPoint {
-                                    param_name: label.clone(),
-                                    expr: Box::new(with_loc(
-                                        TypeAst::Match { branches: vec![(pattern, acc)] },
-                                        source,
-                                        span.clone(),
-                                    )),
-                                },
-                                source,
-                                label_span.clone(),
-                            )),
-                            arg: Box::new(value),
-                            auto_cps: true,
-                        },
-                        source,
-                        value_span.start..span.end,
-                    )
-                }
+                LineKind::Loop(span, label, pattern, value) => with_loc(
+                    TypeAst::Apply {
+                        func: Box::new(with_no_loc(TypeAst::FixPoint {
+                            param_name: label.clone(),
+                            expr: Box::new(with_no_loc(TypeAst::Match {
+                                branches: vec![(pattern, acc)],
+                            })),
+                        })),
+                        arg: Box::new(value),
+                        auto_cps: true,
+                    },
+                    source,
+                    span,
+                ),
 
                 // handle pattern = value with handler; rest
-                LineKind::HandleWithAndLet(pattern, value, handler) => {
-                    let value_span =
-                        value.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    with_loc(
-                        TypeAst::HandleWith {
-                            closure: Box::new(with_loc(
-                                TypeAst::Match { branches: vec![(pattern, acc)] },
-                                source,
-                                span.clone(),
-                            )),
-                            init_val: Box::new(value),
-                            handler: Box::new(handler),
-                        },
-                        source,
-                        value_span.start..span.end,
-                    )
-                }
+                LineKind::HandleWithAndLet(span, pattern, value, handler) => with_loc(
+                    TypeAst::HandleWith {
+                        closure: Box::new(with_no_loc(TypeAst::Match {
+                            branches: vec![(pattern, acc)],
+                        })),
+                        init_val: Box::new(value),
+                        handler: Box::new(handler),
+                    },
+                    source,
+                    span,
+                ),
 
                 // handle with handler; rest
-                LineKind::HandleWith(handler) => {
-                    let handler_span =
-                        handler.location().map(|loc| loc.span().clone()).unwrap_or(span.clone());
-                    with_loc(
-                        TypeAst::HandleWith {
-                            closure: Box::new(with_loc(
-                                TypeAst::Match {
-                                    branches: vec![(
-                                        GenericPattern::Standard {
-                                            pattern: with_no_loc(TypeAst::DiscardPattern),
-                                            constraint: vec![],
-                                        },
-                                        acc,
-                                    )],
+                LineKind::HandleWith(span, handler) => with_loc(
+                    TypeAst::HandleWith {
+                        closure: Box::new(with_no_loc(TypeAst::Match {
+                            branches: vec![(
+                                GenericPattern::Standard {
+                                    pattern: with_no_loc(TypeAst::DiscardPattern),
+                                    constraint: vec![],
                                 },
-                                source,
-                                span.clone(),
-                            )),
-                            init_val: Box::new(with_no_loc(TypeAst::DiscardPattern)),
-                            handler: Box::new(handler),
-                        },
-                        source,
-                        handler_span.start..span.end,
-                    )
-                }
+                                acc,
+                            )],
+                        })),
+                        init_val: Box::new(with_no_loc(TypeAst::DiscardPattern)),
+                        handler: Box::new(handler),
+                    },
+                    source,
+                    span,
+                ),
             }
         })
     }

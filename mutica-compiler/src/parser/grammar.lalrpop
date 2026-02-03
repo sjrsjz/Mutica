@@ -915,46 +915,46 @@ Binding: (GenericPattern, WithLocation<TypeAst>) = {
 // Statement represents a single line in a statement sequence (without trailing semicolon)
 Statement: LineKind = {
     // expr
-    <e: Expression> => LineKind::SideEffect(e),
+    <l:@L> <e: Expression> <r:@R> => LineKind::SideEffect(l..r, e),
     
     // let pattern = value
-    LetTok <binding: Binding> => {
-        LineKind::Let(binding.0, binding.1)
+    <l:@L> LetTok <binding: Binding> <r:@R> => {
+        LineKind::Let(l..r, binding.0, binding.1)
     },
     
     // let pattern
-    LetTok <branch: Generic> => {
-        LineKind::Declare(branch)
+    <l:@L> LetTok <branch: Generic> <r:@R> => {
+        LineKind::Declare(l..r, branch)
     },
     
     // @func pattern = value
-    AtTok <l:@L> <func: IdentAsMacro> <r:@R> <binding: Binding> => {
-        LineKind::CustomLet(with_loc(func, source, l..r), binding.0, binding.1)
+    <l:@L> AtTok <id_l:@L> <func: IdentAsMacro> <id_r:@R> <binding: Binding> <r:@R> => {
+        LineKind::CustomLet(l..r, with_loc(func, source, id_l..id_r), binding.0, binding.1)
     },
     
     // @func expr
-    AtTok <l:@L> <func: IdentAsMacro> <r:@R> <e: Expression> => {
-        LineKind::CustomSideEffect(with_loc(func, source, l..r), e)
+    <l:@L> AtTok <id_l:@L> <func: IdentAsMacro> <id_r:@R> <e: Expression> <r:@R> => {
+        LineKind::CustomSideEffect(l..r, with_loc(func, source, id_l..id_r), e)
     },
     
     // extend label: value
-    ExtendTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <expr: Expression> => {
-        LineKind::Extend(with_loc(id, source, id_l..id_r), expr)
+    <l:@L> ExtendTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <expr: Expression> <r:@R> => {
+        LineKind::Extend(l..r, with_loc(id, source, id_l..id_r), expr)
     },
     
     // loop label: pattern = value
-    LoopTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <binding: Binding> => {
-        LineKind::Loop(with_loc(id, source, id_l..id_r), binding.0, binding.1)
+    <l:@L> LoopTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <binding: Binding> <r:@R> => {
+        LineKind::Loop(l..r, with_loc(id, source, id_l..id_r), binding.0, binding.1)
     },
     
     // handle pattern = value with handler
-    HandleTok <binding: Binding> WithTok <handler: Expression> => {
-        LineKind::HandleWithAndLet(binding.0, binding.1, handler)
+    <l:@L> HandleTok <binding: Binding> WithTok <handler: Expression> <r:@R> => {
+        LineKind::HandleWithAndLet(l..r, binding.0, binding.1, handler)
     },
     
     // handle with handler
-    HandleTok WithTok <handler: Expression> => {
-        LineKind::HandleWith(handler)
+    <l:@L> HandleTok WithTok <handler: Expression> <r:@R> => {
+        LineKind::HandleWith(l..r, handler)
     },
 }
 
