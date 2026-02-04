@@ -328,7 +328,6 @@ Term: WithLocation<TypeAst> = {
     LParenTok <t: Type> RParenTok => t,
     LBracketTok <t: Type> RBracketTok => t,
     LBraceTok <t: Type> RBraceTok => t,
-    <sub: SubOf> => sub,
     <np: Namespace> => np,
     <a: AtomType> => a,
     <d: Delay> => d,
@@ -361,7 +360,7 @@ Namespace: WithLocation<TypeAst> = {
 }
 
 SubOf: WithLocation<TypeAst> = {
-    <l:@L> SubOfTok <t: Term> <r:@R> => {
+    <l:@L> SubOfTok <t: Factor> <r:@R> => {
         with_loc(TypeAst::SubOf {
             value: Box::new(t),
         }, source, l..r)
@@ -701,6 +700,7 @@ Factor: WithLocation<TypeAst> = {
     <bind: AutoBind> => bind,
     <c: CpsApply> => c,
     <a: Apply> => a,
+    <sub: SubOf> => sub,
 }
 
 

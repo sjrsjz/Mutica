@@ -623,17 +623,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     }
                                     Ok(all)
                                 }
-                                (None, mut seek @ Some(_)) => {
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_other = &v.physical_prefix()[cursor].0;
-                                        all &=
-                                            test_true!(l_repeat.subof(
-                                                ty_other.as_ref_dispatcher(),
-                                                &mut inner_ctx
-                                            )?);
-                                        seek = v.next_block(cursor);
-                                    }
-                                    Ok(all)
+                                (None, Some(_)) => {
+                                    // while let Some((cursor, _)) = seek {
+                                    //     let ty_other = &v.physical_prefix()[cursor].0;
+                                    //     all &=
+                                    //         test_true!(l_repeat.subof(
+                                    //             ty_other.as_ref_dispatcher(),
+                                    //             &mut inner_ctx
+                                    //         )?);
+                                    //     seek = v.next_block(cursor);
+                                    // }
+                                    // Ok(all)
+                                    Ok(ThreeValuedLogic::False) // LHS为None的时候，无法匹配非空的RHS前缀
                                 }
                                 _ => unreachable!(),
                             }
