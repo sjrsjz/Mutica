@@ -530,7 +530,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         let branch = ClosureBranch {
             capture_env: CaptureEnv::Solved(SmallVec::new()),
             pattern: Constraint::new_constraint(
-                Pattern::<T>::new(bind_name.clone(), None),
+                Pattern::<T>::new(bind_name.clone(), AllOf::unknown(None), None),
                 vec![(bind_name, AllOf::unknown(None))],
                 env,
                 None,

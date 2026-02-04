@@ -108,6 +108,9 @@ impl<'ast> SourceMapping<'ast> {
             LinearTypeAst::Namespace { expr, .. } => {
                 Self::build_mapping(expr, mapping, source_file);
             }
+            LinearTypeAst::Bind { expr, .. } => {
+                Self::build_mapping(expr, mapping, source_file);
+            }
             LinearTypeAst::Generic { expr, constraint, .. } => {
                 for (_, expr) in constraint {
                     Self::build_mapping(expr, mapping, source_file);

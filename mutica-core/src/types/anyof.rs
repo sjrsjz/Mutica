@@ -298,6 +298,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AnyOf<T> {
         if depth > max_depth {
             return "...".to_string();
         }
+        if self.types.is_empty() {
+            return "Never".to_string();
+        }
         let mut result = String::new();
         result.push_str("Any<");
         for (i, sub) in self.types.iter().enumerate() {

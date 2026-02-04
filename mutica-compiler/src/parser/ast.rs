@@ -25,12 +25,13 @@ use mutica_core::types::namespace::Namespace;
 use mutica_core::types::natural_number::NaturalNumber;
 use mutica_core::types::natural_number_set::NaturalNumberSet;
 use mutica_core::types::opcode::{Opcode, OpcodeKind};
+use mutica_core::types::pattern::Pattern;
 use mutica_core::types::sequence::Sequence;
 use mutica_core::types::subof::SubOf;
 use mutica_core::types::unify::capture_env::{CaptureEnv, CaptureEnvList, CaptureOrigin};
 use mutica_core::types::{GcAllocObject, Type, TypeError};
 use mutica_core::util::rootstack::RootStack;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 use std::ops::{Deref, Range};
 use std::path::PathBuf;
@@ -183,7 +184,10 @@ impl LineKind {
                 // extend label: value; rest  =>  let label: any = label + value; rest
                 LineKind::Extend(span, label, value) => {
                     let branch = GenericPattern::Standard {
-                        pattern: label.clone().map(|_| TypeAst::Variable(label.clone())),
+                        pattern: label.clone().map(|_| TypeAst::Bind {
+                            var: label.clone(),
+                            expr: with_no_loc(TypeAst::Wildcard).into(),
+                        }),
                         constraint: vec![(label.clone(), with_no_loc(TypeAst::Wildcard))],
                     };
                     let binding_value = with_no_loc(TypeAst::Apply {
@@ -660,7 +664,14 @@ impl LinearizeResult {
                         auto_captures: HashMap::new(),
                         branches: vec![(
                             WithLocation::new(
-                                LinearTypeAst::Variable(tmpvar.clone()),
+                                LinearTypeAst::Bind {
+                                    var: tmpvar.clone(),
+                                    expr: WithLocation::new(
+                                        LinearTypeAst::AllOf(vec![]),
+                                        None::<&SourceLocation>,
+                                    )
+                                    .into(),
+                                },
                                 None::<&SourceLocation>,
                             ),
                             vec![(
@@ -700,7 +711,14 @@ impl LinearizeResult {
                                 auto_captures: HashMap::new(),
                                 branches: vec![(
                                     WithLocation::new(
-                                        LinearTypeAst::Variable(tmpvar.clone()),
+                                        LinearTypeAst::Bind {
+                                            var: tmpvar.clone(),
+                                            expr: WithLocation::new(
+                                                LinearTypeAst::AllOf(vec![]),
+                                                None::<&SourceLocation>,
+                                            )
+                                            .into(),
+                                        },
                                         None::<&SourceLocation>,
                                     ),
                                     vec![(
@@ -742,7 +760,17 @@ impl LinearizeResult {
                     LinearTypeAst::Match {
                         auto_captures: HashMap::new(),
                         branches: vec![(
-                            res_var, // pattern
+                            WithLocation::new(
+                                LinearTypeAst::Bind {
+                                    var: res_name.clone(),
+                                    expr: WithLocation::new(
+                                        LinearTypeAst::AllOf(vec![]),
+                                        None::<&SourceLocation>,
+                                    )
+                                    .into(),
+                                },
+                                None::<&SourceLocation>,
+                            ),
                             vec![(
                                 res_name.clone(),
                                 WithLocation::new(
@@ -789,8 +817,14 @@ impl BasicTypeAst {
         let result = match self {
             BasicTypeAst::Bind { var, expr } => {
                 let (new_expr, mut binds) = expr.auto_bind();
-                binds.push((var.clone(), new_expr));
-                (WithLocation::new(BasicTypeAst::Variable(var.clone()), var.location()), binds)
+                binds.push((var.clone(), with_no_loc(BasicTypeAst::AllOf(vec![])))); // 添加约束为 Unknown（因为 Bind 自带简单约束）
+                (
+                    WithLocation::new(
+                        BasicTypeAst::Bind { var: var.clone(), expr: new_expr.into() },
+                        var.location(),
+                    ),
+                    binds,
+                )
             }
             BasicTypeAst::Range { ty, min, delta } => {
                 let (new_ty, binds) = ty.auto_bind();
@@ -900,21 +934,17 @@ impl BasicTypeAst {
                 )
             }
             BasicTypeAst::Match { branches } => {
-                let mut binds = Vec::new();
                 let new_branches = branches
                     .into_iter()
                     .map(|(b, expr)| match b {
                         BasicGenericPattern::Standard { pattern, constraint } => {
-                            let (new_pattern, a) = pattern.auto_bind();
-                            binds.extend(a);
-                            let mut new_constraints = Vec::new();
+                            let (new_pattern, additional) = pattern.auto_bind();
+                            let mut new_constraints = additional;
                             for (name, ctype) in constraint {
-                                let (new_ctype, ac) = ctype.auto_bind();
-                                binds.extend(ac);
+                                let (new_ctype, _) = ctype.auto_bind();
                                 new_constraints.push((name, new_ctype));
                             }
-                            let (new_expr, a) = expr.auto_bind();
-                            binds.extend(a);
+                            let (new_expr, _) = expr.auto_bind();
                             (
                                 BasicGenericPattern::Standard {
                                     pattern: new_pattern,
@@ -925,26 +955,22 @@ impl BasicTypeAst {
                         }
                         BasicGenericPattern::AutoBind { pattern } => {
                             let standard_pattern = Self::convert_auto_bind_to_standard(pattern);
-                            let (new_expr, a) = expr.auto_bind();
-                            binds.extend(a);
+                            let (new_expr, _) = expr.auto_bind();
                             (standard_pattern, new_expr)
                         }
                     })
                     .collect();
-                (WithLocation::new(BasicTypeAst::Match { branches: new_branches }, loc), binds)
+                (WithLocation::new(BasicTypeAst::Match { branches: new_branches }, loc), Vec::new())
             }
             BasicTypeAst::Lambda { patterns } => {
-                let mut binds = Vec::new();
                 let new_patterns = patterns
                     .into_iter()
                     .map(|b| match b {
                         BasicGenericPattern::Standard { pattern, constraint } => {
-                            let (new_pattern, a) = pattern.auto_bind();
-                            binds.extend(a);
-                            let mut new_constraints = Vec::new();
+                            let (new_pattern, additional) = pattern.auto_bind();
+                            let mut new_constraints = additional;
                             for (name, ctype) in constraint {
-                                let (new_ctype, ac) = ctype.auto_bind();
-                                binds.extend(ac);
+                                let (new_ctype, _) = ctype.auto_bind();
                                 new_constraints.push((name, new_ctype));
                             }
 
@@ -958,7 +984,10 @@ impl BasicTypeAst {
                         }
                     })
                     .collect();
-                (WithLocation::new(BasicTypeAst::Lambda { patterns: new_patterns }, loc), binds)
+                (
+                    WithLocation::new(BasicTypeAst::Lambda { patterns: new_patterns }, loc),
+                    Vec::new(),
+                )
             }
             BasicTypeAst::Apply { func, arg, handler, auto_cps } => {
                 let (new_func, mut binds) = func.auto_bind();
@@ -996,8 +1025,8 @@ impl BasicTypeAst {
             }
             BasicTypeAst::Generic(inner) => match *inner {
                 BasicGenericPattern::Standard { pattern, constraint } => {
-                    let (new_pattern, _) = pattern.auto_bind();
-                    let mut new_constraints = Vec::new();
+                    let (new_pattern, additional) = pattern.auto_bind();
+                    let mut new_constraints = additional; // 合并约束
                     for (name, ctype) in constraint {
                         let (new_ctype, _) = ctype.auto_bind();
                         new_constraints.push((name, new_ctype));
@@ -1330,12 +1359,13 @@ impl BasicTypeAst {
                 };
                 LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
-            BasicTypeAst::Bind { .. } => {
-                errors.push(WithLocation::new(
-                    ParseError::AstNotDesugared(WithLocation::new(self.clone(), loc)),
-                    loc,
-                ));
-                LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Tuple(vec![]), loc))
+            BasicTypeAst::Bind { var, expr } => {
+                let expr = expr.linearize(ctx, errors, expr.location());
+                let ty = LinearTypeAst::Bind {
+                    var: var.clone(),
+                    expr: Box::new(expr.tail_type().clone()),
+                };
+                LinearizeResult::new_with_binding(expr.bindings, WithLocation::new(ty, loc))
             }
         }
     }
@@ -1394,7 +1424,11 @@ pub enum LinearTypeAst {
     NaturalNumberLiteral(usize),
     FloatLiteral(f64),
     CharLiteral(char),
-    Variable(WithLocation<String>), // None 表示续体
+    Variable(WithLocation<String>),
+    Bind {
+        var: WithLocation<String>,
+        expr: Box<WithLocation<LinearTypeAst, FlowedMetaData>>,
+    },
     Tuple(Vec<(WithLocation<LinearTypeAst, FlowedMetaData>, NonZero<usize>)>),
     List {
         head: Vec<(WithLocation<LinearTypeAst, FlowedMetaData>, NonZero<usize>)>,
@@ -1460,6 +1494,9 @@ impl Clone for LinearTypeAst {
             LinearTypeAst::FloatLiteral(f) => LinearTypeAst::FloatLiteral(*f),
             LinearTypeAst::CharLiteral(c) => LinearTypeAst::CharLiteral(*c),
             LinearTypeAst::Variable(s) => LinearTypeAst::Variable(s.clone()),
+            LinearTypeAst::Bind { var, expr } => {
+                LinearTypeAst::Bind { var: var.clone(), expr: expr.clone() }
+            }
             LinearTypeAst::Tuple(v) => LinearTypeAst::Tuple(v.clone()),
             LinearTypeAst::List { head, tail } => {
                 LinearTypeAst::List { head: head.clone(), tail: tail.clone() }
@@ -1692,7 +1729,14 @@ impl TypeAst {
                         branches: vec![(
                             BasicGenericPattern::Standard {
                                 pattern: WithLocation::new(
-                                    BasicTypeAst::Variable(param_name.clone()),
+                                    BasicTypeAst::Bind {
+                                        var: param_name.clone(),
+                                        expr: WithLocation::new(
+                                            BasicTypeAst::AllOf(vec![]),
+                                            None::<&SourceLocation>,
+                                        )
+                                        .into(),
+                                    },
                                     loc,
                                 ),
                                 constraint: vec![(
@@ -2161,6 +2205,17 @@ impl LinearTypeAst {
                 WithLocation::new(LinearTypeAst::CharLiteral(*v), loc)
                     .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture())),
             ),
+            LinearTypeAst::Bind { var, expr } => {
+                let expr_res = expr.flow(ctx, expr.location(), errors);
+                FlowResult::complex(
+                    WithLocation::new(
+                        LinearTypeAst::Bind { var: var.clone(), expr: Box::new(expr_res.ty) },
+                        loc,
+                    ),
+                    expr_res.captures,
+                )
+                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
+            }
             LinearTypeAst::Variable(name) => match ctx.use_variable(name) {
                 Ok((var_loc, outgoing)) => {
                     let mut captures = HashMap::new();
@@ -2337,7 +2392,10 @@ impl LinearTypeAst {
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
             LinearTypeAst::Generic { expr, constraint } => {
-                ctx.enter_generic_scope();
+                let mut captures = HashMap::new();
+                let expr_res = expr.flow(ctx, expr.location(), errors);
+                captures.extend(expr_res.captures);
+                ctx.enter_generic_scope(true);
                 for (name, _) in constraint {
                     ctx.declare_variable(name.clone())
                         .unwrap_or_else(|e| match e {
@@ -2358,12 +2416,6 @@ impl LinearTypeAst {
                             }
                         });
                 }
-                let mut captures = HashMap::new();
-                let mut expr_res = expr.flow(ctx, expr.location(), errors);
-                for (name, _) in constraint {
-                    expr_res.captures.remove(name.as_str()); // 移除掉泛型变量，因为它们不是自由变量
-                }
-                captures.extend(expr_res.captures);
                 let mut flowed_constraints = Vec::new();
                 for (name, constraint_ty) in constraint {
                     let mut constraint_res =
@@ -2402,7 +2454,7 @@ impl LinearTypeAst {
             }
             LinearTypeAst::StaticFixPoint { param_name, expr } => {
                 // 静态不动点类型的处理与普通不动点类型类似，但需要在ctx中声明param_name
-                ctx.enter_fixpoint_scope(param_name.clone());
+                ctx.enter_fixpoint_scope(param_name.clone(), false);
                 let expr_res = expr.flow(ctx, expr.location(), errors);
                 match ctx.exit_scope() {
                     Ok(_) => {}
@@ -2436,8 +2488,10 @@ impl LinearTypeAst {
                 let mut all_captures = HashMap::new();
                 let mut all_body_captures = HashMap::new();
                 for (pattern, constraints, body) in branches {
+                    let pattern_res = pattern.flow(ctx, pattern.location(), errors);
+                    let mut flowed_constraints = Vec::new();
                     // 第一个作用域：处理模式和约束类型
-                    ctx.enter_generic_scope();
+                    ctx.enter_generic_scope(true);
                     for (name, _) in constraints {
                         match ctx.declare_variable(name.clone()) {
                             Ok(_) => {}
@@ -2458,9 +2512,6 @@ impl LinearTypeAst {
                             }
                         }
                     }
-
-                    let mut pattern_res = pattern.flow(ctx, pattern.location(), errors);
-                    let mut flowed_constraints = Vec::new();
                     for (name, ctype) in constraints {
                         let mut ctype_res = ctype.flow(ctx, ctype.location(), errors);
                         for (name, _) in constraints {
@@ -2468,10 +2519,6 @@ impl LinearTypeAst {
                         }
                         flowed_constraints.push((name.clone(), ctype_res.ty));
                         all_captures.extend(ctype_res.captures.clone());
-                    }
-
-                    for (name, _) in constraints {
-                        pattern_res.captures.remove(name.value());
                     }
                     all_captures.extend(pattern_res.captures);
 
@@ -2492,27 +2539,7 @@ impl LinearTypeAst {
                     }
 
                     // 第二个作用域：处理主体（重新声明变量 + auto_captures）
-                    ctx.enter_scope();
-                    for (name, _) in constraints {
-                        match ctx.declare_variable(name.clone()) {
-                            Ok(_) => {}
-                            Err(ContextError::EmptyContext) => {
-                                panic!(
-                                    "Internal error: Context should not be empty when declaring a variable"
-                                );
-                            }
-                            Err(ContextError::NotDeclared(_)) => unreachable!(),
-                            Err(ContextError::NotUsed(v)) => {
-                                errors.push(WithLocation::new(
-                                    ParseError::UnusedVariable(
-                                        WithLocation::new(self.clone(), name.location()),
-                                        v,
-                                    ),
-                                    loc,
-                                ));
-                            }
-                        }
-                    }
+                    ctx.enter_function_scope(false);
                     for (var, var_loc) in auto_captures {
                         match ctx.declare_variable(var_loc.clone().map(|_| var.clone())) {
                             Ok(_) => {}
@@ -2526,6 +2553,32 @@ impl LinearTypeAst {
                                 errors.push(WithLocation::new(
                                     ParseError::UnusedVariable(
                                         WithLocation::new(self.clone(), var_loc.location()),
+                                        v,
+                                    ),
+                                    loc,
+                                ));
+                            }
+                        }
+                    }
+                    let mut declared_names = HashSet::new();
+                    for (name, _) in constraints {
+                        match ctx.declare_variable(name.clone()) {
+                            Ok(_) => {
+                                declared_names.insert(name.value().clone());
+                            }
+                            Err(ContextError::EmptyContext) => {
+                                panic!(
+                                    "Internal error: Context should not be empty when declaring a variable"
+                                );
+                            }
+                            Err(ContextError::NotDeclared(_)) => unreachable!(),
+                            Err(ContextError::NotUsed(v)) => {
+                                if declared_names.contains(name.value()) {
+                                    continue; // 防止约束重定义的多次警告
+                                }
+                                errors.push(WithLocation::new(
+                                    ParseError::UnusedVariable(
+                                        WithLocation::new(self.clone(), name.location()),
                                         v,
                                     ),
                                     loc,
@@ -2575,8 +2628,9 @@ impl LinearTypeAst {
                 let mut new_patterns = Vec::new();
                 let mut all_captures = HashMap::new();
                 for (pattern, constraints) in patterns {
+                    let pattern_res = pattern.flow(ctx, pattern.location(), errors);
                     // 第一个作用域：处理模式和约束类型
-                    ctx.enter_generic_scope();
+                    ctx.enter_generic_scope(true);
                     for (name, _) in constraints {
                         match ctx.declare_variable(name.clone()) {
                             Ok(_) => {}
@@ -2597,8 +2651,6 @@ impl LinearTypeAst {
                             }
                         }
                     }
-
-                    let mut pattern_res = pattern.flow(ctx, pattern.location(), errors);
                     let mut flowed_constraints = Vec::new();
                     for (name, ctype) in constraints {
                         let mut ctype_res = ctype.flow(ctx, ctype.location(), errors);
@@ -2607,10 +2659,6 @@ impl LinearTypeAst {
                         }
                         flowed_constraints.push((name.clone(), ctype_res.ty));
                         all_captures.extend(ctype_res.captures.clone());
-                    }
-
-                    for (name, _) in constraints {
-                        pattern_res.captures.remove(name.value());
                     }
                     all_captures.extend(pattern_res.captures);
 
@@ -2759,6 +2807,14 @@ impl LinearTypeAst {
                         var.clone(),
                     )))
                 }
+            }
+            LinearTypeAst::Bind { var, expr } => {
+                let expr_type = expr.to_type(ctx, gc, roots, expr.location())?;
+                Ok(BuildResult::simple(Pattern::new(
+                    var.value().clone(),
+                    &expr_type.ty,
+                    loc.cloned().map(Arc::new),
+                )))
             }
             LinearTypeAst::Tuple(basic_type_asts) => {
                 let mut types = Vec::new();

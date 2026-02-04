@@ -4,45 +4,49 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
-        InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
-        Type, TypeCheckContext, TypeError, TypeRef,
+        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
+        GcAllocObject, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
+        TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
     },
-    util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
+    util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Pattern<T: GcAllocObject<T, Inner = Type<T>>> {
     bind_name: Arc<str>,
+    expr: ArcOpt<Type<T>>,
     source_info: Option<Arc<SourceLocation>>,
-    _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Pattern<T> {
     fn clone(&self) -> Self {
         Self {
             bind_name: self.bind_name.clone(),
+            expr: self.expr.clone(),
             source_info: self.source_info.clone(),
-            _phantom: std::marker::PhantomData,
         }
     }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Pattern<T> {
-    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
+        self.expr.collect(queue);
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Pattern<T> {
-    fn upgrade(&self, _collected: &mut Vec<GCArc<T>>) {}
+    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
+        self.expr.upgrade(collected);
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Pattern<T> {
     fn represent(
         &self,
-        _path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
-        _depth: usize,
-        _max_depth: usize,
+        path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
+        depth: usize,
+        max_depth: usize,
     ) -> String {
-        format!("T.{}", self.bind_name)
+        format!("T<{}>.{}", self.expr.represent(path, depth + 1, max_depth), self.bind_name)
     }
 }
 
@@ -110,7 +114,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                 TypeRef::Pattern(v) => {
                     if let PatternCollector::Subtyping(c) = &mut inner_ctx.pattern_collector {
                         c.push_single((self.bind_name.clone(), v.bind_name.clone())); // 记录绑定关系
-                        Ok(ThreeValuedLogic::True)
+                        self.expr.subof(v.expr.as_ref_dispatcher(), &mut inner_ctx)
                     } else {
                         Ok(ThreeValuedLogic::False)
                     }
@@ -125,10 +129,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
     }
 
     fn reduce(
-        self,
-        _ctx: &mut ReductionContext<Type<T>, T>,
+        mut self,
+        ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(self.into_dispatcher())
+        match self.expr.modify(|value| {
+            let new_value = value.reduce(ctx)?;
+            Ok(new_value)
+        })? {
+            Some(()) => Ok(self.dispatch()),
+            None => {
+                let value = self.expr.as_ref();
+                let new_value = value.clone().reduce(ctx)?;
+                Ok(Self::new(self.bind_name.clone(), new_value, self.source_info.clone()))
+            }
+        }
     }
 
     fn tagged_ptr(&self) -> super::TaggedPtr<()> {
@@ -170,7 +184,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         if let PatternCollector::Deconstruct(pattern_env) = &mut ctx.pattern_collector {
             pattern_env.push((self.bind_name.clone(), other.clone_data()));
-            Ok(ThreeValuedLogic::True)
+            other.check(self.expr.as_ref_dispatcher(), ctx)
         } else {
             Ok(ThreeValuedLogic::False)
         }
@@ -188,8 +202,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<S: Into<Arc<str>>>(bind_name: S, source_info: Option<Arc<SourceLocation>>) -> Self {
-        Self { bind_name: bind_name.into(), source_info, _phantom: std::marker::PhantomData }
+    pub fn new<S: Into<Arc<str>>, X: AsDispatcher<Type<T>, T>>(
+        bind_name: S,
+        expr: X,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
+        Self { bind_name: bind_name.into(), expr: ArcOpt::new(expr.into_dispatcher()), source_info }
+            .dispatch()
     }
 
     pub fn bind_name(&self) -> &Arc<str> {

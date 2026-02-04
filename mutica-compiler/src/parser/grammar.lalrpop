@@ -273,7 +273,7 @@ AtomType: WithLocation<TypeAst> = {
         let pattern = with_loc(
             TypeAst::Namespace {
                 tag: tag.clone(),
-                expr: Box::new(with_loc(TypeAst::Variable(value_var.clone()), source, l..r)),
+                expr: Box::new(with_loc(TypeAst::Bind{var: value_var.clone(), expr: with_no_loc(TypeAst::Wildcard).into()}, source, l..r)),
             },
             source,
             l..r,

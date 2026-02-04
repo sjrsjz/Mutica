@@ -3,7 +3,7 @@ let y: nat = 2;
 let 3 = x + y;
 
 let f: any = match
-    | exist (_x, _x) where _x: nat => 'A'
+    | exist (_x: any, _x: any) where _x: nat => 'A'
     | (_x: nat, _y: nat) => 'B'
     | panic;
 

@@ -3,10 +3,7 @@ pub mod lexer;
 pub use ast::TypeAst;
 use logos::Logos;
 use mutica_core::{
-    types::{
-        CoinductiveType, GcAllocObject, Type, pattern::Pattern, unify::capture_env::CaptureOrigin,
-        variable::Variable,
-    },
+    types::{GcAllocObject, Type, unify::capture_env::CaptureOrigin, variable::Variable},
     util::{
         cycle_detector::FastCycleDetector,
         source_info::{
@@ -327,9 +324,9 @@ pub fn report_error_recovery<'a>(
 }
 
 pub enum Scope {
-    Function(HashMap<String, (usize, WithLocation<()>)>),
-    Generic(HashMap<String, (usize, WithLocation<()>)>),
-    FixPoint(String, usize, WithLocation<()>),
+    Function(bool, HashMap<String, (usize, WithLocation<()>)>),
+    Generic(bool, HashMap<String, (usize, WithLocation<()>)>),
+    FixPoint(bool, String, usize, WithLocation<()>),
 }
 
 pub struct ParseContext {
@@ -350,21 +347,21 @@ impl ParseContext {
     const NOT_USED: usize = 0usize;
 
     pub fn new() -> Self {
-        Self { declared_variables: vec![Scope::Function(HashMap::new())] }
+        Self { declared_variables: vec![] }
     }
 
     pub fn capture(&self) -> Vec<WithLocation<String>> {
         let mut captured = Vec::new();
         for scope in &self.declared_variables {
             match scope {
-                Scope::Function(map) | Scope::Generic(map) => {
+                Scope::Function(_, map) | Scope::Generic(_, map) => {
                     for (name, (count, loc)) in map {
                         if *count > Self::NOT_USED {
                             captured.push(loc.clone().map(|_| name.clone()));
                         }
                     }
                 }
-                Scope::FixPoint(name, count, loc) => {
+                Scope::FixPoint(_, name, count, loc) => {
                     if *count > Self::NOT_USED {
                         captured.push(loc.clone().map(|_| name.clone()));
                     }
@@ -374,16 +371,17 @@ impl ParseContext {
         captured
     }
 
-    pub fn enter_scope(&mut self) {
-        self.declared_variables.push(Scope::Function(HashMap::new()));
+    pub fn enter_function_scope(&mut self, ignore_unused: bool) {
+        self.declared_variables.push(Scope::Function(ignore_unused, HashMap::new()));
     }
 
-    pub fn enter_generic_scope(&mut self) {
-        self.declared_variables.push(Scope::Generic(HashMap::new()));
+    pub fn enter_generic_scope(&mut self, ignore_unused: bool) {
+        self.declared_variables.push(Scope::Generic(ignore_unused, HashMap::new()));
     }
 
-    pub fn enter_fixpoint_scope(&mut self, name: WithLocation<String>) {
+    pub fn enter_fixpoint_scope(&mut self, name: WithLocation<String>, ignore_unused: bool) {
         self.declared_variables.push(Scope::FixPoint(
+            ignore_unused,
             name.value().clone(),
             Self::NOT_USED,
             WithLocation::new((), name.location()),
@@ -392,19 +390,25 @@ impl ParseContext {
 
     pub fn exit_scope(&mut self) -> Result<(), ContextError> {
         if let Some(current_scope) = self.declared_variables.last() {
+            let ignore_unused;
             let unused_vars: Vec<WithLocation<String>> = match current_scope {
-                Scope::Function(map) | Scope::Generic(map) => map
-                    .iter()
-                    .filter_map(|(name, (count, loc))| {
-                        if *count == Self::NOT_USED && !name.starts_with("_") && !name.contains("#")
-                        {
-                            Some(loc.clone().map(|_| name.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-                Scope::FixPoint(name, count, loc) => {
+                Scope::Function(ignore, map) | Scope::Generic(ignore, map) => {
+                    ignore_unused = *ignore;
+                    map.iter()
+                        .filter_map(|(name, (count, loc))| {
+                            if *count == Self::NOT_USED
+                                && !name.starts_with("_")
+                                && !name.contains("#")
+                            {
+                                Some(loc.clone().map(|_| name.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                }
+                Scope::FixPoint(ignore, name, count, loc) => {
+                    ignore_unused = *ignore;
                     if *count == Self::NOT_USED && !name.starts_with("_") && !name.contains("#") {
                         vec![loc.clone().map(|_| name.clone())]
                     } else {
@@ -412,7 +416,7 @@ impl ParseContext {
                     }
                 }
             };
-            if !unused_vars.is_empty() {
+            if !unused_vars.is_empty() && !ignore_unused {
                 self.declared_variables.pop();
                 return Err(ContextError::NotUsed(unused_vars));
             }
@@ -426,11 +430,12 @@ impl ParseContext {
     pub fn declare_variable(&mut self, name: WithLocation<String>) -> Result<(), ContextError> {
         if let Some(current_scope) = self.declared_variables.last_mut() {
             match current_scope {
-                Scope::Function(map) | Scope::Generic(map) => {
+                Scope::Function(ignore_unused, map) | Scope::Generic(ignore_unused, map) => {
                     if map.contains_key(name.value())
                         && map[name.value()].0 == Self::NOT_USED
                         && !name.value().starts_with("_")
                         && !name.value().contains("#")
+                        && !*ignore_unused
                     // 允许以 _ 开头的变量不被使用
                     {
                         let unused_vars =
@@ -447,7 +452,7 @@ impl ParseContext {
                     );
                     return Ok(());
                 }
-                Scope::FixPoint(_, _, _) => return Err(ContextError::EmptyContext),
+                Scope::FixPoint(_, _, _, _) => return Err(ContextError::EmptyContext),
             }
         }
         Err(ContextError::EmptyContext)
@@ -462,7 +467,7 @@ impl ParseContext {
         let mut skip_generic = false;
         for scope in self.declared_variables.iter_mut().rev() {
             match scope {
-                Scope::Function(map) => {
+                Scope::Function(_, map) => {
                     skip_generic = true; // 跨越 Function 层时跳过 Generic 层
                     if let Some((count, loc)) = map.get_mut(name) {
                         *count += 1;
@@ -470,7 +475,7 @@ impl ParseContext {
                     }
                     outgoing_function_layer_count += 1;
                 }
-                Scope::Generic(map) => {
+                Scope::Generic(_, map) => {
                     if skip_generic {
                         continue;
                     }
@@ -479,7 +484,7 @@ impl ParseContext {
                         return Ok((loc, None));
                     }
                 }
-                Scope::FixPoint(n, count, loc) => {
+                Scope::FixPoint(_, n, count, loc) => {
                     if n == name {
                         *count += 1;
                         return Ok((loc, Some(outgoing_function_layer_count)));
@@ -572,33 +577,35 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildContext<T> {
                     }
                     outgoing_function_layer_count += 1;
                 }
-                BuildContextLayer::GenericBinding(patterns, is_definition) => {
+                BuildContextLayer::GenericBinding(patterns, _) => {
                     if skip_generic {
                         continue;
                     }
                     if let Some(_v) = patterns.get(var.as_ref()) {
                         // 如果是定义且是最内层 GenericBinding，则创建 Pattern 类型
-                        if *is_definition {
-                            if generic_layer_out_count == 0 {
-                                return Some((
-                                    Pattern::new(Arc::from(var.as_ref()), loc.map(Arc::new))
-                                        .dispatch(),
-                                    None,
-                                ));
-                            }
-                            // // 否则跳过，并且处于定义状态时不增加 generic_layer_out_count(因为定义不影响使用层级)
-                            // 无论是否为定义，都增加 generic_layer_out_count（为了保证状态的简单性）
-                        } else {
-                            return Some((
-                                Variable::new_pattern(
-                                    Arc::from(var.as_ref()),
-                                    generic_layer_out_count,
-                                    loc.map(Arc::new),
-                                )
-                                .dispatch(),
-                                None,
-                            ));
-                        }
+                        // if *is_definition {
+                        //     if generic_layer_out_count == 0 {
+                        //         return Some((
+                        //             Pattern::new(
+                        //                 Arc::from(var.as_ref()),
+                        //                 AllOf::unknown(None),
+                        //                 loc.map(Arc::new),
+                        //             ),
+                        //             None,
+                        //         ));
+                        //     }
+                        //     // // 否则跳过，并且处于定义状态时不增加 generic_layer_out_count(因为定义不影响使用层级)
+                        //     // 无论是否为定义，都增加 generic_layer_out_count（为了保证状态的简单性）
+                        // } else {
+                        return Some((
+                            Variable::new_pattern(
+                                Arc::from(var.as_ref()),
+                                generic_layer_out_count,
+                                loc.map(Arc::new),
+                            ),
+                            None,
+                        ));
+                        // }
                     }
                     // if !*is_definition {
                     //     generic_layer_out_count += 1;
@@ -1020,22 +1027,22 @@ pub fn inject_std_library(
     let $"op#gt": any = (x: any, y: any) => __greater!(x, y, true, false);
     let $"op#lt": any = (x: any, y: any) => __less!(x, y, true, false);
     let $"op#eq": any = match
-        | (_x: sub _y, _y: sub _x) => true
+        | exist (_x: any, _y: any) where {_x: sub _y, _y: sub _x} => true
         | any => false
         | panic;
     let $"op#neq": any = match
-        | (_x: sub _y, _y: sub _x) => false
+        | exist (_x: any, _y: any) where {_x: sub _y, _y: sub _x} => false
         | any => true
         | panic;
     let $"op#gte": any = match 
-        | (_x: sub _y, _y: sub _x) => true
+        | exist (_x: any, _y: any) where {_x: sub _y, _y: sub _x} => true
         | (x: any, y: any) => __greater!(x, y, true, false)
         | panic;
     let $"op#lte": any = match
-        | (_x: sub _y, _y: sub _x) => true
+        | exist (_x: any, _y: any) where {_x: sub _y, _y: sub _x} => true
         | (x: any, y: any) => __less!(x, y, true, false)
         | panic;
-    let $"op#neg": any = (x: any) => __neg!(x);
+    let $"op#neg": any = x: any => __neg!(x);
     let $"op#is": any = (x: any, y: any) => __is!(x, y, true, false);
     let $"op#assign": any = (x: any, y: any) => __assign!(x, y);
     $"<placeholder>"

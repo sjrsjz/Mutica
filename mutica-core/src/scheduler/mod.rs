@@ -355,10 +355,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         self.current_type = Some(next_type);
         // println!(
         //     "-> Current type: {}",
-        //     self.current_type
-        //         .as_ref()
-        //         .unwrap()
-        //         .represent(&mut FastCycleDetector::new())
+        //     self.current_type.as_ref().unwrap().represent(
+        //         &mut FastCycleDetector::new(),
+        //         0,
+        //         2
+        //     )
         // );
         // println!("Frames: {:?}", self.cont_stack.frames());
 
@@ -367,13 +368,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         //         ContinuationOrHandler::Continuation(v) => {
         //             println!(
         //                 "  Continuation in stack: {}",
-        //                 v.display(&mut FastCycleDetector::new())
+        //                 v.display(&mut FastCycleDetector::new(), 0, 2)
         //             );
         //         }
         //         ContinuationOrHandler::PerformHandler(v) => {
         //             println!(
         //                 "  Perform Handler in stack: {}",
-        //                 v.display(&mut FastCycleDetector::new())
+        //                 v.display(&mut FastCycleDetector::new(), 0, 2)
         //             );
         //         }
         //     }
