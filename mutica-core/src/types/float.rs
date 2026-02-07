@@ -4,7 +4,9 @@ use arc_gc::traceable::GCTraceable;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject, InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef, float_value::FloatValue
+        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
+        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
+        TypeCheckContext, TypeError, TypeRef, float_value::FloatValue,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -12,24 +14,24 @@ use crate::{
     },
 };
 
-pub struct Float<T: GcAllocObject<T, Inner = Type<T>>> {
+pub struct Float<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     source_info: Option<Arc<SourceLocation>>,
-    _phantom: std::marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<(U, V)>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Float<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Float<U, V> {
     fn clone(&self) -> Self {
         Self { source_info: self.source_info.clone(), _phantom: std::marker::PhantomData }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Float<T> {
-    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Float<U, V> {
+    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Float<T> {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Float<U, V> {}
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Float<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Float<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -43,7 +45,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Float<T>
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -51,11 +53,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.bound_generic_variables
+                ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -78,11 +81,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.bound_generic_variables
+                ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -97,24 +101,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
     }
 
     fn reduce(
-        self,
+        &self,
         _ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(self.dispatch())
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg
-            .take(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::FloatValue(_) => Ok(arg),
-                Type::NaturalNumber(v) => {
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                TypeRef::FloatValue(_) => Ok(arg.into_dispatcher()),
+                TypeRef::NaturalNumber(v) => {
                     Ok(FloatValue::new(v.value() as f64, v.source_info().cloned()))
                 }
                 _ => Err(super::TypeError::TypeMismatch(
-                    (arg, "FloatValue | NaturalNumber".into()).into(),
+                    (arg.into_dispatcher(), "FloatValue | NaturalNumber".into()).into(),
                 )),
             })?
-            .unwrap_or(Err(TypeError::UnresolvableType(self.dispatch().into())))
+            .unwrap_or(Err(TypeError::UnresolvableType(self.clone().dispatch().into())))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -143,7 +147,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Float
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Float<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Float<Type<T>, T> {
     fn represent(
         &self,
         _path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -154,7 +158,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Float<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Float<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Float<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         Float { source_info, _phantom: std::marker::PhantomData }.dispatch()

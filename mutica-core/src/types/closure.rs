@@ -2,6 +2,7 @@ use core::panic;
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
+use arena_arc::ArcSlice;
 use smallvec::SmallVec;
 
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         GenericBinding, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
         TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
+        allocator::Allocators,
         allof::AllOf,
         anyof::AnyOf,
         constraint::Constraint,
@@ -21,18 +23,18 @@ use crate::{
         variable::Variable,
     },
     util::{
-        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
 
-pub struct ClosureBranch<T: GcAllocObject<T, Inner = Type<T>>> {
-    pub capture_env: CaptureEnv<Type<T>, T>,
-    pub pattern: Constraint<T>,
-    pub expr: Type<T>,
+pub struct ClosureBranch<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    pub capture_env: CaptureEnv<U, V>,
+    pub pattern: Constraint<U, V>,
+    pub expr: U,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for ClosureBranch<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for ClosureBranch<U, V> {
     fn clone(&self) -> Self {
         Self {
             capture_env: self.capture_env.clone(),
@@ -42,29 +44,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for ClosureBranch<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for ClosureBranch<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for ClosureBranch<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
         self.capture_env.collect(queue);
         self.pattern.collect(queue);
         self.expr.collect(queue);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for ClosureBranch<T> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for ClosureBranch<U, V> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
         self.capture_env.upgrade(collected);
         self.pattern.upgrade(collected);
         self.expr.upgrade(collected);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> ClosureBranch<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureBranch<U, V> {
     #[allow(clippy::type_complexity)]
     pub fn capture(
         mut self,
-        solved_argument: &[(Arc<str>, ArgumentBinding<Type<T>, T>)],
-        parent_env: CaptureEnvList<Type<T>, T>,
-    ) -> Result<Self, TypeError<Type<T>, T>> {
+        solved_argument: &[(Arc<str>, ArgumentBinding<U, V>)],
+        parent_env: CaptureEnvList<U, V>,
+    ) -> Result<Self, TypeError<U, V>> {
         self.capture_env =
             self.capture_env.capture_from(solved_argument, parent_env).map_err(|var_name| {
                 TypeError::MissingVariable(var_name.to_string().into_boxed_str())
@@ -73,36 +75,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> ClosureBranch<T> {
     }
 }
 
-pub struct Closure<T: GcAllocObject<T, Inner = Type<T>>> {
-    #[allow(clippy::type_complexity)]
-    inner: ArcOpt<(Vec<ClosureBranch<T>>, Option<Arc<SourceLocation>>)>,
+pub struct Closure<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    branches: ArcSlice<ClosureBranch<U, V>, usize>,
+    source_info: Option<Arc<SourceLocation>>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Closure<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Closure<U, V> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self { branches: self.branches.clone(), source_info: self.source_info.clone() }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Closure<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        let (branches, _) = self.inner.as_ref();
-        for inner in branches {
-            inner.collect(queue);
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Closure<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        for branch in self.branches.iter() {
+            branch.collect(queue);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Closure<T> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        let (branches, _) = self.inner.as_ref();
-        for inner in branches {
-            inner.upgrade(collected);
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Closure<U, V> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        for branch in self.branches.iter() {
+            branch.upgrade(collected);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Closure<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Closure<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -117,7 +117,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Closure<
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closure<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closure<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -125,11 +125,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -143,15 +144,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Lambda(other) => {
                     // Closure 对 Lambda 的 check：只比较模式，忽略分支的 expr
                     // 规则与 Lambda::subof 类似，但 LHS 使用 closure 的 branch.pattern
-                    let lhs_branches = self.branches();
+                    let lhs_branches = self.branches.get();
                     let rhs_patterns = other.patterns();
                     let flipped = ctx.bound_generic_variables.flip();
                     let mut inner_ctx = TypeCheckContext::new(
-                        ctx.instance_assumptions,
+                        ctx.coinductive_assumptions,
                         PatternCollector::None, // 交换方向会导致收集器不可用
                         ctx.rhs_env,
                         ctx.lhs_env,
                         &flipped,
+                        ctx.allocators,
                     );
                     let mut i = 0usize;
                     let mut j = 0usize;
@@ -197,11 +199,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -213,14 +216,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     // println!("LHS: {:?}", self.represent(&mut FastCycleDetector::new(), 0, 3));
                     // println!("RHS: {:?}", other.represent(&mut FastCycleDetector::new(), 0, 3));
                     // Closure 的子类型关系：模式逆变，expr 协变
-                    let lhs_branches = self.branches();
-                    let rhs_branches = other.branches();
+                    let lhs_branches = self.branches.get();
+                    let rhs_branches = other.branches.get();
 
                     let mut i = 0usize;
                     let mut j = 0usize;
                     let mut result = ThreeValuedLogic::True;
                     let mut collector = inner_ctx.pattern_collector;
-                    let mut assumptions = inner_ctx.instance_assumptions;
+                    let mut assumptions = inner_ctx.coinductive_assumptions;
+                    let mut allocators = inner_ctx.allocators;
                     let lhs_env = inner_ctx.rhs_env; // 逆变交换方向
                     let rhs_env = inner_ctx.lhs_env;
                     let bound_generic_layers = inner_ctx.bound_generic_variables.flip();
@@ -235,15 +239,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                             lhs_env,
                             rhs_env,
                             &bound_generic_layers,
+                            allocators,
                         );
                         let expr_check = |ctx: &mut TypeCheckContext<_, _>| {
                             let flipped = ctx.bound_generic_variables.flip();
                             let mut ctx = TypeCheckContext::new(
-                                ctx.instance_assumptions,
+                                ctx.coinductive_assumptions,
                                 PatternCollector::None, // expr 不需要收集模式
                                 ctx.rhs_env.attach(&lhs.capture_env, None), // 先把逆变的env交换后再拼接
                                 ctx.lhs_env.attach(&rhs.capture_env, None),
                                 &flipped,
+                                ctx.allocators,
                             );
                             // println!("Checking Closure expr subof: {} <: {}", lhs.expr.represent(&mut FastCycleDetector::new(), 0, 3), rhs.expr.represent(&mut FastCycleDetector::new(), 0, 3));
                             // println!(" bound_generic_layers: {:?}", ctx.bound_generic_variables);
@@ -265,9 +271,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                                 i += 1;
                             }
                         }
-                        // 奇葩的设计：通过移动所有权等操作堵住借用检查器的嘴
                         collector = inner_loop_ctx.pattern_collector;
-                        assumptions = inner_loop_ctx.instance_assumptions;
+                        assumptions = inner_loop_ctx.coinductive_assumptions;
+                        allocators = inner_loop_ctx.allocators;
                     }
 
                     if j >= rhs_branches.len() { Ok(result) } else { Ok(ThreeValuedLogic::False) }
@@ -278,57 +284,36 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     }
 
     fn reduce(
-        mut self,
+        &self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self.inner.modify(|(branches, source_info)| {
-            let reduced_branches = branches
-                .into_iter()
-                .map(|branch| {
-                    let branch = branch.capture(ctx.solved_argument, ctx.capture_env)?;
-                    let reduced_pattern = match branch.pattern.reduce(ctx)? {
-                        Type::Constraint(v) => v,
-                        _ => panic!("Reduced pattern is not a Constraint type"),
-                    };
-                    Ok(ClosureBranch {
-                        capture_env: branch.capture_env,
-                        pattern: reduced_pattern,
-                        expr: branch.expr,
-                    })
-                })
-                .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
-
-            Ok((reduced_branches, source_info))
-        })? {
-            Some(()) => Ok(self.dispatch()),
-            None => {
-                let (branches, source_info) = self.inner.as_ref();
-                let mut reduced_branches = Vec::with_capacity(branches.len());
-                for inner in branches.iter() {
-                    let branch = inner.clone().capture(ctx.solved_argument, ctx.capture_env)?;
-                    let reduced_pattern = match branch.pattern.reduce(ctx)? {
-                        Type::Constraint(v) => v,
-                        _ => panic!("Reduced pattern is not a Constraint type"),
-                    };
-                    reduced_branches.push(ClosureBranch {
-                        capture_env: branch.capture_env,
-                        pattern: reduced_pattern,
-                        expr: branch.expr,
-                    });
-                }
-                Ok(Self { inner: ArcOpt::new((reduced_branches, source_info.clone())) }.dispatch())
-            }
+        let mut reduced_branches = SmallVec::<[ClosureBranch<_, _>; 4]>::new();
+        for inner in self.branches.iter() {
+            let branch = inner.clone().capture(ctx.solved_argument, ctx.capture_env)?;
+            let reduced_pattern = match branch.pattern.reduce(ctx)? {
+                Type::Constraint(v) => v,
+                _ => panic!("Reduced pattern is not a Constraint type"),
+            };
+            reduced_branches.push(ClosureBranch {
+                capture_env: branch.capture_env,
+                pattern: reduced_pattern,
+                expr: branch.expr,
+            });
         }
+
+        let len = reduced_branches.len();
+        let mut reduced_iter = reduced_branches.into_iter();
+        let new_branches = ctx.allocators.match_branch.alloc(len, |_| reduced_iter.next().unwrap());
+        Ok(Self { branches: new_branches, source_info: self.source_info.clone() }.dispatch())
     }
 
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        let (branches, _) = self.inner.as_ref();
+    fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         if !self.is_reduced() {
-            return Err(TypeError::ClosureNotReduced(self.dispatch().into()));
+            return Err(TypeError::ClosureNotReduced(self.clone().dispatch().into()));
         }
         let mut matched_pattern = Collector::new();
         let mut assumptions = smallvec::smallvec![];
-        for branch in branches.iter() {
+        for branch in self.branches.iter() {
             matched_pattern.clear();
             assumptions.clear();
             let empty_generic_binding = GenericBinding::wait_for_bind(None);
@@ -338,6 +323,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 ctx.environment,
                 ctx.environment,
                 &empty_generic_binding,
+                ctx.allocators,
             );
 
             if let (ThreeValuedLogic::True, bindings) =
@@ -351,17 +337,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                     ctx.rec_assumptions,
                     ctx.gc,
                     ctx.roots,
+                    ctx.allocators,
                 );
-                let result = branch.expr.clone().reduce(&mut reduce_ctx);
+                let result = branch.expr.reduce(&mut reduce_ctx);
                 return result;
             }
         }
 
         let expect_arg =
-            self.branches().iter().map(|b| b.pattern.clone().into_dispatcher()).collect::<Vec<_>>();
+            self.branches.iter().map(|b| b.pattern.clone().into_dispatcher()).collect::<Vec<_>>();
         Err(TypeError::AssertFailed(
             (
-                AnyOf::new(expect_arg, self.source_info().cloned(), ctx.environment)?,
+                AnyOf::new(
+                    expect_arg,
+                    ctx.allocators,
+                    self.source_info().cloned(),
+                    ctx.environment,
+                )?,
                 ctx.arg.clone(),
             )
                 .into(),
@@ -369,13 +361,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        let (_, source_info) = self.inner.as_ref();
-        source_info.as_ref()
+        self.source_info.as_ref()
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
-        let (_, source_info) = self.inner.as_ref();
-        if let Some(loc) = source_info {
+        if let Some(loc) = self.source_info() {
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
@@ -396,7 +386,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<Type<T>, T> {
     fn represent(
         &self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -406,9 +396,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
         if depth > max_depth {
             return "...".to_string();
         }
-        let (branches, _) = self.inner.as_ref();
         let mut repr = String::from("match");
-        for inner in branches.iter() {
+        for inner in self.branches.iter() {
             let captured_vars: Vec<String> = if inner.capture_env.is_solved() {
                 inner
                     .capture_env
@@ -452,10 +441,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Closure<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<V, I, S>(
-        branches: Vec<(I, Constraint<T>, V)>,
+        branches: Vec<(I, Constraint<Type<T>, T>, V)>,
+        allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T>
     where
@@ -463,31 +453,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         I: IntoIterator<Item = (S, CaptureOrigin)>,
         S: Into<Arc<str>>,
     {
-        let branches_vec = branches
-            .into_iter()
-            .map(|(captures, pattern, expr)| {
+        let len = branches.len();
+        let mut branches_iter = branches.into_iter();
+        Type::Closure(Closure {
+            branches: allocators.match_branch.alloc(len, |_| {
+                let (captures, pattern, expr) = branches_iter.next().unwrap();
                 let expr_ty = expr.into_dispatcher();
-                ClosureBranch {
-                    capture_env: CaptureEnv::new_unsolved(SmallVec::from_iter(
-                        captures.into_iter().map(|(s, origin)| (s.into(), origin)),
-                    )),
-                    pattern,
-                    expr: expr_ty,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Type::Closure(Closure { inner: ArcOpt::new((branches_vec, source_info)) })
+                let capture_env = CaptureEnv::new_unsolved(SmallVec::from_iter(
+                    captures.into_iter().map(|(s, origin)| (s.into(), origin.clone())),
+                ));
+                ClosureBranch { capture_env, pattern: pattern.clone(), expr: expr_ty }
+            }),
+            source_info,
+        })
     }
 
-    pub fn branches(&self) -> &[ClosureBranch<T>] {
-        &self.inner.as_ref().0
+    pub fn branches(&self) -> &[ClosureBranch<Type<T>, T>] {
+        &self.branches
     }
 
     pub fn is_reduced(&self) -> bool {
         let mut reduced = true;
-        let (branches, _) = self.inner.as_ref();
-        for branch in branches.iter() {
+        for branch in self.branches().iter() {
             if !branch.capture_env.is_solved() {
                 reduced = false;
                 break;
@@ -497,27 +484,39 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
     }
 
     pub fn impls(
-        self,
-        other: Self,
+        &self,
+        other: &Self,
+        allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         if !self.is_reduced() {
-            return Err(TypeError::ClosureNotReduced(self.dispatch().into()));
+            return Err(TypeError::ClosureNotReduced(self.clone().dispatch().into()));
         }
         if !other.is_reduced() {
-            return Err(TypeError::ClosureNotReduced(other.dispatch().into()));
+            return Err(TypeError::ClosureNotReduced(other.clone().dispatch().into()));
         }
-        let mut new_branches = self.branches().to_vec();
-        new_branches.extend_from_slice(other.branches());
+        let self_len = self.branches.len();
+        let len = self_len + other.branches.len();
 
-        Ok(Closure { inner: ArcOpt::new((new_branches, source_info)) }.into_dispatcher())
+        Ok(Closure {
+            branches: allocators.match_branch.alloc(len, |i| {
+                if i < self_len {
+                    self.branches[i].clone()
+                } else {
+                    other.branches[i - self_len].clone()
+                }
+            }),
+            source_info,
+        }
+        .dispatch())
     }
 
     pub fn identity(
         source_info: Option<Arc<SourceLocation>>,
         env: CaptureEnvList<Type<T>, T>,
+        allocators: &mut Allocators<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Self::lazy(source_info, "var#x", Variable::new_argument("var#x", None), env)
+        Self::lazy(source_info, "var#x", Variable::new_argument("var#x", None), env, allocators)
     }
 
     pub fn lazy<S: Into<Arc<str>>, V: AsDispatcher<Type<T>, T>>(
@@ -525,18 +524,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<T> {
         bind_name: S,
         expr: V,
         env: CaptureEnvList<Type<T>, T>,
+        allocators: &mut Allocators<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let bind_name: Arc<str> = bind_name.into();
         let branch = ClosureBranch {
             capture_env: CaptureEnv::Solved(SmallVec::new()),
             pattern: Constraint::new_constraint(
-                Pattern::<T>::new(bind_name.clone(), AllOf::unknown(None), None),
+                Pattern::<Type<T>, T>::new(
+                    bind_name.clone(),
+                    AllOf::unknown(None),
+                    allocators,
+                    None,
+                ),
                 vec![(bind_name, AllOf::unknown(None))],
                 env,
+                allocators,
                 None,
             )?,
             expr: expr.into_dispatcher(),
         };
-        Ok(Closure { inner: ArcOpt::new((vec![branch], source_info)) }.into_dispatcher())
+        Ok(Closure { branches: allocators.match_branch.alloc_value(branch).into(), source_info }
+            .dispatch())
     }
 }

@@ -27,16 +27,18 @@ impl<T> Collector<T> {
         F: FnOnce(&mut Self) -> Result<ThreeValuedLogic, E>,
     {
         if self.items.is_some() {
-            let len = self.items.as_ref().unwrap().len();
             let result = f(self);
+            #[allow(clippy::unnecessary_unwrap)]
+            let items = self.items.as_mut().unwrap();
+            let len = items.len();
             match result {
                 Ok(ThreeValuedLogic::True) => Ok(ThreeValuedLogic::True),
                 Ok(ThreeValuedLogic::Unknown) => {
-                    self.items.as_mut().unwrap().truncate(len);
+                    items.truncate(len);
                     Ok(ThreeValuedLogic::Unknown)
                 }
                 Ok(ThreeValuedLogic::False) => {
-                    self.items.as_mut().unwrap().truncate(len);
+                    items.truncate(len);
                     Ok(ThreeValuedLogic::False)
                 }
                 Err(e) => Err(e),

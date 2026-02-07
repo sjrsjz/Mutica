@@ -1,6 +1,7 @@
 use std::{ops::ControlFlow, sync::Arc};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
+use arena_arc::{ArcSingle, ArcSlice};
 use smallvec::SmallVec;
 
 use crate::{
@@ -8,46 +9,54 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
         GcAllocObject, PatternCollector, Representable, Rootable, TaggedPtr, Type,
         TypeCheckContext, TypeError, TypeRef,
+        allocator::Allocators,
         allof::AllOf,
         unify::{
             ArgumentBinding, GenericBinding, capture_env::CaptureEnvList, collector::Collector,
             path_collector::PathCollector,
         },
     },
-    util::{arc_opt::ArcOpt, source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
+    util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
-pub struct Constraint<T: GcAllocObject<T, Inner = Type<T>>>(
-    // P(x) where {x1: T1, x2: T2, ...}
-    #[allow(clippy::type_complexity)]
-    ArcOpt<(Type<T>, Vec<(Arc<str>, Type<T>)>, Option<Arc<SourceLocation>>)>,
-);
+pub struct Constraint<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    pattern: ArcSingle<U, usize>,
+    constraint: ArcSlice<(Arc<str>, U), usize>,
+    source_info: Option<Arc<SourceLocation>>,
+    #[doc(hidden)]
+    _phantom: std::marker::PhantomData<V>,
+}
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Constraint<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Constraint<U, V> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self {
+            pattern: self.pattern.clone(),
+            constraint: self.constraint.clone(),
+            source_info: self.source_info.clone(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Constraint<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        self.0.0.collect(queue);
-        for (_, ty) in self.0.1.iter() {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Constraint<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        self.pattern.collect(queue);
+        for (_, ty) in self.constraint.iter() {
             ty.collect(queue);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Constraint<T> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        self.0.0.upgrade(collected);
-        for (_, ty) in self.0.1.iter() {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Constraint<U, V> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        self.pattern.upgrade(collected);
+        for (_, ty) in self.constraint.iter() {
             ty.upgrade(collected);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Constraint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Constraint<Type<T>, T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
@@ -59,7 +68,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Constraint<T> {
         }
         // exist P(x) where {x1: T1, x2: T2, ...}
         let mut repr =
-            format!("exist {} where {{ ", self.expr().represent(path, depth + 1, max_depth));
+            format!("exist {} where {{ ", self.pattern().represent(path, depth + 1, max_depth));
         let constraints: Vec<String> = self
             .constraint()
             .iter()
@@ -71,7 +80,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Constraint<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Constraint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Constraint<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -86,7 +95,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Constrai
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Constraint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Constraint<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -94,11 +103,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -121,11 +131,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -149,39 +160,34 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
     }
 
     fn reduce(
-        mut self,
+        &self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self.0.modify(|(p, c, source_info)| {
-            let p = p.reduce(ctx)?;
-            let c = c
-                .into_iter()
-                .map(|(k, v)| v.reduce(ctx).map(|v| (k, v)))
-                .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
-            Ok((p, c, source_info))
-        })? {
-            Some(()) => Ok(self.dispatch()),
-            None => {
-                let (p, c, source_info) = self.0.as_ref();
-                let p = p.clone().reduce(ctx)?;
-                let c = c
-                    .iter()
-                    .map(|(k, v)| v.clone().reduce(ctx).map(|v| (k.clone(), v)))
-                    .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
-                Ok(Self(ArcOpt::new((p, c, source_info.clone()))).dispatch())
-            }
+        // 约束类型的规约主要是规约其主体类型，并尝试将约束条件中的变量绑定到规约后的主体类型上
+        let reduced_pattern = self.pattern.get().reduce(ctx)?;
+        let mut reduced_constraint = SmallVec::<[(Arc<str>, Type<T>); 8]>::new();
+        for (k, v) in self.constraint.iter() {
+            reduced_constraint.push((k.clone(), v.reduce(ctx)?));
         }
+        let len = reduced_constraint.len();
+        let mut iter = reduced_constraint.into_iter();
+        Ok(Type::Constraint(Constraint {
+            pattern: ctx.allocators.v.alloc_value(reduced_pattern),
+            constraint: ctx.allocators.kv.alloc(len, |_| iter.next().unwrap()),
+            source_info: self.source_info.clone(),
+            _phantom: std::marker::PhantomData,
+        }))
     }
 
     fn invoke(
-        self,
+        &self,
         _ctx: super::InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.dispatch().into()))
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        self.0.2.as_ref()
+        self.source_info.as_ref()
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
@@ -207,7 +213,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Constraint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T>
+    for Constraint<Type<T>, T>
+{
     #[stacksafe::stacksafe]
     fn accept(
         &self,
@@ -228,10 +236,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
     pub fn subof_constraint(
         &self,
-        other: &Constraint<T>,
+        other: &Constraint<Type<T>, T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
         additional_check: Option<
             impl Fn(
@@ -245,17 +253,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         //     other.represent(&mut Default::default(), 0, 5)
         // );
         // println!(" bound_generic_layers: {:?}", ctx.bound_generic_variables);
-        let lhs_pattern = self.expr();
-        let rhs_pattern = other.expr();
+        let lhs_pattern = self.pattern();
+        let rhs_pattern = other.pattern();
         let mut collected_path = Vec::new();
         let mut path_collector = PathCollector::from(&mut collected_path);
         let empty_bindings = GenericBinding::wait_for_bind(Some(ctx.bound_generic_variables));
         let mut pattern_check_ctx = TypeCheckContext::new(
-            ctx.instance_assumptions,
+            ctx.coinductive_assumptions,
             PatternCollector::Subtyping(&mut path_collector),
             ctx.lhs_env,
             ctx.rhs_env,
             &empty_bindings,
+            ctx.allocators,
         );
         let pattern_result =
             lhs_pattern.subof(rhs_pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?;
@@ -294,11 +303,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                 Some(ctx.bound_generic_variables),
             );
             let mut new_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 PatternCollector::None,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 &bound_subtype_assumptions,
+                ctx.allocators,
             );
 
             let mut constraint_result = ThreeValuedLogic::True;
@@ -344,11 +354,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                     Some(&flipped),
                 );
                 let mut new_ctx = TypeCheckContext::new(
-                    ctx.instance_assumptions,
+                    ctx.coinductive_assumptions,
                     PatternCollector::None,
                     ctx.rhs_env,
                     ctx.lhs_env,
                     &bound_subtype_assumptions,
+                    ctx.allocators,
                 );
                 for (lhs, rhs) in lhs_subtype_assumptions {
                     let lhs_ty = self
@@ -380,11 +391,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                 );
 
                 let mut new_ctx = TypeCheckContext::new(
-                    ctx.instance_assumptions,
+                    ctx.coinductive_assumptions,
                     PatternCollector::None,
                     ctx.lhs_env,
                     ctx.rhs_env,
                     &bound_subtype_assumptions,
+                    ctx.allocators,
                 );
                 constraint_result &= check_fn(&mut new_ctx)?;
             }
@@ -413,14 +425,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         let mut collector = Collector::new();
         let empty_bindings = GenericBinding::wait_for_bind(Some(ctx.bound_generic_variables));
         let mut new_ctx = TypeCheckContext::new(
-            ctx.instance_assumptions,
+            ctx.coinductive_assumptions,
             PatternCollector::Deconstruct(&mut collector),
             ctx.lhs_env,
             ctx.rhs_env,
             &empty_bindings,
+            ctx.allocators,
         );
         // 先检查主体类型，即 X where {...} 的 X 部分
-        let result = other.check(self.expr().as_ref_dispatcher(), &mut new_ctx)?;
+        let result = other.check(self.pattern().as_ref_dispatcher(), &mut new_ctx)?;
         if result == ThreeValuedLogic::False {
             return Ok((ThreeValuedLogic::False, SmallVec::new()));
         }
@@ -434,7 +447,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         for (k, v) in collected {
             GenericBinding::bind(&mut pool, k, v)?
         }
-        GenericBinding::finalize(&mut pool, ctx.lhs_env)?; // 解构的值都来源于于 LHS 环境
+        GenericBinding::finalize(&mut pool, ctx.lhs_env, ctx.allocators)?; // 解构的值都来源于于 LHS 环境
         let env = GenericBinding::pattern(&pool, &[], Some(ctx.bound_generic_variables));
 
         let mut bindings: SmallVec<[(Arc<str>, ArgumentBinding<Type<T>, T>); 4]> = SmallVec::new();
@@ -457,11 +470,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
                 .expect("Variable should be bound")
                 .clone();
             let mut new_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 PatternCollector::None,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 &env,
+                ctx.allocators,
             );
             check_result &= ty.check(c.as_ref_dispatcher(), &mut new_ctx)?;
             if let ThreeValuedLogic::False = check_result {
@@ -472,25 +486,28 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<P, C>(
         expr: P,
         constraint: impl IntoIterator<Item = (Arc<str>, C)>,
         env: CaptureEnvList<Type<T>, T>,
+        allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>>
     where
         P: AsDispatcher<Type<T>, T>,
         C: AsDispatcher<Type<T>, T>,
     {
-        Self::new_constraint(expr, constraint, env, source_info).map(|c| c.into_dispatcher())
+        Self::new_constraint(expr, constraint, env, allocators, source_info)
+            .map(|c| c.into_dispatcher())
     }
 
     pub fn new_constraint<P, C>(
         expr: P,
         constraint: impl IntoIterator<Item = (Arc<str>, C)>,
         env: CaptureEnvList<Type<T>, T>,
+        allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Self, TypeError<Type<T>, T>>
     where
@@ -508,16 +525,23 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<T> {
         }
         let merged_constraints = set
             .into_iter()
-            .map(|(k, v)| AllOf::new(v.into_iter(), None, env).map(|v| (k, v)))
-            .collect::<Result<Vec<_>, TypeError<Type<T>, T>>>()?;
-        Ok(Self(ArcOpt::new((expr.into_dispatcher(), merged_constraints, source_info))))
+            .map(|(k, v)| AllOf::new(v.into_iter(), allocators, None, env).map(|v| (k, v)))
+            .collect::<Result<SmallVec<[(Arc<str>, Type<T>); 4]>, TypeError<Type<T>, T>>>()?;
+        let len = merged_constraints.len();
+        let mut iter = merged_constraints.into_iter();
+        Ok(Constraint {
+            pattern: allocators.v.alloc_value(expr.into_dispatcher()),
+            constraint: allocators.kv.alloc(len, |_| iter.next().unwrap()),
+            source_info,
+            _phantom: std::marker::PhantomData,
+        })
     }
 
-    pub fn expr(&self) -> &Type<T> {
-        &self.0.0
+    pub fn pattern(&self) -> &Type<T> {
+        &self.pattern
     }
 
     pub fn constraint(&self) -> &[(Arc<str>, Type<T>)] {
-        &self.0.1
+        &self.constraint
     }
 }

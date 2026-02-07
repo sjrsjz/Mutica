@@ -62,6 +62,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arena-arc"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c58e3daaf82d3b259c10ec73b8447ce34c6789fe4f2de47ef1b572eb6dcaa06"
+
+[[package]]
 name = "ariadne"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -454,6 +460,7 @@ dependencies = [
 name = "mutica-core"
 version = "0.3.0"
 dependencies = [
+ "arena-arc",
  "ariadne",
  "rust-arc-gc",
  "smallvec",

@@ -13,26 +13,26 @@ use crate::{
 };
 use arc_gc::traceable::GCTraceable;
 
-pub enum Variable<T: GcAllocObject<T, Inner = Type<T>>> {
+pub enum Variable<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     ContextVariable {
         bind_name: Arc<str>,
         source_info: Option<Arc<SourceLocation>>,
-        _phantom: std::marker::PhantomData<T>,
+        _phantom: std::marker::PhantomData<(U, V)>,
     },
     ArgumentVariable {
         bind_name: Arc<str>,
         source_info: Option<Arc<SourceLocation>>,
-        _phantom: std::marker::PhantomData<T>,
+        _phantom: std::marker::PhantomData<(U, V)>,
     },
     PatternVariable {
         bind_name: Arc<str>,
         layer: usize,
         source_info: Option<Arc<SourceLocation>>,
-        _phantom: std::marker::PhantomData<T>,
+        _phantom: std::marker::PhantomData<(U, V)>,
     },
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Variable<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Variable<U, V> {
     fn clone(&self) -> Self {
         match self {
             Variable::ContextVariable { bind_name, source_info, _phantom } => {
@@ -61,13 +61,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Variable<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Variable<T> {
-    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Variable<U, V> {
+    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Variable<T> {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Variable<U, V> {}
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Variable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Variable<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -82,7 +82,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Variable
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Variable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Variable<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -90,11 +90,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -138,11 +139,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -268,7 +270,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     }
 
     fn reduce(
-        self,
+        &self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self {
@@ -290,7 +292,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                 }
             }
             Variable::ContextVariable { bind_name, .. } => {
-                if let Some(ty) = ctx.capture_env.lookup(&bind_name).map_err(|_| {
+                if let Some(ty) = ctx.capture_env.lookup(bind_name).map_err(|_| {
                     TypeError::MissingVariable(bind_name.to_string().into_boxed_str())
                 })? {
                     Ok(ty.clone())
@@ -298,11 +300,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
                     Err(TypeError::MissingVariable(bind_name.to_string().into_boxed_str()))
                 }
             }
-            Variable::PatternVariable { .. } => Ok(self.dispatch()),
+            Variable::PatternVariable { .. } => Ok(self.clone().dispatch()),
         }
     }
 
-    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
@@ -337,7 +339,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for Variable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T>
+    for Variable<Type<T>, T>
+{
     #[stacksafe::stacksafe]
     fn accept(
         &self,
@@ -407,7 +411,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<Type<T>, T> {
     fn represent(
         &self,
         _path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -424,7 +428,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Variable<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Variable<Type<T>, T> {
     pub fn new_context(
         bind_name: impl Into<Arc<str>>,
         source_info: Option<Arc<SourceLocation>>,

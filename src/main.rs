@@ -19,7 +19,10 @@ use mutica_core::{
     scheduler::{self, ContinuationOrHandler, stack::Stack},
     stacksafe::{set_minimum_stack_size, set_stack_allocation_size},
     tokio,
-    types::{AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef},
+    types::{
+        AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef,
+        allocator::Allocators,
+    },
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
 
@@ -431,21 +434,27 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
 
     let mut gc = GC::new();
     let mut roots = RootStack::new();
-    let built_type =
-        match flowed.to_type(&mut BuildContext::new(), &mut gc, &mut roots, flowed.location()) {
-            Ok(result) => result,
-            Err(Ok(type_error)) => {
-                println!("Type building error: {:?}", type_error);
-                return;
-            }
-            Err(Err(parse_error)) => {
-                // 获取源文件信息用于错误报告
-                let filepath = source.filepath();
-                let source_content = source.content().to_string();
-                parse_error.report().eprint((filepath, ariadne::Source::from(source_content))).ok();
-                return;
-            }
-        };
+    let mut allocators = Allocators::new();
+    let built_type = match flowed.to_type(
+        &mut BuildContext::new(),
+        &mut gc,
+        &mut roots,
+        &mut allocators,
+        flowed.location(),
+    ) {
+        Ok(result) => result,
+        Err(Ok(type_error)) => {
+            println!("Type building error: {:?}", type_error);
+            return;
+        }
+        Err(Err(parse_error)) => {
+            // 获取源文件信息用于错误报告
+            let filepath = source.filepath();
+            let source_content = source.content().to_string();
+            parse_error.report().eprint((filepath, ariadne::Source::from(source_content))).ok();
+            return;
+        }
+    };
     #[cfg(debug_assertions)]
     println!("Built type: {}\n", built_type.ty().display(&mut FastCycleDetector::new(), 0, 6));
 
@@ -461,7 +470,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
         // #[cfg(debug_assertions)]
         // linear_scheduler.sweep_roots();
 
-        match linear_scheduler.step(&mut gc).await {
+        match linear_scheduler.step(&mut gc, &mut allocators).await {
             Ok(true) => (),
             Ok(false) => break Ok(linear_scheduler.current().clone()),
             Err(e) => break Err(e),

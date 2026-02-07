@@ -39,32 +39,37 @@ use crate::types::CoinductiveTypeRef;
 /// 由于递归类型的定义需要引用自身，我们必须：
 /// 1. **先创建占位符**：分配类型引用但不指定内容
 /// 2. **后填充定义**：通过 `set` 方法设置具体的递归结构
-pub struct FixPoint<T: GcAllocObject<T, Inner = Type<T>>> {
-    reference: GCArcWeak<T>,
+pub struct FixPoint<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    reference: GCArcWeak<V>,
     source_info: Option<Arc<SourceLocation>>,
+    _phantom: std::marker::PhantomData<U>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for FixPoint<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for FixPoint<U, V> {
     fn clone(&self) -> Self {
-        Self { reference: self.reference.clone(), source_info: self.source_info.clone() }
+        Self {
+            reference: self.reference.clone(),
+            source_info: self.source_info.clone(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for FixPoint<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for FixPoint<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<GCArcWeak<V>>) {
         queue.push_back(self.reference.clone());
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for FixPoint<T> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for FixPoint<U, V> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
         if let Some(strong) = self.reference.upgrade() {
             collected.push(strong);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<Type<T>, T> {
     pub fn map<F, R>(
         &self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -99,7 +104,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<Type<T>, T> {
     /// 创建递归类型占位符
     ///
     /// ## 返回值
@@ -117,7 +122,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let pointer = gc.create(T::new_fixpoint_placeholder());
-        let fix_point = FixPoint { reference: pointer.as_weak(), source_info };
+        let fix_point = FixPoint {
+            reference: pointer.as_weak(),
+            source_info,
+            _phantom: std::marker::PhantomData,
+        };
         roots.push(pointer);
         Type::FixPoint(fix_point)
     }
@@ -144,7 +153,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for FixPoint<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -158,7 +167,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for FixPoint
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPoint<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -166,11 +175,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx), // AllOf 是特殊情况，先展开All是可以的，因为外层全称量词作用于All
@@ -198,14 +208,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         let assumption_pair = (self_ptr, other_ptr);
                         // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
                         let already_assumed =
-                            inner_ctx.instance_assumptions.iter().any(|a| a == &assumption_pair);
+                            inner_ctx.coinductive_assumptions.iter().any(|a| a == &assumption_pair);
                         if already_assumed {
                             return Ok(ThreeValuedLogic::True); // already assumed
                         }
 
-                        inner_ctx.instance_assumptions.push(assumption_pair.clone());
+                        inner_ctx.coinductive_assumptions.push(assumption_pair.clone());
                         let result = inner.check(other, &mut inner_ctx);
-                        inner_ctx.instance_assumptions.pop();
+                        inner_ctx.coinductive_assumptions.pop();
                         result
                     }
                     None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
@@ -221,11 +231,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::FixPoint(v) => {
@@ -249,14 +260,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                         let assumption_pair = (self_ptr, other_ptr);
                         // 在 inner_ctx 的 assumptions 中检查，而不是 ctx.assumptions
                         let already_assumed =
-                            inner_ctx.instance_assumptions.iter().any(|a| a == &assumption_pair);
+                            inner_ctx.coinductive_assumptions.iter().any(|a| a == &assumption_pair);
                         if already_assumed {
                             return Ok(ThreeValuedLogic::True); // already assumed
                         }
 
-                        inner_ctx.instance_assumptions.push(assumption_pair.clone());
+                        inner_ctx.coinductive_assumptions.push(assumption_pair.clone());
                         let result = inner.subof(other, &mut inner_ctx);
-                        inner_ctx.instance_assumptions.pop();
+                        inner_ctx.coinductive_assumptions.pop();
                         result
                     }
                     None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
@@ -266,14 +277,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     }
 
     fn reduce(
-        self,
+        &self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
             Some(inner) => {
                 let inner_type = match inner.as_ref().get_fixpoint_value() {
                     Some(t) => t,
-                    None => return Ok(self.dispatch()), // 未初始化
+                    None => return Ok(self.clone().dispatch()), // 未初始化
                 };
                 for r in ctx.rec_assumptions.iter_mut().rev() {
                     if r.0 == inner_type.tagged_ptr() {
@@ -285,7 +296,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 let temp_fixpoint = Self::new_placeholder(ctx.gc, ctx.roots);
                 // 假设递归类型的归约结果为 temp_fixpoint
                 ctx.rec_assumptions.push((inner_type.tagged_ptr(), temp_fixpoint.clone(), false));
-                let result = (*inner_type).clone().reduce(ctx);
+                let result = (*inner_type).reduce(ctx);
                 let (_, _, used) = ctx.rec_assumptions.pop().unwrap();
                 if used {
                     // 递归类型在展开中被使用,返回新的递归类型
@@ -300,13 +311,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         }
     }
 
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
             Some(inner) => inner
                 .as_ref()
                 .get_fixpoint_value()
                 .ok_or(TypeError::UnresolvableType(self.clone().dispatch().into()))
-                .and_then(|t| t.clone().invoke(ctx)),
+                .and_then(|t| t.invoke(ctx)),
             None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
         }
     }
@@ -337,7 +348,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T>
+    for FixPoint<Type<T>, T>
+{
     #[stacksafe::stacksafe]
     fn accept(
         &self,
@@ -346,11 +359,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match self.reference.upgrade() {
                 Some(inner) => other.check(
@@ -373,11 +387,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match self.reference.upgrade() {
                 Some(inner) => other.subof(
@@ -393,7 +408,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for FixPoint<Type<T>, T> {
     /// 递归类型的字符串表示
     ///
     /// 使用数学记号 `μ.地址 内容` 表示不动点类型，其中：

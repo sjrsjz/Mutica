@@ -7,6 +7,7 @@ use arc_gc::{
 };
 
 use crate::{
+    as_type,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
         GcAllocObject, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
@@ -18,32 +19,37 @@ use crate::{
     },
 };
 
-pub struct Mutable<T: GcAllocObject<T, Inner = Type<T>>> {
-    reference: GCArcWeak<T>,
+pub struct Mutable<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    reference: GCArcWeak<V>,
     source_info: Option<Arc<SourceLocation>>,
+    _phantom: std::marker::PhantomData<(U, V)>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Mutable<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Mutable<U, V> {
     fn clone(&self) -> Self {
-        Self { reference: self.reference.clone(), source_info: self.source_info.clone() }
+        Self {
+            reference: self.reference.clone(),
+            source_info: self.source_info.clone(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Mutable<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Mutable<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
         queue.push_back(self.reference.clone());
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Mutable<T> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Mutable<U, V> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
         if let Some(strong) = self.reference.upgrade() {
             collected.push(strong);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Mutable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Mutable<Type<T>, T> {
     fn represent(
         &self,
         path: &mut crate::util::cycle_detector::FastCycleDetector<TaggedPtr<()>>,
@@ -65,7 +71,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Mutable<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Mutable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Mutable<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -80,7 +86,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Mutable<
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutable<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -88,11 +94,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutab
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -132,11 +139,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutab
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.bound_generic_variables
+                ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -167,27 +175,47 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutab
     }
 
     fn reduce(
-        self,
+        &self,
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         match self.reference.upgrade() {
-            Some(strong) => strong
-                .as_ref()
-                .map_mutable_value(&mut FastCycleDetector::new(), |_, value| {
-                    value.clone_data().reduce(ctx)
-                })
-                .transpose()?
-                .map(|reduced| Self::new(reduced, self.source_info.clone(), ctx.gc, ctx.roots))
-                .ok_or_else(|| TypeError::UnresolvableType(self.dispatch().into())),
-            None => Err(TypeError::UnresolvableType(self.dispatch().into())),
+            Some(strong) => match strong.as_ref().get_mutable_value() {
+                Some(value) => {
+                    for r in ctx.rec_assumptions.iter_mut().rev() {
+                        if r.0 == value.tagged_ptr() {
+                            r.2 = true; // mark as used
+                            return Ok(r.1.clone());
+                        }
+                    }
+                    let temp_mutable = Self::new(
+                        self.clone().dispatch(),
+                        self.source_info.clone(),
+                        ctx.gc,
+                        ctx.roots,
+                    );
+                    ctx.rec_assumptions.push((value.tagged_ptr(), temp_mutable.clone(), false));
+                    let result = value.reduce(ctx);
+                    let (_, _, used) = ctx.rec_assumptions.pop().unwrap();
+                    if used {
+                        as_type!(&temp_mutable, Type::Mutable).assign(result?)?;
+                        Ok(temp_mutable)
+                    } else {
+                        result.map(|reduced| {
+                            Self::new(reduced, self.source_info.clone(), ctx.gc, ctx.roots)
+                        })
+                    }
+                }
+                None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
+            },
+            None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
         }
     }
 
     fn invoke(
-        self,
+        &self,
         _ctx: super::InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.dispatch().into()))
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -216,7 +244,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutab
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Mutable<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Mutable<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<X: AsDispatcher<Type<T>, T>>(
         value: X,
@@ -227,7 +255,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Mutable<T> {
         let gc_arc = gc.create(T::new_mutable_slot(value.into_dispatcher()));
         let reference = gc_arc.as_weak();
         roots.push(gc_arc);
-        Mutable { reference, source_info }.dispatch()
+        Mutable { reference, source_info, _phantom: std::marker::PhantomData }.dispatch()
     }
 
     pub fn reference(&self) -> Option<GCArc<T>> {

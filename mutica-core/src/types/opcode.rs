@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{num::NonZero, sync::Arc};
 
 use arc_gc::traceable::GCTraceable;
 
@@ -16,10 +16,10 @@ use crate::{
     },
 };
 
-pub struct Opcode<T: GcAllocObject<T, Inner = Type<T>>> {
+pub struct Opcode<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pub kind: OpcodeKind,
     source_info: Option<Arc<SourceLocation>>,
-    _phantom: std::marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<(U, V)>,
 }
 
 pub enum OpcodeKind {
@@ -43,7 +43,7 @@ pub enum OpcodeKind {
     Pandom,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Opcode<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Opcode<U, V> {
     fn clone(&self) -> Self {
         Self {
             kind: self.kind.clone(),
@@ -75,13 +75,13 @@ impl Clone for OpcodeKind {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Opcode<T> {
-    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Opcode<U, V> {
+    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Opcode<T> {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Opcode<U, V> {}
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Opcode<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Opcode<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -96,7 +96,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Opcode<T
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcode<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcode<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -104,11 +104,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -147,11 +148,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -184,306 +186,38 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     }
 
     fn reduce(
-        self,
+        &self,
         _ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(self.dispatch())
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(&self, mut ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let self_clone = self.clone();
         ctx.arg
-            .take(&mut FastCycleDetector::new(), |_, arg| match &self.kind {
-                OpcodeKind::Opcode => Err(TypeError::NonApplicableType(self.dispatch().into())),
-                OpcodeKind::Assign => {
-                    if let Type::Sequence(tuple) = &arg && tuple.is_tuple(){
-                        if tuple.len() == 2 {
-                            let left = tuple.get_prefix_value(0).unwrap();
-                            let right = tuple.get_prefix_value(1).unwrap();
-                            left.map(&mut FastCycleDetector::new(), |_, left_val| {
-                                match left_val {
-                                    TypeRef::Mutable(var) => {
-                                        var.assign(right)?;
-                                        Ok(Sequence::unit(ctx.source_info.cloned()))
-                                    }
-                                    _ => Err(TypeError::TypeMismatch(
-                                        (left_val.clone_data().dispatch(), "Mutable".into()).into(),
-                                    )),
-                                }
-                            })?.unwrap_or(Err(TypeError::UnresolvableType(
-                                self.dispatch().into(),
-                            )))
-                        } else {
-                            Err(TypeError::TypeMismatch(
-                                (tuple.clone().dispatch(), "(Mutable, Any)".into()).into(),
-                            ))
-                        }
-                    } else {
-                        Err(TypeError::TypeMismatch(
-                            (arg, "Finite Sequence".into()).into(),
-                        ))
-                    }
+            .map(&mut FastCycleDetector::new(), |_, arg| match &self.kind {
+                OpcodeKind::Opcode => {
+                    Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
                 }
-                OpcodeKind::SetFixPoint => {
-                    if let Type::Sequence(tuple) = &arg && tuple.is_tuple(){
-                        if tuple.len() == 2 {
-                            let left = tuple.get_prefix_value(0).unwrap();
-                            let right = tuple.get_prefix_value(1).unwrap();
-                            match left {
-                                Type::FixPoint(fixpoint) => {
-                                    fixpoint.set(right)?;
-                                    Ok(fixpoint.clone().dispatch())
-                                }
-                                _ => Err(TypeError::TypeMismatch(
-                                    (left.clone().dispatch(), "FixPoint".into()).into(),
-                                )),
-                            }
-                        } else {
-                            Err(TypeError::TypeMismatch(
-                                (tuple.clone().dispatch(), "(FixPoint, Any)".into()).into(),
-                            ))
-                        }
-                    } else {
-                        Err(TypeError::TypeMismatch(
-                            (arg, "Finite Sequence".into()).into(),
-                        ))
-                    }
-                }
-                OpcodeKind::BuildFixPoint => {
-                    let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
-                    let invoke = Invoke::new(
-                            Self::new(OpcodeKind::SetFixPoint, None).dispatch(),
-                            Sequence::new_tuple(vec![place_holder.clone(), Variable::new_argument("var#fixpoint", None)], None),
-                            None::<Type<T>>,
-                            None::<Type<T>>,None);
-
-                    let call_back: Type<T> = Closure::lazy(None, "var#fixpoint", invoke, ctx.environment)?;
-                    Ok(Invoke::new(arg, place_holder, Some(call_back), None::<Type<_>>, ctx.source_info.cloned()))
-                }
+                OpcodeKind::Assign => self.invoke_assign(&ctx, arg),
+                OpcodeKind::SetFixPoint => self.invoke_set_fixpoint(arg),
+                OpcodeKind::BuildFixPoint => self.invoke_build_fixpoint(&mut ctx, arg),
                 OpcodeKind::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
-                    std::io::Error::other(
-                        format!("Unhandled IO operation: {}", v),
-                    ),
+                    std::io::Error::other(format!("Unhandled IO operation: {}", v)),
                 ))),
-                OpcodeKind::Neg => {
-                    if let Type::FloatValue(n) = arg {
-                        Ok(FloatValue::new(-n.value(), ctx.source_info.cloned()))
-                    } else {
-                        Err(TypeError::TypeMismatch(
-                            (arg, "FloatValue".into()).into(),
-                        ))
-                    }
-                }
-                OpcodeKind::Is => {
-                    if let Type::Sequence(tuple) = &arg && tuple.is_tuple() {
-                        if tuple.len() == 4 {
-                            let left = tuple.get_prefix_value(0).unwrap();
-                            let right = tuple.get_prefix_value(1).unwrap();
-                            let true_branch = tuple.get_prefix_value(2).unwrap();
-                            let false_branch = tuple.get_prefix_value(3).unwrap();
-                            let mut assumptions = smallvec::SmallVec::new();
-                            let empty_binding = GenericBinding::wait_for_bind(None);
-                            let mut type_check_ctx = TypeCheckContext::new(
-                                &mut assumptions,
-                                PatternCollector::None,
-                                ctx.environment,
-                                ctx.environment,
-                                &empty_binding
-                            );
-                            match left.check(right.as_ref_dispatcher(), &mut type_check_ctx) {
-                                Ok(res) => Ok(if let ThreeValuedLogic::True = res { true_branch.clone() } else { false_branch.clone() }),
-                                Err(e) => Err(e),
-                            }
-                        } else {
-                            Err(TypeError::TypeMismatch(
-                                (
-                                    tuple.clone().dispatch(),
-                                    "(Value, Type, TrueCase, FalseCase)".into()
-                                )
-                                    .into(),
-                            ))
-                        }
-                    } else {
-                        Err(TypeError::TypeMismatch(
-                            (arg, "Finite Sequence".into()).into(),
-                        ))
-                    }
-                }
+                OpcodeKind::Neg => self.invoke_neg(&ctx, arg),
+                OpcodeKind::Is => self.invoke_is(&mut ctx, arg),
                 OpcodeKind::Add
                 | OpcodeKind::Sub
                 | OpcodeKind::Mul
                 | OpcodeKind::Div
-                | OpcodeKind::Mod => {
-                    if let Type::Sequence(tuple) = &arg && tuple.is_tuple() {
-                        if tuple.len() == 2 {
-                            let left = tuple.get_prefix_value(0).unwrap();
-                            let right = tuple.get_prefix_value(1).unwrap();
-                        match (left, right) {
-                            (Type::NaturalNumber(l), Type::NaturalNumber(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(NaturalNumber::new(l.value().wrapping_add(r.value()), ctx.source_info.cloned())),
-                                OpcodeKind::Sub => Ok(NaturalNumber::new(l.value().wrapping_sub(r.value()), ctx.source_info.cloned())),
-                                OpcodeKind::Mul => Ok(NaturalNumber::new(l.value().wrapping_mul(r.value()), ctx.source_info.cloned())),
-                                OpcodeKind::Div => {
-                                    if r.value() == 0 {
-                                        Err(TypeError::TypeMismatch(
-                                            (r.clone().dispatch(), "Non-zero nature number".into()).into(),
-                                        ))
-                                    } else {
-                                        Ok(NaturalNumber::new(l.value() / r.value(), ctx.source_info.cloned()))
-                                    }
-                                }
-                                OpcodeKind::Mod => {
-                                    if r.value() == 0 {
-                                        Err(TypeError::TypeMismatch(
-                                            (r.clone().dispatch(), "Non-zero nature number".into()).into(),
-                                        ))
-                                    } else {
-                                        Ok(NaturalNumber::new(l.value() % r.value(), ctx.source_info.cloned()))
-                                    }
-                                }
-                                _ => unreachable!(),
-                            },
-                            (Type::FloatValue(l), Type::FloatValue(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(FloatValue::new(l.value() + r.value(), ctx.source_info.cloned())),
-                                OpcodeKind::Sub => Ok(FloatValue::new(l.value() - r.value(), ctx.source_info.cloned())),
-                                OpcodeKind::Mul => Ok(FloatValue::new(l.value() * r.value(), ctx.source_info.cloned())),
-                                OpcodeKind::Div => {
-                                    if r.value() == 0.0 {
-                                        Err(TypeError::TypeMismatch(
-                                            (r.clone().dispatch(), "Non-zero float".into()).into(),
-                                        ))
-                                    } else {
-                                        Ok(FloatValue::new(l.value() / r.value(), ctx.source_info.cloned()))
-                                    }
-                                }
-                                OpcodeKind::Mod => {
-                                    if r.value() == 0.0 {
-                                        Err(TypeError::TypeMismatch(
-                                            (r.clone().dispatch(), "Non-zero float".into()).into(),
-                                        ))
-                                    } else {
-                                        Ok(FloatValue::new(l.value() % r.value(), ctx.source_info.cloned()))
-                                    }
-                                }
-                                _ => unreachable!(),
-                            },
-                            (Type::Sequence(l), Type::Sequence(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(l.add(r, ctx.environment)?.dispatch()),
-                                _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
-                                    std::io::Error::other(
-                                        "Only 'Add' operation is supported for Sequence types",
-                                    ),
-                                ))),
-                            },
-                            (Type::Closure(l), Type::Closure(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(l.clone().impls(r.clone(), ctx.source_info.cloned())?),
-                                _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
-                                    std::io::Error::other(
-                                        "Only 'Add' operation is supported for Closure types",
-                                    ),
-                                ))),
-                            },
-                            (Type::Lambda(l), Type::Lambda(r)) => match &self.kind {
-                                OpcodeKind::Add => Ok(l.clone().impls(r.clone(), ctx.source_info.cloned())?),
-                                _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
-                                    std::io::Error::other(
-                                        "Only 'Add' operation is supported for Lambda types",
-                                    ),
-                                ))),
-                            },
-                            (l, r) => Err(TypeError::TypeMismatch(
-                                (
-                                    Sequence::new_tuple(vec![l, r], self.source_info.clone()),
-                                    "(Finite Sequence, Finite Sequence) | (FloatValue, FloatValue) | (Closure, Closure) | (Lambda, Lambda) | (Tuple, Tuple)".into()
-                                )
-                                    .into(),
-                            )),
-                        }
-                        } else {
-                            Err(TypeError::TypeMismatch(
-                                (tuple.clone().dispatch(), "Finite Sequence".into()).into(),
-                            ))
-                        }
-                    } else {
-                        Err(TypeError::TypeMismatch(
-                            (arg, "Finite Sequence".into()).into(),
-                        ))
-                    }
-                }
-                OpcodeKind::Less | OpcodeKind::Greater => {
-                    if let Type::Sequence(tuple) = &arg && tuple.is_tuple() {
-                        if tuple.len() == 4 {
-                            let left = tuple.get_prefix_value(0).unwrap();
-                            let right = tuple.get_prefix_value(1).unwrap();
-                            let true_branch = tuple.get_prefix_value(2).unwrap();
-                            let false_branch = tuple.get_prefix_value(3).unwrap();
-                            match (left, right) {
-                                (Type::Sequence(l), Type::Sequence(r)) if l.is_tuple() && r.is_tuple()=> {
-                                    let condition = match &self.kind {
-                                        OpcodeKind::Less => l.len() < r.len(),
-                                        OpcodeKind::Greater => l.len() > r.len(),
-                                        _ => unreachable!(),
-                                    };
-                                    let result = if condition {
-                                        true_branch
-                                    } else {
-                                        false_branch
-                                    };
-                                    Ok(result.clone())
-                                }
-                                (Type::NaturalNumber(l), Type::NaturalNumber(r)) => {
-                                    let condition = match &self.kind {
-                                        OpcodeKind::Less => l.value() < r.value(),
-                                        OpcodeKind::Greater => l.value() > r.value(),
-                                        _ => unreachable!(),
-                                    };
-                                    let result = if condition {
-                                        true_branch
-                                    } else {
-                                        false_branch
-                                    };
-                                    Ok(result.clone())
-                                }
-                                (Type::FloatValue(l), Type::FloatValue(r)) => {
-                                    let condition = match &self.kind {
-                                        OpcodeKind::Less => l.value() < r.value(),
-                                        OpcodeKind::Greater => l.value() > r.value(),
-                                        _ => unreachable!(),
-                                    };
-                                    let result = if condition {
-                                        true_branch
-                                    } else {
-                                        false_branch
-                                    };
-                                    Ok(result.clone())
-                                }
-                                (l, r) => Err(TypeError::TypeMismatch(
-                                    (
-                                        Sequence::new_tuple(vec![l, r], self.source_info.clone()),
-                                        "(Finite Sequence, Finite Sequence, Any, Any) | (FloatValue, FloatValue, Any, Any) | (NaturalNumber, NaturalNumber, Any, Any)".into()
-                                    )
-                                        .into(),
-                                )),
-                            }
-                        } else {
-                            Err(TypeError::TypeMismatch(
-                                (
-                                    tuple.clone().dispatch(),
-                                    "(Value, Value, TrueCase, FalseCase)".into()
-                                )
-                                    .into(),
-                            ))
-                        }
-                    } else {
-                        Err(TypeError::TypeMismatch(
-                            (arg, "Finite Sequence".into()).into(),
-                        ))
-                    }
-                }
+                | OpcodeKind::Mod => self.invoke_arithmetic(&mut ctx, arg),
+                OpcodeKind::Less | OpcodeKind::Greater => self.invoke_compare(&mut ctx, arg),
                 OpcodeKind::Pandom => {
                     unreachable!()
                 }
-            })?.unwrap_or(Err(TypeError::UnresolvableType(self_clone.dispatch().into())))
+            })?
+            .unwrap_or(Err(TypeError::UnresolvableType(self_clone.dispatch().into())))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -512,7 +246,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<Type<T>, T> {
     fn represent(
         &self,
         _path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -539,9 +273,361 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(kind: OpcodeKind, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         Self { kind, source_info, _phantom: std::marker::PhantomData }.dispatch()
+    }
+
+    fn invoke_assign(
+        &self,
+        ctx: &InvokeContext<Type<T>, T>,
+        arg: TypeRef<T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        if let TypeRef::Sequence(tuple) = arg
+            && tuple.is_tuple()
+        {
+            if tuple.len() == 2 {
+                let left = tuple.get_prefix_value(0).unwrap();
+                let right = tuple.get_prefix_value(1).unwrap();
+                left.map(&mut FastCycleDetector::new(), |_, left_val| match left_val {
+                    TypeRef::Mutable(var) => {
+                        var.assign(right)?;
+                        Ok(Sequence::unit(ctx.source_info.cloned()))
+                    }
+                    _ => Err(TypeError::TypeMismatch(
+                        (left_val.clone_data().dispatch(), "Mutable".into()).into(),
+                    )),
+                })?
+                .unwrap_or(Err(TypeError::UnresolvableType(self.clone().dispatch().into())))
+            } else {
+                Err(TypeError::TypeMismatch(
+                    (tuple.clone().dispatch(), "(Mutable, Any)".into()).into(),
+                ))
+            }
+        } else {
+            Err(TypeError::TypeMismatch((arg.into_dispatcher(), "Finite Sequence".into()).into()))
+        }
+    }
+
+    fn invoke_set_fixpoint(&self, arg: TypeRef<T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        if let TypeRef::Sequence(tuple) = arg
+            && tuple.is_tuple()
+        {
+            if tuple.len() == 2 {
+                let left = tuple.get_prefix_value(0).unwrap();
+                let right = tuple.get_prefix_value(1).unwrap();
+                match left {
+                    Type::FixPoint(fixpoint) => {
+                        fixpoint.set(right)?;
+                        Ok(fixpoint.clone().dispatch())
+                    }
+                    _ => Err(TypeError::TypeMismatch(
+                        (left.into_dispatcher(), "FixPoint".into()).into(),
+                    )),
+                }
+            } else {
+                Err(TypeError::TypeMismatch(
+                    (tuple.clone().into_dispatcher(), "(FixPoint, Any)".into()).into(),
+                ))
+            }
+        } else {
+            Err(TypeError::TypeMismatch((arg.into_dispatcher(), "Finite Sequence".into()).into()))
+        }
+    }
+
+    fn invoke_build_fixpoint(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+        arg: TypeRef<T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        let place_holder = FixPoint::new_placeholder(ctx.gc, ctx.roots);
+        let invoke = Invoke::new(
+            Self::new(OpcodeKind::SetFixPoint, None).dispatch(),
+            Sequence::new_tuple(
+                vec![
+                    (place_holder.clone(), NonZero::new(1).unwrap()),
+                    (Variable::new_argument("var#fixpoint", None), NonZero::new(1).unwrap()),
+                ],
+                ctx.allocators,
+                None,
+            ),
+            None::<Type<T>>,
+            None::<Type<T>>,
+            ctx.allocators,
+            None,
+        );
+
+        let call_back: Type<T> =
+            Closure::lazy(None, "var#fixpoint", invoke, ctx.environment, ctx.allocators)?;
+        Ok(Invoke::new(
+            arg,
+            place_holder,
+            Some(call_back),
+            None::<Type<_>>,
+            ctx.allocators,
+            ctx.source_info.cloned(),
+        ))
+    }
+
+    fn invoke_neg(
+        &self,
+        ctx: &InvokeContext<Type<T>, T>,
+        arg: TypeRef<T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        if let TypeRef::FloatValue(n) = arg {
+            Ok(FloatValue::new(-n.value(), ctx.source_info.cloned()))
+        } else {
+            Err(TypeError::TypeMismatch((arg.into_dispatcher(), "FloatValue".into()).into()))
+        }
+    }
+
+    fn invoke_is(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+        arg: TypeRef<T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        if let TypeRef::Sequence(tuple) = arg
+            && tuple.is_tuple()
+        {
+            if tuple.len() == 4 {
+                let left = tuple.get_prefix_value(0).unwrap();
+                let right = tuple.get_prefix_value(1).unwrap();
+                let true_branch = tuple.get_prefix_value(2).unwrap();
+                let false_branch = tuple.get_prefix_value(3).unwrap();
+                let mut assumptions = smallvec::SmallVec::new();
+                let empty_binding = GenericBinding::wait_for_bind(None);
+                let mut type_check_ctx = TypeCheckContext::new(
+                    &mut assumptions,
+                    PatternCollector::None,
+                    ctx.environment,
+                    ctx.environment,
+                    &empty_binding,
+                    ctx.allocators,
+                );
+                match left.check(right.as_ref_dispatcher(), &mut type_check_ctx) {
+                    Ok(res) => Ok(if let ThreeValuedLogic::True = res {
+                        true_branch.clone()
+                    } else {
+                        false_branch.clone()
+                    }),
+                    Err(e) => Err(e),
+                }
+            } else {
+                Err(TypeError::TypeMismatch(
+                    (tuple.clone().dispatch(), "(Value, Type, TrueCase, FalseCase)".into()).into(),
+                ))
+            }
+        } else {
+            Err(TypeError::TypeMismatch((arg.into_dispatcher(), "Finite Sequence".into()).into()))
+        }
+    }
+
+    fn invoke_arithmetic(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+        arg: TypeRef<T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        if let TypeRef::Sequence(tuple) = arg
+            && tuple.is_tuple()
+        {
+            if tuple.len() == 2 {
+                let left: &Type<T> = tuple.get_prefix_value(0).unwrap();
+                let right: &Type<T> = tuple.get_prefix_value(1).unwrap();
+                match (left, right) {
+                    (Type::NaturalNumber(l), Type::NaturalNumber(r)) => match &self.kind {
+                        OpcodeKind::Add => Ok(NaturalNumber::new(
+                            l.value().wrapping_add(r.value()),
+                            ctx.source_info.cloned(),
+                        )),
+                        OpcodeKind::Sub => Ok(NaturalNumber::new(
+                            l.value().wrapping_sub(r.value()),
+                            ctx.source_info.cloned(),
+                        )),
+                        OpcodeKind::Mul => Ok(NaturalNumber::new(
+                            l.value().wrapping_mul(r.value()),
+                            ctx.source_info.cloned(),
+                        )),
+                        OpcodeKind::Div => {
+                            if r.value() == 0 {
+                                Err(TypeError::TypeMismatch(
+                                    (r.clone().dispatch(), "Non-zero nature number".into()).into(),
+                                ))
+                            } else {
+                                Ok(NaturalNumber::new(
+                                    l.value() / r.value(),
+                                    ctx.source_info.cloned(),
+                                ))
+                            }
+                        }
+                        OpcodeKind::Mod => {
+                            if r.value() == 0 {
+                                Err(TypeError::TypeMismatch(
+                                    (r.clone().dispatch(), "Non-zero nature number".into()).into(),
+                                ))
+                            } else {
+                                Ok(NaturalNumber::new(
+                                    l.value() % r.value(),
+                                    ctx.source_info.cloned(),
+                                ))
+                            }
+                        }
+                        _ => unreachable!(),
+                    },
+                    (Type::FloatValue(l), Type::FloatValue(r)) => match &self.kind {
+                        OpcodeKind::Add => {
+                            Ok(FloatValue::new(l.value() + r.value(), ctx.source_info.cloned()))
+                        }
+                        OpcodeKind::Sub => {
+                            Ok(FloatValue::new(l.value() - r.value(), ctx.source_info.cloned()))
+                        }
+                        OpcodeKind::Mul => {
+                            Ok(FloatValue::new(l.value() * r.value(), ctx.source_info.cloned()))
+                        }
+                        OpcodeKind::Div => {
+                            if r.value() == 0.0 {
+                                Err(TypeError::TypeMismatch(
+                                    (r.clone().dispatch(), "Non-zero float".into()).into(),
+                                ))
+                            } else {
+                                Ok(FloatValue::new(l.value() / r.value(), ctx.source_info.cloned()))
+                            }
+                        }
+                        OpcodeKind::Mod => {
+                            if r.value() == 0.0 {
+                                Err(TypeError::TypeMismatch(
+                                    (r.clone().dispatch(), "Non-zero float".into()).into(),
+                                ))
+                            } else {
+                                Ok(FloatValue::new(l.value() % r.value(), ctx.source_info.cloned()))
+                            }
+                        }
+                        _ => unreachable!(),
+                    },
+                    (Type::Sequence(l), Type::Sequence(r)) => match &self.kind {
+                        OpcodeKind::Add => {
+                            Ok(l.add(r, ctx.allocators, ctx.environment)?.dispatch())
+                        }
+                        _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                            std::io::Error::other(
+                                "Only 'Add' operation is supported for Sequence types",
+                            ),
+                        ))),
+                    },
+                    (Type::Closure(l), Type::Closure(r)) => match &self.kind {
+                        OpcodeKind::Add => {
+                            Ok(l.impls(r, ctx.allocators, ctx.source_info.cloned())?)
+                        }
+                        _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                            std::io::Error::other(
+                                "Only 'Add' operation is supported for Closure types",
+                            ),
+                        ))),
+                    },
+                    (Type::Lambda(l), Type::Lambda(r)) => match &self.kind {
+                        OpcodeKind::Add => {
+                            Ok(l.impls(r, ctx.allocators, ctx.source_info.cloned())?)
+                        }
+                        _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
+                            std::io::Error::other(
+                                "Only 'Add' operation is supported for Lambda types",
+                            ),
+                        ))),
+                    },
+                    (l, r) => {
+                        let err = "(Finite Sequence, Finite Sequence) | (FloatValue, FloatValue) | (Closure, Closure) | (Lambda, Lambda) | (Tuple, Tuple)".into();
+                        Err(TypeError::TypeMismatch(
+                            (
+                                Sequence::new_tuple(
+                                    vec![
+                                        (l, NonZero::new(1).unwrap()),
+                                        (r, NonZero::new(1).unwrap()),
+                                    ],
+                                    ctx.allocators,
+                                    ctx.source_info.cloned(),
+                                ),
+                                err,
+                            )
+                                .into(),
+                        ))
+                    }
+                }
+            } else {
+                Err(TypeError::TypeMismatch(
+                    (tuple.clone().dispatch(), "Finite Sequence".into()).into(),
+                ))
+            }
+        } else {
+            Err(TypeError::TypeMismatch((arg.into_dispatcher(), "Finite Sequence".into()).into()))
+        }
+    }
+
+    fn invoke_compare(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+        arg: TypeRef<T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        if let TypeRef::Sequence(tuple) = arg
+            && tuple.is_tuple()
+        {
+            if tuple.len() == 4 {
+                let left = tuple.get_prefix_value(0).unwrap();
+                let right = tuple.get_prefix_value(1).unwrap();
+                let true_branch = tuple.get_prefix_value(2).unwrap();
+                let false_branch = tuple.get_prefix_value(3).unwrap();
+                match (left, right) {
+                    (Type::Sequence(l), Type::Sequence(r)) if l.is_tuple() && r.is_tuple() => {
+                        let condition = match &self.kind {
+                            OpcodeKind::Less => l.len() < r.len(),
+                            OpcodeKind::Greater => l.len() > r.len(),
+                            _ => unreachable!(),
+                        };
+                        let result = if condition { true_branch } else { false_branch };
+                        Ok(result.clone())
+                    }
+                    (Type::NaturalNumber(l), Type::NaturalNumber(r)) => {
+                        let condition = match &self.kind {
+                            OpcodeKind::Less => l.value() < r.value(),
+                            OpcodeKind::Greater => l.value() > r.value(),
+                            _ => unreachable!(),
+                        };
+                        let result = if condition { true_branch } else { false_branch };
+                        Ok(result.clone())
+                    }
+                    (Type::FloatValue(l), Type::FloatValue(r)) => {
+                        let condition = match &self.kind {
+                            OpcodeKind::Less => l.value() < r.value(),
+                            OpcodeKind::Greater => l.value() > r.value(),
+                            _ => unreachable!(),
+                        };
+                        let result = if condition { true_branch } else { false_branch };
+                        Ok(result.clone())
+                    }
+                    (l, r) => {
+                        let err = "(Finite Sequence, Finite Sequence, Any, Any) | (FloatValue, FloatValue, Any, Any) | (NaturalNumber, NaturalNumber, Any, Any)".into();
+                        Err(TypeError::TypeMismatch(
+                            (
+                                Sequence::new_tuple(
+                                    vec![
+                                        (l, NonZero::new(1).unwrap()),
+                                        (r, NonZero::new(1).unwrap()),
+                                    ],
+                                    ctx.allocators,
+                                    self.source_info.clone(),
+                                ),
+                                err,
+                            )
+                                .into(),
+                        ))
+                    }
+                }
+            } else {
+                Err(TypeError::TypeMismatch(
+                    (tuple.clone().dispatch(), "(Value, Value, TrueCase, FalseCase)".into()).into(),
+                ))
+            }
+        } else {
+            Err(TypeError::TypeMismatch((arg.into_dispatcher(), "Finite Sequence".into()).into()))
+        }
     }
 }

@@ -14,40 +14,40 @@ use crate::{
     },
 };
 
-pub trait OpaqueValue<T: GcAllocObject<T, Inner = Type<T>>>:
-    Any + Send + Sync + GCTraceable<T> + Rootable<T> + Representable
+pub trait OpaqueValue<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
+    Any + Send + Sync + GCTraceable<V> + Rootable<V> + Representable
 {
     /// 尝试调用此不透明对象。
     ///
     /// 返回 Ok(result) 表示调用成功。
     /// 返回 Err(TypeError::NonApplicableType) 表示对象不可调用。
     /// 返回 Err(其他错误) 表示调用失败。
-    fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>>;
+    fn invoke(&self, ctx: InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
 }
 
-pub struct OpaqueObject<T: GcAllocObject<T, Inner = Type<T>>> {
-    object: Arc<dyn OpaqueValue<T>>,
+pub struct OpaqueObject<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    object: Arc<dyn OpaqueValue<U, V>>,
     source_info: Option<Arc<SourceLocation>>,
 }
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for OpaqueObject<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for OpaqueObject<U, V> {
     fn clone(&self) -> Self {
         Self { object: self.object.clone(), source_info: self.source_info.clone() }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for OpaqueObject<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for OpaqueObject<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
         self.object.collect(queue);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for OpaqueObject<T> {
-    fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for OpaqueObject<U, V> {
+    fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<V>>) {
         self.object.upgrade(collected);
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for OpaqueObject<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for OpaqueObject<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -61,7 +61,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for OpaqueOb
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for OpaqueObject<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T>
+    for OpaqueObject<Type<T>, T>
+{
     fn check(
         &self,
         other: TypeRef<T>,
@@ -69,11 +71,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opaqu
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -95,11 +98,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opaqu
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -115,13 +119,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opaqu
     }
 
     fn reduce(
-        self,
+        &self,
         _ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(self.dispatch())
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // 直接调用不透明对象
         self.object.invoke(ctx)
     }
@@ -160,7 +164,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opaqu
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for OpaqueObject<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for OpaqueObject<Type<T>, T> {
     fn represent(
         &self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -171,16 +175,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for OpaqueObject<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> OpaqueObject<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> OpaqueObject<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
-        object: impl OpaqueValue<T> + 'static,
+        object: impl OpaqueValue<Type<T>, T> + 'static,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         OpaqueObject { object: Arc::new(object), source_info }.dispatch()
     }
 
-    pub fn value(&self) -> &dyn OpaqueValue<T> {
+    pub fn value(&self) -> &dyn OpaqueValue<Type<T>, T> {
         self.object.as_ref()
     }
 }

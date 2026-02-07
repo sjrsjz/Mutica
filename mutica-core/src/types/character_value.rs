@@ -14,13 +14,13 @@ use crate::{
     },
 };
 
-pub struct CharacterValue<T: GcAllocObject<T, Inner = Type<T>>> {
+pub struct CharacterValue<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     value: char,
     source_info: Option<Arc<SourceLocation>>,
-    _phantom: std::marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<(U, V)>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for CharacterValue<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for CharacterValue<U, V> {
     fn clone(&self) -> Self {
         Self {
             value: self.value,
@@ -30,11 +30,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for CharacterValue<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for CharacterValue<T> {
-    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for CharacterValue<U, V> {
+    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for CharacterValue<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for CharacterValue<U, V> {}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for CharacterValue<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -48,9 +50,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Characte
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for CharacterValue<T> {}
-
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T>
+    for CharacterValue<Type<T>, T>
+{
     fn check(
         &self,
         other: TypeRef<T>,
@@ -58,11 +60,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -87,11 +90,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -107,14 +111,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
     }
 
     fn reduce(
-        self,
+        &self,
         _ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(self.dispatch())
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.dispatch().into()))
+    fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -144,7 +148,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Chara
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for CharacterValue<Type<T>, T> {
     fn represent(
         &self,
         _path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -164,10 +168,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for CharacterValue<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CharacterValue<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CharacterValue<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(value: char, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        CharacterValue { value, source_info, _phantom: std::marker::PhantomData }.dispatch()
+        CharacterValue::<Type<T>, T> { value, source_info, _phantom: std::marker::PhantomData }
+            .dispatch()
     }
 
     pub fn value(&self) -> char {

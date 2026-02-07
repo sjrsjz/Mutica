@@ -1,48 +1,50 @@
 use std::sync::Arc;
 
 use arc_gc::traceable::GCTraceable;
+use arena_arc::ArcSlice;
+use smallvec::SmallVec;
 
 use crate::{
     as_type,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
-        Type, TypeCheckContext, TypeError, TypeRef, constraint::Constraint,
+        Type, TypeCheckContext, TypeError, TypeRef, allocator::Allocators, constraint::Constraint,
     },
     util::{
-        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
 
-pub struct Lambda<T: GcAllocObject<T, Inner = Type<T>>> {
-    patterns: ArcOpt<Vec<Constraint<T>>>,
+pub struct Lambda<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    patterns: ArcSlice<Constraint<U, V>, usize>,
     source_info: Option<Arc<SourceLocation>>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Lambda<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Lambda<U, V> {
     fn clone(&self) -> Self {
         Self { patterns: self.patterns.clone(), source_info: self.source_info.clone() }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Lambda<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Lambda<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
         for pattern in self.patterns.iter() {
             pattern.collect(queue);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Lambda<T> {
-    fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Lambda<U, V> {
+    fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<V>>) {
         for pattern in self.patterns.iter() {
             pattern.upgrade(collected);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Lambda<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Lambda<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -56,7 +58,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Lambda<T
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambda<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambda<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -64,11 +66,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -90,11 +93,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -114,11 +118,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                     let rhs_patterns = other.patterns.as_ref();
                     let flipped = ctx.bound_generic_variables.flip();
                     let mut inner_ctx = TypeCheckContext::new(
-                        ctx.instance_assumptions,
+                        ctx.coinductive_assumptions,
                         PatternCollector::None, // 由于交换了方向，收集器直接禁用
                         ctx.rhs_env,            // 交换方向（因为是逆变性检查）
                         ctx.lhs_env,
                         &flipped,
+                        ctx.allocators,
                     );
                     let mut i = 0usize;
                     let mut j = 0usize;
@@ -158,34 +163,25 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
     }
 
     fn reduce(
-        mut self,
+        &self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        match self.patterns.modify(|patterns| {
-            let new_patterns = patterns
-                .into_iter()
-                .map(|pattern| pattern.reduce(ctx).map(|v| as_type!(v, Type::<T>::Constraint)))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(new_patterns)
-        })? {
-            Some(()) => Ok(self.dispatch()),
-            None => {
-                let new_patterns = self
-                    .patterns
-                    .iter()
-                    .map(|p| p.clone().reduce(ctx).map(|v| as_type!(v, Type::<T>::Constraint)))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Self {
-                    patterns: ArcOpt::new(new_patterns),
-                    source_info: self.source_info.clone(),
-                }
-                .dispatch())
-            }
+        let new_patterns = self
+            .patterns
+            .iter()
+            .map(|constraint| constraint.reduce(ctx).map(|v| as_type!(v, Type::Constraint)))
+            .collect::<Result<SmallVec<[_; 8]>, TypeError<Type<T>, T>>>()?;
+        let len = new_patterns.len();
+        let mut iter = new_patterns.into_iter();
+        Ok(Lambda {
+            patterns: ctx.allocators.constraint.alloc(len, |_| iter.next().unwrap()),
+            source_info: self.source_info.clone(),
         }
+        .dispatch())
     }
 
-    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.dispatch().into()))
+    fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -214,7 +210,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lambda<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lambda<Type<T>, T> {
     fn represent(
         &self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -237,24 +233,43 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Lambda<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Lambda<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Lambda<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(patterns: Vec<Constraint<T>>, source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Lambda { patterns: ArcOpt::new(patterns), source_info }.dispatch()
+    pub fn new(
+        patterns: impl IntoIterator<Item = Constraint<Type<T>, T>>,
+        allocators: &mut Allocators<Type<T>, T>,
+        source_info: Option<Arc<SourceLocation>>,
+    ) -> Type<T> {
+        let mut iter = patterns.into_iter();
+        let len = iter.size_hint().0;
+
+        Lambda { patterns: allocators.constraint.alloc(len, |_| iter.next().unwrap()), source_info }
+            .dispatch()
     }
 
-    pub fn patterns(&self) -> &[Constraint<T>] {
+    pub fn patterns(&self) -> &[Constraint<Type<T>, T>] {
         self.patterns.as_ref()
     }
 
     pub fn impls(
-        self,
-        other: Self,
+        &self,
+        other: &Self,
+        allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        let mut new_patterns = self.patterns().to_vec();
-        new_patterns.extend_from_slice(other.patterns());
+        let self_len = self.patterns.len();
+        let len = self_len + other.patterns.len();
 
-        Ok(Lambda { patterns: ArcOpt::new(new_patterns), source_info }.dispatch())
+        Ok(Lambda {
+            patterns: allocators.constraint.alloc(len, |i| {
+                if i < self_len {
+                    self.patterns[i].clone()
+                } else {
+                    other.patterns[i - self_len].clone()
+                }
+            }),
+            source_info,
+        }
+        .dispatch())
     }
 }

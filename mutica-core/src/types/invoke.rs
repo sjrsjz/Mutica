@@ -1,28 +1,30 @@
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
+use arena_arc::ArcSingle;
 
 use crate::{
     test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef,
+        TypeCheckContext, TypeError, TypeRef, allocator::Allocators,
     },
     util::{
-        arc_opt::ArcOpt, cycle_detector::FastCycleDetector, source_info::SourceLocation,
+        cycle_detector::FastCycleDetector, source_info::SourceLocation,
         three_valued_logic::ThreeValuedLogic,
     },
 };
 
-pub enum InvokeCountinuationStyle<T: GcAllocObject<T, Inner = Type<T>>> {
+pub enum InvokeCountinuationStyle<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     TailCall,
-    WithContinuation(Type<T>),   // 指定普通续体
-    WithPerformHandler(Type<T>), // 指定Perform续体Handler
-    WithBoth(Type<T>, Type<T>),  // 指定Perform续体和普通续体
+    WithContinuation(U),   // 指定普通续体
+    WithPerformHandler(U), // 指定Perform续体Handler
+    WithBoth(U, U),        // 指定Perform续体和普通续体
+    Pandom(V),
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for InvokeCountinuationStyle<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for InvokeCountinuationStyle<U, V> {
     fn clone(&self) -> Self {
         match self {
             InvokeCountinuationStyle::TailCall => InvokeCountinuationStyle::TailCall,
@@ -35,29 +37,32 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for InvokeCountinuationStyle<T>
             InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
                 InvokeCountinuationStyle::WithBoth(cont1.clone(), cont2.clone())
             }
+            InvokeCountinuationStyle::Pandom(_) => {
+                unreachable!("InvokeCountinuationStyle::Pandom should never be cloned")
+            }
         }
     }
 }
 
-pub struct Invoke<T: GcAllocObject<T, Inner = Type<T>>> {
+pub struct Invoke<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     // 0: function
     // 1: argument
     // 2: continuation
     // 3: source_info
-    // 4: is_nf
     #[allow(clippy::type_complexity)]
-    inner: ArcOpt<(Type<T>, Type<T>, InvokeCountinuationStyle<T>, Option<Arc<SourceLocation>>)>,
+    inner: ArcSingle<(U, U, InvokeCountinuationStyle<U, V>), usize>,
+    source_info: Option<Arc<SourceLocation>>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Invoke<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Invoke<U, V> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self { inner: self.inner.clone(), source_info: self.source_info.clone() }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Invoke<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
-        let (func, arg, cont_style, _) = self.inner.as_ref();
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Invoke<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        let (func, arg, cont_style) = self.inner.get();
         func.collect(queue);
         arg.collect(queue);
         match cont_style {
@@ -70,13 +75,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for Invoke<T> {
                 cont1.collect(queue);
                 cont2.collect(queue);
             }
+            InvokeCountinuationStyle::Pandom(_) => {
+                unreachable!("InvokeCountinuationStyle::Pandom should never be collected")
+            }
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Invoke<T> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        let (func, arg, cont_style, _) = self.inner.as_ref();
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Invoke<U, V> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        let (func, arg, cont_style) = self.inner.get();
         func.upgrade(collected);
         arg.upgrade(collected);
         match cont_style {
@@ -89,11 +97,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Invoke<T> {
                 cont1.upgrade(collected);
                 cont2.upgrade(collected);
             }
+            InvokeCountinuationStyle::Pandom(_) => {
+                unreachable!("InvokeCountinuationStyle::Pandom should never be upgraded")
+            }
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Invoke<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -108,7 +119,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Invoke<T
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invoke<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -116,11 +127,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
     ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -132,8 +144,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Invoke(v) => {
-                    let (self_func, self_arg, self_cont_style, _) = self.inner.as_ref();
-                    let (v_func, v_arg, v_cont_style, _) = v.inner.as_ref();
+                    let (self_func, self_arg, self_cont_style) = self.inner.get();
+                    let (v_func, v_arg, v_cont_style) = v.inner.get();
 
                     Ok(test_true!(self_func.check(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
                         & test_true!(self_arg.check(v_arg.as_ref_dispatcher(), &mut inner_ctx)?)
@@ -174,11 +186,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -187,8 +200,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 TypeRef::Variable(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 TypeRef::Invoke(v) => {
-                    let (self_func, self_arg, self_cont_style, _) = self.inner.as_ref();
-                    let (v_func, v_arg, v_cont_style, _) = v.inner.as_ref();
+                    let (self_func, self_arg, self_cont_style) = self.inner.get();
+                    let (v_func, v_arg, v_cont_style) = v.inner.get();
 
                     Ok(test_true!(self_func.subof(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
                         & test_true!(self_arg.subof(v_arg.as_ref_dispatcher(), &mut inner_ctx)?)
@@ -223,55 +236,60 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
     }
 
     fn reduce(
-        mut self,
+        &self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        match self.inner.modify(|(func, arg, cont_style, source_info)| {
-            let new_func = func.reduce(ctx)?;
-            let new_arg = arg.reduce(ctx)?;
-
-            let new_cont_style = match cont_style {
-                InvokeCountinuationStyle::TailCall => InvokeCountinuationStyle::TailCall,
-                InvokeCountinuationStyle::WithContinuation(cont) => {
-                    InvokeCountinuationStyle::WithContinuation(cont.reduce(ctx)?)
-                }
-                InvokeCountinuationStyle::WithPerformHandler(cont) => {
-                    InvokeCountinuationStyle::WithPerformHandler(cont.reduce(ctx)?)
-                }
-                InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
-                    InvokeCountinuationStyle::WithBoth(cont1.reduce(ctx)?, cont2.reduce(ctx)?)
-                }
-            };
-
-            Ok((new_func, new_arg, new_cont_style, source_info))
-        })? {
-            Some(()) => Ok(self.dispatch()),
-            None => {
-                let (func, arg, _, source_info) = self.inner.as_ref();
-                Ok(Self::new(
-                    func.clone().reduce(ctx)?,
-                    arg.clone().reduce(ctx)?,
-                    self.continuation().map(|c| c.clone().reduce(ctx)).transpose()?,
-                    self.perform_handler().map(|c| c.clone().reduce(ctx)).transpose()?,
-                    source_info.clone(),
-                ))
+        let (func, arg, cont_style) = self.inner.get();
+        let new_func = func.reduce(ctx)?;
+        let new_arg = arg.reduce(ctx)?;
+        let new_cont_style = match cont_style {
+            InvokeCountinuationStyle::TailCall => InvokeCountinuationStyle::TailCall,
+            InvokeCountinuationStyle::WithContinuation(cont) => {
+                InvokeCountinuationStyle::WithContinuation(cont.reduce(ctx)?)
             }
-        }
+            InvokeCountinuationStyle::WithPerformHandler(cont) => {
+                InvokeCountinuationStyle::WithPerformHandler(cont.reduce(ctx)?)
+            }
+            InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
+                InvokeCountinuationStyle::WithBoth(cont1.reduce(ctx)?, cont2.reduce(ctx)?)
+            }
+            InvokeCountinuationStyle::Pandom(_) => {
+                unreachable!("InvokeCountinuationStyle::Pandom should never be reduced")
+            }
+        };
+        Ok(Self::new(
+            new_func,
+            new_arg,
+            match new_cont_style {
+                InvokeCountinuationStyle::TailCall => None,
+                InvokeCountinuationStyle::WithContinuation(cont) => Some(cont),
+                InvokeCountinuationStyle::WithPerformHandler(cont) => Some(cont),
+                InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
+                    Some(Self::new(cont1, cont2, None::<Type<T>>, None, ctx.allocators, None))
+                }
+                InvokeCountinuationStyle::Pandom(_) => {
+                    unreachable!("InvokeCountinuationStyle::Pandom should never be reduced")
+                }
+            },
+            None,
+            ctx.allocators,
+            self.source_info.clone(),
+        ))
     }
 
     fn invoke(
-        self,
+        &self,
         _ctx: InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.dispatch().into()))
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
-        self.inner.as_ref().3.as_ref()
+        self.source_info.as_ref()
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {
-        if let Some(loc) = self.inner.as_ref().3.as_ref() {
+        if let Some(loc) = self.source_info() {
             let span = loc.span().clone();
             let filepath = loc.source().filepath().to_string();
             ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
@@ -292,7 +310,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<Type<T>, T> {
     fn represent(
         &self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -302,7 +320,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
         if depth > max_depth {
             return "...".to_string();
         }
-        let (func, arg, cont_style, _) = self.inner.as_ref();
+        let (func, arg, cont_style) = self.inner.get();
         let func_repr = func.represent(path, depth + 1, max_depth);
         let arg_repr = arg.represent(path, depth + 1, max_depth);
         let cont_repr = match cont_style {
@@ -320,12 +338,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Invoke<T> {
                     cont2.represent(path, depth + 1, max_depth)
                 )
             }
+            InvokeCountinuationStyle::Pandom(_) => "pandom".to_string(),
         };
         format!("Invoke(func: {}, arg: {}, cont: {})", func_repr, arg_repr, cont_repr)
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<
         U: AsDispatcher<Type<T>, T>,
@@ -336,6 +355,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
         arg: V,
         continuation: Option<A>,
         perform_continuation: Option<A>,
+        allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let func = func.into_dispatcher();
@@ -350,49 +370,42 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<T> {
             (Some(cont1), Some(cont2)) => InvokeCountinuationStyle::WithBoth(cont1, cont2),
         };
 
-        Self { inner: ArcOpt::new((func, arg, continuation_style, source_info)) }.dispatch()
+        Invoke {
+            inner: allocators.invoke.alloc_value((func, arg, continuation_style)),
+            source_info,
+        }
+        .dispatch()
     }
 
     pub fn func(&self) -> &Type<T> {
-        &self.inner.as_ref().0
+        &self.inner.get().0
     }
 
     pub fn arg(&self) -> &Type<T> {
-        &self.inner.as_ref().1
+        &self.inner.get().1
     }
 
     pub fn continuation(&self) -> Option<&Type<T>> {
-        match &self.inner.as_ref().2 {
+        match &self.inner.get().2 {
             InvokeCountinuationStyle::TailCall
-            | InvokeCountinuationStyle::WithPerformHandler(_) => None,
+            | InvokeCountinuationStyle::WithPerformHandler(_)
+            | InvokeCountinuationStyle::Pandom(_) => None,
             InvokeCountinuationStyle::WithBoth(cont, _)
             | InvokeCountinuationStyle::WithContinuation(cont) => Some(cont),
         }
     }
 
     pub fn perform_handler(&self) -> Option<&Type<T>> {
-        match &self.inner.as_ref().2 {
-            InvokeCountinuationStyle::TailCall | InvokeCountinuationStyle::WithContinuation(_) => {
-                None
-            }
+        match &self.inner.get().2 {
+            InvokeCountinuationStyle::TailCall
+            | InvokeCountinuationStyle::WithContinuation(_)
+            | InvokeCountinuationStyle::Pandom(_) => None,
             InvokeCountinuationStyle::WithBoth(_, cont)
             | InvokeCountinuationStyle::WithPerformHandler(cont) => Some(cont),
         }
     }
 
-    pub fn continuation_style(&self) -> &InvokeCountinuationStyle<T> {
-        &self.inner.as_ref().2
-    }
-
-    pub fn take(
-        self,
-    ) -> (Type<T>, Type<T>, InvokeCountinuationStyle<T>, Option<Arc<SourceLocation>>) {
-        match self.inner.take() {
-            Ok((func, arg, cont_style, source_info)) => (func, arg, cont_style, source_info),
-            Err(v) => {
-                let (func, arg, cont_style, source_info) = v.as_ref();
-                (func.clone(), arg.clone(), cont_style.clone(), source_info.clone())
-            }
-        }
+    pub fn continuation_style(&self) -> &InvokeCountinuationStyle<Type<T>, T> {
+        &self.inner.get().2
     }
 }

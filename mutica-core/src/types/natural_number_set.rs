@@ -14,24 +14,26 @@ use crate::{
     },
 };
 
-pub struct NaturalNumberSet<T: GcAllocObject<T, Inner = Type<T>>> {
+pub struct NaturalNumberSet<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     source_info: Option<Arc<SourceLocation>>,
-    _phantom: std::marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<(U, V)>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for NaturalNumberSet<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for NaturalNumberSet<U, V> {
     fn clone(&self) -> Self {
         Self { source_info: self.source_info.clone(), _phantom: std::marker::PhantomData }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for NaturalNumberSet<T> {
-    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for NaturalNumberSet<U, V> {
+    fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {}
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for NaturalNumberSet<T> {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for NaturalNumberSet<U, V> {}
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for NaturalNumberSet<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T>
+    for NaturalNumberSet<Type<T>, T>
+{
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -45,7 +47,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for NaturalN
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for NaturalNumberSet<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T>
+    for NaturalNumberSet<Type<T>, T>
+{
     fn check(
         &self,
         other: TypeRef<T>,
@@ -53,11 +57,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -80,11 +85,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
-                ctx.bound_generic_variables
+                ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -99,24 +105,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
     }
 
     fn reduce(
-        self,
+        &self,
         _ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Ok(self.dispatch())
+        Ok(self.clone().dispatch())
     }
 
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         ctx.arg
-            .take(&mut FastCycleDetector::new(), |_, arg| match arg {
-                Type::NaturalNumber(_) => Ok(arg),
-                Type::FloatValue(v) => {
+            .map(&mut FastCycleDetector::new(), |_, arg| match arg {
+                TypeRef::NaturalNumber(_) => Ok(arg.into_dispatcher()),
+                TypeRef::FloatValue(v) => {
                     Ok(NaturalNumber::new(v.value() as usize, self.source_info.clone()))
                 }
                 _ => Err(super::TypeError::TypeMismatch(
-                    (arg, "NaturalNumber | FloatValue expected".into()).into(),
+                    (arg.into_dispatcher(), "NaturalNumber | FloatValue expected".into()).into(),
                 )),
             })?
-            .unwrap_or(Err(TypeError::UnresolvableType(self.dispatch().into())))
+            .unwrap_or(Err(TypeError::UnresolvableType(self.clone().dispatch().into())))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -145,7 +151,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Natur
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for NaturalNumberSet<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for NaturalNumberSet<Type<T>, T> {
     fn represent(
         &self,
         _path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -156,7 +162,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for NaturalNumberSet<T>
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> NaturalNumberSet<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> NaturalNumberSet<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
         NaturalNumberSet { source_info, _phantom: std::marker::PhantomData }.dispatch()

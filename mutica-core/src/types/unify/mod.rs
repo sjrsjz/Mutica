@@ -6,8 +6,8 @@ use std::{fmt::Debug, sync::Arc};
 use smallvec::SmallVec;
 
 use crate::types::{
-    AsDispatcher, CoinductiveType, GcAllocObject, Type, TypeError, anyof::AnyOf,
-    unify::capture_env::CaptureEnvList,
+    AsDispatcher, CoinductiveType, GcAllocObject, Type, TypeError, allocator::Allocators,
+    anyof::AnyOf, unify::capture_env::CaptureEnvList,
 };
 
 pub enum ArgumentBinding<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
@@ -389,11 +389,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> GenericBinding<'_, Type<T>, T> {
     pub fn finalize<'a>(
         type_vars: &mut [(Arc<str>, ArgumentBinding<Type<T>, T>)],
         capture_env: CaptureEnvList<'a, Type<T>, T>,
+        allocators:&mut Allocators<Type<T>, T>,
     ) -> Result<(), TypeError<Type<T>, T>> {
         // 把所有BoundList变量转换为Bound
         for (_, var_ty) in type_vars.iter_mut() {
             if let ArgumentBinding::Collect(tys) = var_ty {
-                *var_ty = ArgumentBinding::Bound(AnyOf::new(tys.iter(), None, capture_env)?)
+                *var_ty =
+                    ArgumentBinding::Bound(AnyOf::new(tys.iter(), allocators, None, capture_env)?)
             }
         }
         Ok(())

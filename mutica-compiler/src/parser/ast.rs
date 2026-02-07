@@ -8,6 +8,7 @@ use lalrpop_util::ErrorRecovery;
 use mutica_core::arc_gc::gc::GC;
 use mutica_core::as_type;
 use mutica_core::smallvec::SmallVec;
+use mutica_core::types::allocator::Allocators;
 use mutica_core::types::allof::AllOf;
 use mutica_core::types::anyof::AnyOf;
 use mutica_core::types::character::Character;
@@ -2747,16 +2748,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> BuildResult<T> {
 #[allow(clippy::type_complexity)]
 impl LinearTypeAst {
     #[stacksafe::stacksafe]
-    pub fn to_type<'roots, T: GcAllocObject<T, Inner = Type<T>>>(
+    pub fn to_type<T: GcAllocObject<T, Inner = Type<T>>>(
         &self,
         ctx: &mut BuildContext<T>,
         gc: &mut GC<T>,
-        roots: &'roots mut RootStack<Type<T>, T>,
+        roots: &mut RootStack<Type<T>, T>,
+        allocators: &mut Allocators<Type<T>, T>,
         loc: Option<&SourceLocation>,
     ) -> Result<BuildResult<T>, Result<TypeError<Type<T>, T>, ParseError>> {
         match self {
             LinearTypeAst::Range { ty, min, delta } => {
-                let ty_result = ty.to_type(ctx, gc, roots, ty.location())?;
+                let ty_result = ty.to_type(ctx, gc, roots, allocators, ty.location())?;
                 let repeat_count = delta.unwrap_or(1);
                 Ok(BuildResult::simple(if *min == 0 && delta.is_none() {
                     // 空序列
@@ -2766,11 +2768,17 @@ impl LinearTypeAst {
                     Sequence::new_repeat(
                         vec![(ty_result.ty.clone(), NonZero::new(repeat_count).unwrap())],
                         Sequence::unit(loc.cloned().map(Arc::new)),
+                        allocators,
                         loc.cloned().map(Arc::new),
                     )
                 } else {
                     // min > 0, 使用nature_number
-                    Sequence::nature_number(*min, ty_result.ty.clone(), loc.cloned().map(Arc::new))
+                    Sequence::nature_number(
+                        *min,
+                        ty_result.ty.clone(),
+                        allocators,
+                        loc.cloned().map(Arc::new),
+                    )
                 }))
             }
             LinearTypeAst::NaturalNumberSet => {
@@ -2809,17 +2817,18 @@ impl LinearTypeAst {
                 }
             }
             LinearTypeAst::Bind { var, expr } => {
-                let expr_type = expr.to_type(ctx, gc, roots, expr.location())?;
+                let expr_type = expr.to_type(ctx, gc, roots, allocators, expr.location())?;
                 Ok(BuildResult::simple(Pattern::new(
                     var.value().clone(),
                     &expr_type.ty,
+                    allocators,
                     loc.cloned().map(Arc::new),
                 )))
             }
             LinearTypeAst::Tuple(basic_type_asts) => {
                 let mut types = Vec::new();
                 for (bta, _count) in basic_type_asts {
-                    types.push(bta.to_type(ctx, gc, roots, bta.location())?);
+                    types.push(bta.to_type(ctx, gc, roots, allocators, bta.location())?);
                 }
                 let types = BuildResult::fold(types);
                 let types = types
@@ -2827,14 +2836,18 @@ impl LinearTypeAst {
                     .zip(basic_type_asts.iter())
                     .map(|(t, (_bta, count))| (t, *count))
                     .collect::<Vec<_>>();
-                Ok(BuildResult::simple(Sequence::new_simple(types, loc.cloned().map(Arc::new))))
+                Ok(BuildResult::simple(Sequence::new_tuple(
+                    types,
+                    allocators,
+                    loc.cloned().map(Arc::new),
+                )))
             }
             LinearTypeAst::List { head, tail } => {
                 let mut results = Vec::new();
                 for (h, _count) in head {
-                    results.push(h.to_type(ctx, gc, roots, h.location())?);
+                    results.push(h.to_type(ctx, gc, roots, allocators, h.location())?);
                 }
-                let tail_res = tail.to_type(ctx, gc, roots, tail.location())?;
+                let tail_res = tail.to_type(ctx, gc, roots, allocators, tail.location())?;
                 results.push(tail_res);
                 let types = BuildResult::fold(results);
                 // last element is the tail
@@ -2848,15 +2861,16 @@ impl LinearTypeAst {
                 Ok(BuildResult::simple(Sequence::new_repeat(
                     prefix,
                     tail_ty,
+                    allocators,
                     loc.cloned().map(Arc::new),
                 )))
             }
             LinearTypeAst::Cons { head, tail } => {
                 let mut results = Vec::new();
                 for (h, _count) in head {
-                    results.push(h.to_type(ctx, gc, roots, h.location())?);
+                    results.push(h.to_type(ctx, gc, roots, allocators, h.location())?);
                 }
-                let tail_res = tail.to_type(ctx, gc, roots, tail.location())?;
+                let tail_res = tail.to_type(ctx, gc, roots, allocators, tail.location())?;
                 results.push(tail_res);
                 let types = BuildResult::fold(results);
                 // last element is the tail
@@ -2870,46 +2884,65 @@ impl LinearTypeAst {
                 Ok(BuildResult::simple(Sequence::new_cons(
                     prefix,
                     tail_ty,
+                    allocators,
                     loc.cloned().map(Arc::new),
                 )))
             }
             LinearTypeAst::AnyOf(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, gc, roots, bta.location())?);
+                    types.push(bta.to_type(ctx, gc, roots, allocators, bta.location())?);
                 }
                 let types = BuildResult::fold(types);
                 let empty_env = CaptureEnv::Solved(SmallVec::new());
                 Ok(BuildResult::simple(
-                    AnyOf::new(types, loc.cloned().map(Arc::new), CaptureEnvList::new(&empty_env))
-                        .map_err(Ok)?,
+                    AnyOf::new(
+                        types,
+                        allocators,
+                        loc.cloned().map(Arc::new),
+                        CaptureEnvList::new(&empty_env),
+                    )
+                    .map_err(Ok)?,
                 ))
             }
             LinearTypeAst::AllOf(basic_type_asts) => {
                 let mut types = Vec::new();
                 for bta in basic_type_asts {
-                    types.push(bta.to_type(ctx, gc, roots, bta.location())?);
+                    types.push(bta.to_type(ctx, gc, roots, allocators, bta.location())?);
                 }
                 let types = BuildResult::fold(types);
                 let empty_env = CaptureEnv::Solved(SmallVec::new());
                 Ok(BuildResult::simple(
-                    AllOf::new(types, loc.cloned().map(Arc::new), CaptureEnvList::new(&empty_env))
-                        .map_err(Ok)?,
+                    AllOf::new(
+                        types,
+                        allocators,
+                        loc.cloned().map(Arc::new),
+                        CaptureEnvList::new(&empty_env),
+                    )
+                    .map_err(Ok)?,
                 ))
             }
             LinearTypeAst::Invoke { func, arg, continuation, perform_handler } => {
-                let func_type = func.to_type(ctx, gc, roots, func.location())?;
-                let arg_type = arg.to_type(ctx, gc, roots, arg.location())?;
+                let func_type = func.to_type(ctx, gc, roots, allocators, func.location())?;
+                let arg_type = arg.to_type(ctx, gc, roots, allocators, arg.location())?;
                 let continuation_type = match continuation {
-                    Some(continuation) => {
-                        Some(continuation.to_type(ctx, gc, roots, continuation.location())?)
-                    }
+                    Some(continuation) => Some(continuation.to_type(
+                        ctx,
+                        gc,
+                        roots,
+                        allocators,
+                        continuation.location(),
+                    )?),
                     None => None,
                 };
                 let perform_handler_type = match perform_handler {
-                    Some(perform_handler) => {
-                        Some(perform_handler.to_type(ctx, gc, roots, perform_handler.location())?)
-                    }
+                    Some(perform_handler) => Some(perform_handler.to_type(
+                        ctx,
+                        gc,
+                        roots,
+                        allocators,
+                        perform_handler.location(),
+                    )?),
                     None => None,
                 };
                 let mut fold_vec = vec![func_type, arg_type];
@@ -2925,6 +2958,7 @@ impl LinearTypeAst {
                     &types[1],
                     continuation_type.as_ref().map(|t| &t.ty),
                     perform_handler_type.as_ref().map(|t| &t.ty),
+                    allocators,
                     loc.cloned().map(Arc::new),
                 )))
             }
@@ -2952,12 +2986,13 @@ impl LinearTypeAst {
                         .collect::<HashMap<_, _>>();
                     ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone(), true));
                     let pattern_type: BuildResult<T> =
-                        pattern.to_type(ctx, gc, roots, pattern.location())?;
+                        pattern.to_type(ctx, gc, roots, allocators, pattern.location())?;
                     ctx.exit_layer();
                     ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone(), false));
                     let mut constraint_types = Vec::new();
                     for (name, ctype) in constraints {
-                        let ctype_result = ctype.to_type(ctx, gc, roots, ctype.location())?;
+                        let ctype_result =
+                            ctype.to_type(ctx, gc, roots, allocators, ctype.location())?;
                         constraint_types.push((Arc::from(name.value().as_str()), ctype_result.ty));
                     }
                     ctx.exit_layer();
@@ -2966,7 +3001,7 @@ impl LinearTypeAst {
                         patterns: patterns.clone(),
                         captures: auto_captures.iter().cloned().collect(),
                     });
-                    let body_type = body.to_type(ctx, gc, roots, body.location())?;
+                    let body_type = body.to_type(ctx, gc, roots, allocators, body.location())?;
                     ctx.exit_layer();
 
                     let empty_env = CaptureEnv::Solved(SmallVec::new());
@@ -2976,13 +3011,18 @@ impl LinearTypeAst {
                             pattern_type.ty,
                             constraint_types,
                             CaptureEnvList::new(&empty_env),
+                            allocators,
                             loc.cloned().map(Arc::new),
                         )
                         .map_err(Ok)?,
                         body_type.ty,
                     ));
                 }
-                Ok(BuildResult::simple(Closure::new(new_branches, loc.cloned().map(Arc::new))))
+                Ok(BuildResult::simple(Closure::new(
+                    new_branches,
+                    allocators,
+                    loc.cloned().map(Arc::new),
+                )))
             }
             LinearTypeAst::Lambda { patterns } => {
                 let mut new_patterns = Vec::new();
@@ -2993,12 +3033,13 @@ impl LinearTypeAst {
                         .collect::<HashMap<_, _>>();
                     ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone(), true));
                     let pattern_type: BuildResult<T> =
-                        pattern.to_type(ctx, gc, roots, pattern.location())?;
+                        pattern.to_type(ctx, gc, roots, allocators, pattern.location())?;
                     ctx.exit_layer();
                     ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone(), false));
                     let mut constraint_types = Vec::new();
                     for (name, ctype) in constraints {
-                        let ctype_result = ctype.to_type(ctx, gc, roots, ctype.location())?;
+                        let ctype_result =
+                            ctype.to_type(ctx, gc, roots, allocators, ctype.location())?;
                         constraint_types.push((Arc::from(name.value().as_str()), ctype_result.ty));
                     }
                     ctx.exit_layer();
@@ -3009,12 +3050,17 @@ impl LinearTypeAst {
                             pattern_type.ty,
                             constraint_types,
                             CaptureEnvList::new(&empty_env),
+                            allocators,
                             loc.cloned().map(Arc::new),
                         )
                         .map_err(Ok)?,
                     );
                 }
-                Ok(BuildResult::simple(Lambda::new(new_patterns, loc.cloned().map(Arc::new))))
+                Ok(BuildResult::simple(Lambda::new(
+                    new_patterns,
+                    allocators,
+                    loc.cloned().map(Arc::new),
+                )))
             }
             LinearTypeAst::StaticFixPoint { param_name, expr } => {
                 let placeholder = FixPoint::new_placeholder(gc, roots);
@@ -3022,7 +3068,7 @@ impl LinearTypeAst {
                     param_name.clone(),
                     placeholder.clone(),
                 ));
-                let expr_type = expr.to_type(ctx, gc, roots, expr.location())?;
+                let expr_type = expr.to_type(ctx, gc, roots, allocators, expr.location())?;
                 ctx.exit_layer();
                 as_type!(&placeholder, Type::FixPoint).set(expr_type.ty()).map_err(Ok)?;
                 Ok(BuildResult::simple(placeholder))
@@ -3047,10 +3093,11 @@ impl LinearTypeAst {
                 loc.cloned().map(Arc::new),
             ))),
             LinearTypeAst::Namespace { tag, expr } => {
-                let expr_type = expr.to_type(ctx, gc, roots, expr.location())?;
+                let expr_type = expr.to_type(ctx, gc, roots, allocators, expr.location())?;
                 Ok(BuildResult::simple(Namespace::new(
                     tag.value().clone(),
                     &expr_type.ty,
+                    allocators,
                     loc.cloned().map(Arc::new),
                 )))
             }
@@ -3061,12 +3108,13 @@ impl LinearTypeAst {
                     .collect::<HashMap<_, _>>();
 
                 ctx.enter_layer(BuildContextLayer::GenericBinding(bindings.clone(), true));
-                let expr_type = expr.to_type(ctx, gc, roots, expr.location())?;
+                let expr_type = expr.to_type(ctx, gc, roots, allocators, expr.location())?;
                 ctx.exit_layer();
                 ctx.enter_layer(BuildContextLayer::GenericBinding(bindings.clone(), false));
                 let mut constraint_types = Vec::new();
                 for (name, ctype) in constraint {
-                    let ctype_result = ctype.to_type(ctx, gc, roots, ctype.location())?;
+                    let ctype_result =
+                        ctype.to_type(ctx, gc, roots, allocators, ctype.location())?;
                     constraint_types.push((Arc::from(name.value().as_str()), ctype_result.ty));
                 }
                 ctx.exit_layer();
@@ -3077,17 +3125,22 @@ impl LinearTypeAst {
                         expr_type.ty,
                         constraint_types,
                         CaptureEnvList::new(&empty_env),
+                        allocators,
                         loc.cloned().map(Arc::new),
                     )
                     .map_err(Ok)?,
                 ))
             }
             LinearTypeAst::Lazy(inner) => {
-                let inner_type = inner.to_type(ctx, gc, roots, inner.location())?;
-                Ok(BuildResult::simple(Lazy::new(&inner_type.ty, loc.cloned().map(Arc::new))))
+                let inner_type = inner.to_type(ctx, gc, roots, allocators, inner.location())?;
+                Ok(BuildResult::simple(Lazy::new(
+                    &inner_type.ty,
+                    allocators,
+                    loc.cloned().map(Arc::new),
+                )))
             }
             LinearTypeAst::Mutable { value } => {
-                let value_type = value.to_type(ctx, gc, roots, value.location())?;
+                let value_type = value.to_type(ctx, gc, roots, allocators, value.location())?;
                 Ok(BuildResult::simple(Mutable::new(
                     &value_type.ty,
                     loc.cloned().map(Arc::new),
@@ -3096,8 +3149,12 @@ impl LinearTypeAst {
                 )))
             }
             LinearTypeAst::SubOf { value } => {
-                let value_type = value.to_type(ctx, gc, roots, value.location())?;
-                Ok(BuildResult::simple(SubOf::new(&value_type.ty, loc.cloned().map(Arc::new))))
+                let value_type = value.to_type(ctx, gc, roots, allocators, value.location())?;
+                Ok(BuildResult::simple(SubOf::new(
+                    &value_type.ty,
+                    allocators,
+                    loc.cloned().map(Arc::new),
+                )))
             }
         }
     }

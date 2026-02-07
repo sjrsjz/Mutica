@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
+use arena_arc::ArcSlice;
 use smallvec::{SmallVec, smallvec};
 
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
         Type, TypeCheckContext, TypeError, TypeRef,
+        allocator::Allocators,
         anyof::AnyOf,
         unify::{GenericBinding, capture_env::CaptureEnvList},
     },
@@ -23,26 +25,39 @@ use crate::types::CoinductiveTypeRef;
 /// - **协变性质**：`S : All<T₁, ..., Tₙ>` **定义为** `∀i. S : Tᵢ`
 /// - **逆变性质**：`All<T₁, ..., Tₙ> : U` **定义为** `∃i. Tᵢ : U`
 /// - All<A₁, ..., Aₙ> : All<B₁, ..., Bₙ>  当且仅当  ∀j. ∃i. Aᵢ : Bⱼ
-pub struct AllOf<T: GcAllocObject<T, Inner = Type<T>>> {
-    types: Arc<[Type<T>]>,
+pub struct AllOf<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    types: ArcSlice<U, usize>,
     source_info: Option<Arc<SourceLocation>>,
+    _phantom: std::marker::PhantomData<V>,
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for AllOf<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for AllOf<U, V> {
     fn clone(&self) -> Self {
-        Self { types: self.types.clone(), source_info: self.source_info.clone() }
+        Self {
+            types: self.types.clone(),
+            source_info: self.source_info.clone(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> GCTraceable<T> for AllOf<T> {
-    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<T>>) {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for AllOf<U, V> {
+    fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
         for sub in self.types.iter() {
             sub.collect(queue);
         }
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for AllOf<T> {
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for AllOf<U, V> {
+    fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        for sub in self.types.iter() {
+            sub.upgrade(collected);
+        }
+    }
+}
+
+impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for AllOf<Type<T>, T> {
     type RefDispatcher<'a>
         = TypeRef<'a, T>
     where
@@ -57,15 +72,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for AllOf<T>
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for AllOf<T> {
-    fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
-        for sub in self.types.iter() {
-            sub.upgrade(collected);
-        }
-    }
-}
-
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf<Type<T>, T> {
     fn check(
         &self,
         other: TypeRef<T>,
@@ -73,11 +80,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -105,11 +113,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -123,11 +132,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
                         for sub in self.types.iter() {
                             let result = marker.wrap(|path| {
                                 let mut inner_ctx = TypeCheckContext::new(
-                                    inner_ctx.instance_assumptions,
+                                    inner_ctx.coinductive_assumptions,
                                     PatternCollector::Subtyping(path),
                                     inner_ctx.lhs_env,
                                     inner_ctx.rhs_env,
                                     inner_ctx.bound_generic_variables,
+                                    inner_ctx.allocators,
                                 );
                                 // result: subof 结果
                                 let sub_result = sub.subof(other, &mut inner_ctx);
@@ -157,18 +167,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
     }
 
     fn reduce(
-        self,
+        &self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
         for sub in self.types.iter() {
-            result.push(sub.clone().reduce(ctx)?);
+            result.push(sub.reduce(ctx)?);
         }
-        Self::new(&result, self.source_info.clone(), ctx.capture_env)
+        Self::new(&result, ctx.allocators, self.source_info.clone(), ctx.capture_env)
     }
 
-    fn invoke(self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        Err(TypeError::NonApplicableType(self.dispatch().into()))
+    fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
@@ -197,7 +207,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> for AllOf<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T>
+    for AllOf<Type<T>, T>
+{
     #[stacksafe::stacksafe]
     fn accept(
         &self,
@@ -206,11 +218,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             let mut found = ThreeValuedLogic::True;
             for sub in self.types.iter() {
@@ -228,11 +241,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     ) -> Result<ThreeValuedLogic, super::TypeError<Type<T>, T>> {
         ctx.pattern_collector.collect(|pattern_env| {
             let mut inner_ctx = TypeCheckContext::new(
-                ctx.instance_assumptions,
+                ctx.coinductive_assumptions,
                 pattern_env,
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
+                ctx.allocators,
             );
             let mut found = ThreeValuedLogic::True;
             for sub in self.types.iter() {
@@ -243,7 +257,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T> fo
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AllOf<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AllOf<Type<T>, T> {
     fn represent(
         &self,
         path: &mut FastCycleDetector<TaggedPtr<()>>,
@@ -269,10 +283,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for AllOf<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<I, X>(
         types: I,
+        allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
         env: CaptureEnvList<'_, Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>>
@@ -338,6 +353,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
             env,
             env,
             &empty_generic_binding,
+            allocators,
         );
 
         for i in 0..collected.len() {
@@ -365,15 +381,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
             }
         }
 
-        let mut result = Vec::new();
-        for (i, t) in collected.into_iter().enumerate() {
-            if !absorbed[i] {
-                result.push(t);
+        let kept_len = absorbed.iter().filter(|&&abs| !abs).count();
+        let mut kept_iter = collected
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, t)| if !absorbed[i] { Some(t) } else { None });
+
+        let new_type = match kept_len {
+            1 => kept_iter.next().unwrap(),
+            _ => AllOf {
+                types: allocators.v.alloc(kept_len, |_| kept_iter.next().unwrap()),
+                source_info,
+                _phantom: std::marker::PhantomData,
             }
-        }
-        let new_type = match result.len() {
-            1 => result.into_iter().next().unwrap(),
-            _ => AllOf { types: Arc::from(result), source_info }.dispatch(),
+            .dispatch(),
         };
         Ok(new_type)
     }
@@ -383,6 +404,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<T> {
     }
 
     pub fn unknown(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        AllOf { types: Arc::from([]), source_info }.dispatch()
+        AllOf { types: ArcSlice::empty(), source_info, _phantom: std::marker::PhantomData }
+            .dispatch()
     }
 }

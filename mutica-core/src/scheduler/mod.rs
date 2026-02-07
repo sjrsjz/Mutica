@@ -1,7 +1,7 @@
 pub mod native;
 pub mod stack;
 
-use std::{future::Future, io::Write, pin::Pin, sync::Arc};
+use std::{future::Future, io::Write, num::NonZero, pin::Pin, sync::Arc};
 
 use arc_gc::gc::GC;
 use smallvec::smallvec;
@@ -11,6 +11,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, GcAllocObject, InvokeContext, Representable, Type,
         TypeError, TypeRef,
+        allocator::Allocators,
         character_value::CharacterValue,
         closure::Closure,
         invoke::{Invoke, InvokeCountinuationStyle},
@@ -51,8 +52,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> ContinuationOrHandler<T> {
 
 pub type AsyncIoHandler<T> = Box<
     dyn Fn(
+            &mut Allocators<Type<T>, T>,
             &Type<T>,
             &Type<T>,
+            Option<&Arc<SourceLocation>>,
         )
             -> Pin<Box<dyn Future<Output = Result<Option<Type<T>>, TypeError<Type<T>, T>>> + Send>>
         + Send
@@ -75,12 +78,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 
     async fn io(
         &mut self,
+        allocators: &mut Allocators<Type<T>, T>,
         f: &Type<T>,
         arg: &Type<T>,
         source_info: Option<&Arc<SourceLocation>>,
     ) -> Result<Option<Type<T>>, TypeError<Type<T>, T>> {
         if let Some(outer_handler) = &self.outer_io_handler
-            && let Some(result) = outer_handler(f, arg).await?
+            && let Some(result) = outer_handler(allocators, f, arg, source_info).await?
         {
             return Ok(Some(result));
         }
@@ -110,9 +114,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     std::io::stdin().read_line(&mut input).unwrap();
                     let chars = input
                         .chars()
-                        .map(|c| CharacterValue::new(c, source_info.cloned()))
+                        .map(|c| {
+                            (CharacterValue::new(c, source_info.cloned()), NonZero::new(1).unwrap())
+                        })
                         .collect::<Vec<_>>();
-                    Ok(Some(Sequence::new_tuple(chars, source_info.cloned())))
+                    Ok(Some(Sequence::new_tuple(chars, allocators, source_info.cloned())))
                 }
                 "flush" => {
                     use std::io;
@@ -128,17 +134,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let repr = arg.represent(&mut FastCycleDetector::new(), 0, usize::MAX);
                     let chars = repr
                         .chars()
-                        .map(|c| CharacterValue::new(c, source_info.cloned()))
+                        .map(|c| {
+                            (CharacterValue::new(c, source_info.cloned()), NonZero::new(1).unwrap())
+                        })
                         .collect::<Vec<_>>();
-                    Ok(Some(Sequence::new_tuple(chars, source_info.cloned())))
+                    Ok(Some(Sequence::new_tuple(chars, allocators, source_info.cloned())))
                 }
                 "display" => {
                     let disp = arg.display(&mut FastCycleDetector::new(), 0, usize::MAX);
                     let chars = disp
                         .chars()
-                        .map(|c| CharacterValue::new(c, source_info.cloned()))
+                        .map(|c| {
+                            (CharacterValue::new(c, source_info.cloned()), NonZero::new(1).unwrap())
+                        })
                         .collect::<Vec<_>>();
-                    Ok(Some(Sequence::new_tuple(chars, source_info.cloned())))
+                    Ok(Some(Sequence::new_tuple(chars, allocators, source_info.cloned())))
                 }
                 // 代数效应相关
                 "perform" => Err(TypeError::Perform(arg.clone().into())),
@@ -159,16 +169,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         TypeRef::Any(v) => {
                             let mut elements = Vec::new();
                             for ty in v.types() {
-                                elements.push(ty.clone());
+                                elements.push((ty.clone(), NonZero::new(1).unwrap()));
                             }
-                            Ok(Some(Sequence::new_tuple(elements, source_info.cloned())))
+                            Ok(Some(Sequence::new_tuple(
+                                elements,
+                                allocators,
+                                source_info.cloned(),
+                            )))
                         }
                         TypeRef::All(v) => {
                             let mut elements = Vec::new();
                             for ty in v.types() {
-                                elements.push(ty.clone());
+                                elements.push((ty.clone(), NonZero::new(1).unwrap()));
                             }
-                            Ok(Some(Sequence::new_tuple(elements, source_info.cloned())))
+                            Ok(Some(Sequence::new_tuple(
+                                elements,
+                                allocators,
+                                source_info.cloned(),
+                            )))
                         }
                         _ => Err(TypeError::TypeMismatch(
                             (arg.clone_data(), "Tuple | List | AnyOf | AllOf".into()).into(),
@@ -182,7 +200,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
         .unwrap_or(Err(TypeError::UnresolvableType(f.clone().dispatch().into())))
     }
 
-    pub async fn step(&mut self, gc: &mut GC<T>) -> Result<bool, TypeError<Type<T>, T>> {
+    pub async fn step(
+        &mut self,
+        gc: &mut GC<T>,
+        allocators: &mut Allocators<Type<T>, T>,
+    ) -> Result<bool, TypeError<Type<T>, T>> {
         let empty_env = CaptureEnv::Solved(smallvec![]);
         let empty_env_list = CaptureEnvList::new(&empty_env);
         // 在 await 之前完成所有需要 rec_assumptions 的工作
@@ -197,12 +219,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
             // 处理 Invoke 类型
             let (func, arg, continuation_style, source_info) =
                 if let Type::Invoke(invoke) = current_type {
-                    invoke.take()
+                    (
+                        invoke.func().clone(),
+                        invoke.arg().clone(),
+                        invoke.continuation_style().clone(),
+                        invoke.source_info().cloned(),
+                    )
                 } else {
                     unreachable!()
                 };
 
-            let io_result = self.io(&func, &arg, source_info.as_ref()).await;
+            let io_result = self.io(allocators, &func, &arg, source_info.as_ref()).await;
 
             let io_result = match io_result {
                 Ok(v) => v,
@@ -228,13 +255,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
 
                     let (mut continuation, handler, k0_is_identity) = match continuation_style {
                         InvokeCountinuationStyle::TailCall => {
-                            (Closure::identity(None, empty_env_list)?, None, true)
+                            (Closure::identity(None, empty_env_list, allocators)?, None, true)
                         }
                         InvokeCountinuationStyle::WithContinuation(v) => (v, None, false),
                         InvokeCountinuationStyle::WithPerformHandler(h) => {
-                            (Closure::identity(None, empty_env_list)?, Some(h), true)
+                            (Closure::identity(None, empty_env_list, allocators)?, Some(h), true)
                         }
                         InvokeCountinuationStyle::WithBoth(c, h) => (c, Some(h), false),
+                        InvokeCountinuationStyle::Pandom(_) => unreachable!(
+                            "Pandom continuation style should have been handled in the invoke handler"
+                        ),
                     };
 
                     if !continuations.is_empty() {
@@ -257,10 +287,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         let mut next_cont: Option<Type<T>> = None;
                         for func in chain.into_iter().rev() {
                             let arg = Variable::new_argument(bind_name.as_ref(), None);
-                            let invoke =
-                                Invoke::new(func, arg, next_cont.clone(), None::<Type<T>>, None);
-                            let new_closure =
-                                Closure::lazy(None, bind_name.clone(), invoke, empty_env_list)?;
+                            let invoke = Invoke::new(
+                                func,
+                                arg,
+                                next_cont.clone(),
+                                None::<Type<T>>,
+                                allocators,
+                                None,
+                            );
+                            let new_closure = Closure::lazy(
+                                None,
+                                bind_name.clone(),
+                                invoke,
+                                empty_env_list,
+                                allocators,
+                            )?;
                             next_cont = Some(new_closure);
                         }
 
@@ -275,9 +316,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             *v,
                             None::<Type<T>>,
                             handler,
+                            allocators,
                             None,
                         ),
                         empty_env_list,
+                        allocators,
                     )?;
 
                     let perform_invoke = Invoke::new(
@@ -285,6 +328,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                         continuation,
                         Some(inner_closure),
                         None::<Type<T>>,
+                        allocators,
                         source_info.clone(),
                     );
                     self.current_type = Some(perform_invoke);
@@ -299,11 +343,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     // 在独立作用域中处理 invoke,确保 rec_assumptions 被 drop
                     let mut rec_assumptions = smallvec::SmallVec::new();
                     let invoke_context = InvokeContext::new(
-                        arg,
+                        &arg,
                         empty_env_list,
                         &mut rec_assumptions,
                         gc,
                         &mut self.roots,
+                        allocators,
                         source_info.as_ref(),
                     );
                     func.invoke(invoke_context)?
@@ -322,6 +367,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     self.cont_stack.push(ContinuationOrHandler::Continuation(a));
                     self.cont_stack.push(ContinuationOrHandler::PerformHandler(b));
                 }
+                InvokeCountinuationStyle::Pandom(_) => unreachable!(
+                    "Pandom continuation style should have been handled in the invoke handler"
+                ),
             };
             (invoke_result, true)
         } else {
@@ -343,6 +391,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                             current_type,
                             None::<Type<T>>,
                             None::<Type<T>>,
+                            allocators,
                             source_info,
                         ),
                         true,

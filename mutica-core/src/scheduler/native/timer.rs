@@ -43,7 +43,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Stopwatch<T> {
     }
 }
 
-impl<T: GcAllocObject<T, Inner = Type<T>>> OpaqueValue<T> for Stopwatch<T> {
+impl<T: GcAllocObject<T, Inner = Type<T>>> OpaqueValue<Type<T>, T> for Stopwatch<T> {
     fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // 返回从创建时间到现在的纳秒数
         let elapsed_nanos = self.start_time.elapsed().as_nanos();

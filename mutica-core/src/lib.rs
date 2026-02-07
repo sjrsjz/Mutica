@@ -6,3 +6,4 @@ pub use ariadne;
 pub use smallvec;
 pub use stacksafe;
 pub use tokio;
+pub use arena_arc;

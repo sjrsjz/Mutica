@@ -1,5 +1,6 @@
 //! Mutica 类型系统模块
 
+pub mod allocator;
 pub mod allof;
 pub mod anyof;
 pub mod character;
@@ -94,6 +95,7 @@ use smallvec::SmallVec;
 use crate::{
     test_true,
     types::{
+        allocator::Allocators,
         allof::AllOf,
         anyof::AnyOf,
         character::Character,
@@ -162,74 +164,74 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
 
 pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     // 整数类型
-    Sequence(Sequence<T>),
+    Sequence(Sequence<Type<T>, T>),
     // 浮点类型
-    Float(Float<T>),
+    Float(Float<Type<T>, T>),
     // 浮点值类型
-    FloatValue(FloatValue<T>),
+    FloatValue(FloatValue<Type<T>, T>),
     // 字符类型
-    Char(Character<T>),
+    Char(Character<Type<T>, T>),
     // 字符值类型
-    CharValue(CharacterValue<T>),
+    CharValue(CharacterValue<Type<T>, T>),
     // 泛化类型
-    Any(AnyOf<T>),
+    Any(AnyOf<Type<T>, T>),
     // 专化类型
-    All(AllOf<T>),
+    All(AllOf<Type<T>, T>),
     // 不动点类型
-    FixPoint(FixPoint<T>),
+    FixPoint(FixPoint<Type<T>, T>),
     // 类型应用
-    Invoke(Invoke<T>),
+    Invoke(Invoke<Type<T>, T>),
     // 类型变量
-    Variable(Variable<T>),
+    Variable(Variable<Type<T>, T>),
     // 闭包类型
-    Closure(Closure<T>),
+    Closure(Closure<Type<T>, T>),
     // 操作码类型
-    Opcode(Opcode<T>),
+    Opcode(Opcode<Type<T>, T>),
     // 命名空间类型
-    Namespace(Namespace<T>),
+    Namespace(Namespace<Type<T>, T>),
     // 约束类型
-    Constraint(Constraint<T>),
+    Constraint(Constraint<Type<T>, T>),
     // 模式类型
-    Pattern(Pattern<T>),
+    Pattern(Pattern<Type<T>, T>),
     // 惰性包装器
-    Lazy(Lazy<T>),
+    Lazy(Lazy<Type<T>, T>),
     // 子类型
-    SubOf(SubOf<T>),
+    SubOf(SubOf<Type<T>, T>),
     // 函数类型（仅仅只是粗略的表示）
-    Lambda(Lambda<T>),
+    Lambda(Lambda<Type<T>, T>),
     // 可变类型
-    Mutable(Mutable<T>),
+    Mutable(Mutable<Type<T>, T>),
     // 自然数类型
-    NaturalNumber(NaturalNumber<T>),
+    NaturalNumber(NaturalNumber<Type<T>, T>),
     // 自然数集合类型
-    NaturalNumberSet(NaturalNumberSet<T>),
+    NaturalNumberSet(NaturalNumberSet<Type<T>, T>),
     // 不透明对象类型（用于封装宿主语言对象）
-    OpaqueObject(OpaqueObject<T>),
+    OpaqueObject(OpaqueObject<Type<T>, T>),
 }
 
 pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
-    Sequence(&'a Sequence<T>),
-    Float(&'a Float<T>),
-    FloatValue(&'a FloatValue<T>),
-    Char(&'a Character<T>),
-    CharValue(&'a CharacterValue<T>),
-    Any(&'a AnyOf<T>),
-    All(&'a AllOf<T>),
-    FixPoint(&'a FixPoint<T>),
-    Invoke(&'a Invoke<T>),
-    Variable(&'a Variable<T>),
-    Closure(&'a Closure<T>),
-    Opcode(&'a Opcode<T>),
-    Namespace(&'a Namespace<T>),
-    Constraint(&'a Constraint<T>),
-    Pattern(&'a Pattern<T>),
-    Lazy(&'a Lazy<T>),
-    SubOf(&'a SubOf<T>),
-    Lambda(&'a Lambda<T>),
-    Mutable(&'a Mutable<T>),
-    NaturalNumber(&'a NaturalNumber<T>),
-    NaturalNumberSet(&'a NaturalNumberSet<T>),
-    OpaqueObject(&'a OpaqueObject<T>),
+    Sequence(&'a Sequence<Type<T>, T>),
+    Float(&'a Float<Type<T>, T>),
+    FloatValue(&'a FloatValue<Type<T>, T>),
+    Char(&'a Character<Type<T>, T>),
+    CharValue(&'a CharacterValue<Type<T>, T>),
+    Any(&'a AnyOf<Type<T>, T>),
+    All(&'a AllOf<Type<T>, T>),
+    FixPoint(&'a FixPoint<Type<T>, T>),
+    Invoke(&'a Invoke<Type<T>, T>),
+    Variable(&'a Variable<Type<T>, T>),
+    Closure(&'a Closure<Type<T>, T>),
+    Opcode(&'a Opcode<Type<T>, T>),
+    Namespace(&'a Namespace<Type<T>, T>),
+    Constraint(&'a Constraint<Type<T>, T>),
+    Pattern(&'a Pattern<Type<T>, T>),
+    Lazy(&'a Lazy<Type<T>, T>),
+    SubOf(&'a SubOf<Type<T>, T>),
+    Lambda(&'a Lambda<Type<T>, T>),
+    Mutable(&'a Mutable<Type<T>, T>),
+    NaturalNumber(&'a NaturalNumber<Type<T>, T>),
+    NaturalNumberSet(&'a NaturalNumberSet<Type<T>, T>),
+    OpaqueObject(&'a OpaqueObject<Type<T>, T>),
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for TypeRef<'_, T> {
@@ -989,14 +991,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
 
     #[stacksafe::stacksafe]
     fn reduce(
-        self,
+        &self,
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         type_dispatch!(self, reduce, ctx)
     }
 
     #[stacksafe::stacksafe]
-    fn invoke(self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         type_dispatch!(self, invoke, ctx)
     }
 
@@ -1250,23 +1252,32 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> CollectorExt<U, V>
 /// 类型检查上下文，用于 `check` 方法
 #[allow(clippy::type_complexity)]
 pub struct TypeCheckContext<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    pub instance_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
+    pub coinductive_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
     pub pattern_collector: PatternCollector<'a, 'b, U, V>,
     pub lhs_env: CaptureEnvList<'a, U, V>,
     pub rhs_env: CaptureEnvList<'a, U, V>,
     pub bound_generic_variables: &'a GenericBinding<'a, U, V>,
+    pub allocators: &'a mut Allocators<U, V>,
 }
 
 impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, 'b, U, V> {
     #[allow(clippy::type_complexity)]
     pub fn new(
-        instance_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
+        coinductive_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, TaggedPtr<()>); 8]>,
         pattern_collector: PatternCollector<'a, 'b, U, V>,
         lhs_env: CaptureEnvList<'a, U, V>,
         rhs_env: CaptureEnvList<'a, U, V>,
         bound_generic_variables: &'a GenericBinding<U, V>,
+        allocators: &'a mut Allocators<U, V>,
     ) -> Self {
-        Self { instance_assumptions, pattern_collector, lhs_env, rhs_env, bound_generic_variables }
+        Self {
+            coinductive_assumptions,
+            pattern_collector,
+            lhs_env,
+            rhs_env,
+            bound_generic_variables,
+            allocators,
+        }
     }
 }
 
@@ -1277,6 +1288,7 @@ pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObje
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
+    pub allocators: &'a mut Allocators<U, V>,
 }
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext<'a, 'roots, U, V> {
@@ -1286,31 +1298,34 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
+        allocators: &'a mut Allocators<U, V>,
     ) -> Self {
-        Self { solved_argument, capture_env, rec_assumptions, gc, roots }
+        Self { solved_argument, capture_env, rec_assumptions, gc, roots, allocators }
     }
 }
 
 /// 类型应用上下文，用于 `invoke` 方法
 pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    pub arg: U,
+    pub arg: &'a U,
     pub environment: CaptureEnvList<'a, U, V>,
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
+    pub allocators: &'a mut Allocators<U, V>,
     pub source_info: Option<&'a Arc<SourceLocation>>,
 }
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a, 'roots, U, V> {
     pub fn new(
-        arg: U,
+        arg: &'a U,
         environment: CaptureEnvList<'a, U, V>,
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
+        allocators: &'a mut Allocators<U, V>,
         source_info: Option<&'a Arc<SourceLocation>>,
     ) -> Self {
-        Self { arg, environment, rec_assumptions, gc, roots, source_info }
+        Self { arg, environment, rec_assumptions, gc, roots, allocators, source_info }
     }
 }
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
@@ -1331,10 +1346,10 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
 
     // 归约变换 (beta-reduction)
-    fn reduce(self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
+    fn reduce(&self, ctx: &mut ReductionContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     // 类型应用 (apply)
-    fn invoke(self, ctx: InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
+    fn invoke(&self, ctx: InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>>;
 
