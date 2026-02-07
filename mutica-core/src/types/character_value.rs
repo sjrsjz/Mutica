@@ -34,7 +34,11 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Character
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {}
 }
 
-impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for CharacterValue<U, V> {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for CharacterValue<U, V> {
+    fn rootless(&self) -> bool {
+        true
+    }
+}
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for CharacterValue<Type<T>, T> {
     type RefDispatcher<'a>

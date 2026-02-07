@@ -22,6 +22,7 @@ use crate::{
 pub struct Constraint<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     pattern: ArcSingle<U, usize>,
     constraint: ArcSlice<(Arc<str>, U), usize>,
+    rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
     #[doc(hidden)]
     _phantom: std::marker::PhantomData<V>,
@@ -32,6 +33,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Constraint<U, V> {
         Self {
             pattern: self.pattern.clone(),
             constraint: self.constraint.clone(),
+            rootless: self.rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
@@ -40,6 +42,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Constraint<U, V> {
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Constraint<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         self.pattern.collect(queue);
         for (_, ty) in self.constraint.iter() {
             ty.collect(queue);
@@ -49,6 +54,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Constrain
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Constraint<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         self.pattern.upgrade(collected);
         for (_, ty) in self.constraint.iter() {
             ty.upgrade(collected);
@@ -169,11 +177,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
         for (k, v) in self.constraint.iter() {
             reduced_constraint.push((k.clone(), v.reduce(ctx)?));
         }
+        let rootless =
+            reduced_pattern.rootless() && reduced_constraint.iter().all(|(_, ty)| ty.rootless());
         let len = reduced_constraint.len();
         let mut iter = reduced_constraint.into_iter();
         Ok(Type::Constraint(Constraint {
             pattern: ctx.allocators.v.alloc_value(reduced_pattern),
             constraint: ctx.allocators.kv.alloc(len, |_| iter.next().unwrap()),
+            rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }))
@@ -527,11 +538,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
             .into_iter()
             .map(|(k, v)| AllOf::new(v.into_iter(), allocators, None, env).map(|v| (k, v)))
             .collect::<Result<SmallVec<[(Arc<str>, Type<T>); 4]>, TypeError<Type<T>, T>>>()?;
+        let expr = expr.into_dispatcher();
+        let rootless = expr.rootless() && merged_constraints.iter().all(|(_, ty)| ty.rootless());
         let len = merged_constraints.len();
         let mut iter = merged_constraints.into_iter();
         Ok(Constraint {
-            pattern: allocators.v.alloc_value(expr.into_dispatcher()),
+            pattern: allocators.v.alloc_value(expr),
             constraint: allocators.kv.alloc(len, |_| iter.next().unwrap()),
+            rootless,
             source_info,
             _phantom: std::marker::PhantomData,
         })

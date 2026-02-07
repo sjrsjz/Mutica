@@ -47,6 +47,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Mutable<U, V
             collected.push(strong);
         }
     }
+
+    fn rootless(&self) -> bool {
+        false
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Mutable<Type<T>, T> {

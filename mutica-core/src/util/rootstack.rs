@@ -59,4 +59,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> RootStack<U, V> {
 pub trait Rootable<T: GCTraceable<T> + 'static> {
     #[allow(unused_variables)]
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {}
+    fn rootless(&self) -> bool {
+        false
+    }
 }

@@ -29,9 +29,10 @@ use crate::{
 };
 
 pub struct ClosureBranch<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    pub capture_env: CaptureEnv<U, V>,
-    pub pattern: Constraint<U, V>,
-    pub expr: U,
+    capture_env: CaptureEnv<U, V>,
+    pattern: Constraint<U, V>,
+    expr: U,
+    rootless: bool,
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for ClosureBranch<U, V> {
@@ -40,12 +41,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for ClosureBranch<U, V
             capture_env: self.capture_env.clone(),
             pattern: self.pattern.clone(),
             expr: self.expr.clone(),
+            rootless: self.rootless,
         }
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for ClosureBranch<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         self.capture_env.collect(queue);
         self.pattern.collect(queue);
         self.expr.collect(queue);
@@ -54,9 +59,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for ClosureBr
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for ClosureBranch<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         self.capture_env.upgrade(collected);
         self.pattern.upgrade(collected);
         self.expr.upgrade(collected);
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -71,23 +83,39 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> ClosureBranch<U, V> {
             self.capture_env.capture_from(solved_argument, parent_env).map_err(|var_name| {
                 TypeError::MissingVariable(var_name.to_string().into_boxed_str())
             })?;
+        // 重置 rootless 状态
+        self.rootless =
+            self.capture_env.rootless() && self.pattern.rootless() && self.expr.rootless();
         Ok(self)
+    }
+
+    pub fn new(capture_env: CaptureEnv<U, V>, pattern: Constraint<U, V>, expr: U) -> Self {
+        let rootless = capture_env.rootless() && pattern.rootless() && expr.rootless();
+        Self { capture_env, pattern, expr, rootless }
     }
 }
 
 pub struct Closure<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     branches: ArcSlice<ClosureBranch<U, V>, usize>,
+    rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Closure<U, V> {
     fn clone(&self) -> Self {
-        Self { branches: self.branches.clone(), source_info: self.source_info.clone() }
+        Self {
+            branches: self.branches.clone(),
+            rootless: self.rootless,
+            source_info: self.source_info.clone(),
+        }
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Closure<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         for branch in self.branches.iter() {
             branch.collect(queue);
         }
@@ -96,9 +124,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Closure<U
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Closure<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         for branch in self.branches.iter() {
             branch.upgrade(collected);
         }
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -294,17 +329,19 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 Type::Constraint(v) => v,
                 _ => panic!("Reduced pattern is not a Constraint type"),
             };
-            reduced_branches.push(ClosureBranch {
-                capture_env: branch.capture_env,
-                pattern: reduced_pattern,
-                expr: branch.expr,
-            });
+            reduced_branches.push(ClosureBranch::new(
+                branch.capture_env,
+                reduced_pattern,
+                branch.expr,
+            ));
         }
 
         let len = reduced_branches.len();
         let mut reduced_iter = reduced_branches.into_iter();
         let new_branches = ctx.allocators.match_branch.alloc(len, |_| reduced_iter.next().unwrap());
-        Ok(Self { branches: new_branches, source_info: self.source_info.clone() }.dispatch())
+        let rootless = new_branches.iter().all(|b| b.rootless);
+        Ok(Self { branches: new_branches, source_info: self.source_info.clone(), rootless }
+            .dispatch())
     }
 
     fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
@@ -455,17 +492,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<Type<T>, T> {
     {
         let len = branches.len();
         let mut branches_iter = branches.into_iter();
-        Type::Closure(Closure {
-            branches: allocators.match_branch.alloc(len, |_| {
-                let (captures, pattern, expr) = branches_iter.next().unwrap();
-                let expr_ty = expr.into_dispatcher();
-                let capture_env = CaptureEnv::new_unsolved(SmallVec::from_iter(
-                    captures.into_iter().map(|(s, origin)| (s.into(), origin.clone())),
-                ));
-                ClosureBranch { capture_env, pattern: pattern.clone(), expr: expr_ty }
-            }),
-            source_info,
-        })
+        let branches = allocators.match_branch.alloc(len, |_| {
+            let (captures, pattern, expr) = branches_iter.next().unwrap();
+            let expr_ty = expr.into_dispatcher();
+            let capture_env = CaptureEnv::new_unsolved(SmallVec::from_iter(
+                captures.into_iter().map(|(s, origin)| (s.into(), origin.clone())),
+            ));
+            ClosureBranch::new(capture_env, pattern, expr_ty)
+        });
+        let rootless = branches.iter().all(|b| b.rootless);
+        Type::Closure(Closure { branches, rootless, source_info })
     }
 
     pub fn branches(&self) -> &[ClosureBranch<Type<T>, T>] {
@@ -497,18 +533,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<Type<T>, T> {
         }
         let self_len = self.branches.len();
         let len = self_len + other.branches.len();
-
-        Ok(Closure {
-            branches: allocators.match_branch.alloc(len, |i| {
-                if i < self_len {
-                    self.branches[i].clone()
-                } else {
-                    other.branches[i - self_len].clone()
-                }
-            }),
-            source_info,
-        }
-        .dispatch())
+        let branches = allocators.match_branch.alloc(len, |i| {
+            if i < self_len {
+                self.branches[i].clone()
+            } else {
+                other.branches[i - self_len].clone()
+            }
+        });
+        let rootless = branches.iter().all(|b| b.rootless);
+        Ok(Closure { branches, rootless, source_info }.dispatch())
     }
 
     pub fn identity(
@@ -527,9 +560,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<Type<T>, T> {
         allocators: &mut Allocators<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let bind_name: Arc<str> = bind_name.into();
-        let branch = ClosureBranch {
-            capture_env: CaptureEnv::Solved(SmallVec::new()),
-            pattern: Constraint::new_constraint(
+        let branch = ClosureBranch::new(
+            CaptureEnv::Solved(SmallVec::new()),
+            Constraint::new_constraint(
                 Pattern::<Type<T>, T>::new(
                     bind_name.clone(),
                     AllOf::unknown(None),
@@ -541,9 +574,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Closure<Type<T>, T> {
                 allocators,
                 None,
             )?,
-            expr: expr.into_dispatcher(),
-        };
-        Ok(Closure { branches: allocators.match_branch.alloc_value(branch).into(), source_info }
-            .dispatch())
+            expr.into_dispatcher(),
+        );
+        let rootless = branch.rootless;
+        Ok(Closure {
+            branches: allocators.match_branch.alloc_value(branch).into(),
+            rootless,
+            source_info,
+        }
+        .dispatch())
     }
 }

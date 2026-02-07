@@ -19,17 +19,25 @@ use crate::{
 
 pub struct Lambda<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     patterns: ArcSlice<Constraint<U, V>, usize>,
+    rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Lambda<U, V> {
     fn clone(&self) -> Self {
-        Self { patterns: self.patterns.clone(), source_info: self.source_info.clone() }
+        Self {
+            patterns: self.patterns.clone(),
+            source_info: self.source_info.clone(),
+            rootless: self.rootless,
+        }
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Lambda<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         for pattern in self.patterns.iter() {
             pattern.collect(queue);
         }
@@ -38,9 +46,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Lambda<U,
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Lambda<U, V> {
     fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         for pattern in self.patterns.iter() {
             pattern.upgrade(collected);
         }
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -172,9 +187,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
             .map(|constraint| constraint.reduce(ctx).map(|v| as_type!(v, Type::Constraint)))
             .collect::<Result<SmallVec<[_; 8]>, TypeError<Type<T>, T>>>()?;
         let len = new_patterns.len();
+        let rootless = new_patterns.iter().all(|c| c.rootless());
         let mut iter = new_patterns.into_iter();
         Ok(Lambda {
             patterns: ctx.allocators.constraint.alloc(len, |_| iter.next().unwrap()),
+            rootless,
             source_info: self.source_info.clone(),
         }
         .dispatch())
@@ -242,9 +259,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lambda<Type<T>, T> {
     ) -> Type<T> {
         let mut iter = patterns.into_iter();
         let len = iter.size_hint().0;
+        let mut rootless = true;
+        let patterns = allocators.constraint.alloc(len, |_| {
+            let pattern = iter.next().unwrap();
+            rootless = rootless && pattern.rootless();
+            pattern
+        });
 
-        Lambda { patterns: allocators.constraint.alloc(len, |_| iter.next().unwrap()), source_info }
-            .dispatch()
+        Lambda { patterns, rootless, source_info }.dispatch()
     }
 
     pub fn patterns(&self) -> &[Constraint<Type<T>, T>] {
@@ -268,6 +290,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lambda<Type<T>, T> {
                     other.patterns[i - self_len].clone()
                 }
             }),
+            rootless: self.rootless && other.rootless,
             source_info,
         }
         .dispatch())

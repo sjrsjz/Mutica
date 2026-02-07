@@ -51,17 +51,25 @@ pub struct Invoke<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     // 3: source_info
     #[allow(clippy::type_complexity)]
     inner: ArcSingle<(U, U, InvokeCountinuationStyle<U, V>), usize>,
+    rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Invoke<U, V> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone(), source_info: self.source_info.clone() }
+        Self {
+            inner: self.inner.clone(),
+            source_info: self.source_info.clone(),
+            rootless: self.rootless,
+        }
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Invoke<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         let (func, arg, cont_style) = self.inner.get();
         func.collect(queue);
         arg.collect(queue);
@@ -84,6 +92,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Invoke<U,
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Invoke<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         let (func, arg, cont_style) = self.inner.get();
         func.upgrade(collected);
         arg.upgrade(collected);
@@ -101,6 +112,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Invoke<U, V>
                 unreachable!("InvokeCountinuationStyle::Pandom should never be upgraded")
             }
         }
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -242,16 +257,24 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
         let (func, arg, cont_style) = self.inner.get();
         let new_func = func.reduce(ctx)?;
         let new_arg = arg.reduce(ctx)?;
+        let mut rootless = new_func.rootless() && new_arg.rootless();
         let new_cont_style = match cont_style {
             InvokeCountinuationStyle::TailCall => InvokeCountinuationStyle::TailCall,
             InvokeCountinuationStyle::WithContinuation(cont) => {
-                InvokeCountinuationStyle::WithContinuation(cont.reduce(ctx)?)
+                let new_cont = cont.reduce(ctx)?;
+                rootless &= new_cont.rootless();
+                InvokeCountinuationStyle::WithContinuation(new_cont)
             }
             InvokeCountinuationStyle::WithPerformHandler(cont) => {
-                InvokeCountinuationStyle::WithPerformHandler(cont.reduce(ctx)?)
+                let new_handler = cont.reduce(ctx)?;
+                rootless &= new_handler.rootless();
+                InvokeCountinuationStyle::WithPerformHandler(new_handler)
             }
             InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
-                InvokeCountinuationStyle::WithBoth(cont1.reduce(ctx)?, cont2.reduce(ctx)?)
+                let new_cont = cont1.reduce(ctx)?;
+                let new_handler = cont2.reduce(ctx)?;
+                rootless &= new_cont.rootless() && new_handler.rootless();
+                InvokeCountinuationStyle::WithBoth(new_cont, new_handler)
             }
             InvokeCountinuationStyle::Pandom(_) => {
                 unreachable!("InvokeCountinuationStyle::Pandom should never be reduced")
@@ -259,6 +282,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
         };
         Ok(Self {
             inner: ctx.allocators.invoke.alloc_value((new_func, new_arg, new_cont_style)),
+            rootless,
             source_info: self.source_info.clone(),
         }
         .dispatch())
@@ -349,7 +373,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<Type<T>, T> {
         let arg = arg.into_dispatcher();
         let continuation = continuation.map(|c| c.into_dispatcher());
         let raise_continuation = perform_continuation.map(|c| c.into_dispatcher());
-
+        let rootless = func.rootless()
+            && arg.rootless()
+            && continuation.as_ref().is_none_or(|c| c.rootless())
+            && raise_continuation.as_ref().is_none_or(|c| c.rootless());
         let continuation_style = match (continuation, raise_continuation) {
             (None, None) => InvokeCountinuationStyle::TailCall,
             (Some(cont), None) => InvokeCountinuationStyle::WithContinuation(cont),
@@ -359,6 +386,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Invoke<Type<T>, T> {
 
         Invoke {
             inner: allocators.invoke.alloc_value((func, arg, continuation_style)),
+            rootless,
             source_info,
         }
         .dispatch()

@@ -67,6 +67,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for FixPoint<U, 
             collected.push(strong);
         }
     }
+
+    fn rootless(&self) -> bool {
+        false
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> FixPoint<Type<T>, T> {

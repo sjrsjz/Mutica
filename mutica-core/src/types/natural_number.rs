@@ -33,7 +33,11 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for NaturalNu
     fn collect(&self, _queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {}
 }
 
-impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for NaturalNumber<U, V> {}
+impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for NaturalNumber<U, V> {
+    fn rootless(&self) -> bool {
+        true
+    }
+}
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for NaturalNumber<Type<T>, T> {
     type RefDispatcher<'a>

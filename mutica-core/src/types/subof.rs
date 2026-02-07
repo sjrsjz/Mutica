@@ -17,6 +17,7 @@ use crate::types::CoinductiveTypeRef;
 pub struct SubOf<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     expr: ArcSingle<U, usize>,
     source_info: Option<Arc<SourceLocation>>,
+    rootless: bool,
     _phantom: std::marker::PhantomData<V>,
 }
 
@@ -24,6 +25,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for SubOf<U, V> {
     fn clone(&self) -> Self {
         Self {
             expr: self.expr.clone(),
+            rootless: self.rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
@@ -32,13 +34,23 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for SubOf<U, V> {
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for SubOf<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         self.expr.collect(queue);
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for SubOf<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         self.expr.upgrade(collected);
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -135,8 +147,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let new_expr = self.expr.reduce(ctx)?;
+        let rootless = new_expr.rootless();
         Ok(SubOf {
             expr: ctx.allocators.v.alloc_value(new_expr),
+            rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
@@ -203,8 +217,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> SubOf<Type<T>, T> {
         allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
+        let expr = value.into_dispatcher();
+        let rootless = expr.rootless();
         Self {
-            expr: allocators.v.alloc_value(value.into_dispatcher()),
+            expr: allocators.v.alloc_value(expr),
+            rootless,
             source_info,
             _phantom: std::marker::PhantomData,
         }

@@ -27,6 +27,7 @@ use crate::types::CoinductiveTypeRef;
 /// - All<A₁, ..., Aₙ> : All<B₁, ..., Bₙ>  当且仅当  ∀j. ∃i. Aᵢ : Bⱼ
 pub struct AllOf<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     types: ArcSlice<U, usize>,
+    rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<V>,
 }
@@ -36,6 +37,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for AllOf<U, V> {
         Self {
             types: self.types.clone(),
             source_info: self.source_info.clone(),
+            rootless: self.rootless,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -43,6 +45,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for AllOf<U, V> {
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for AllOf<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         for sub in self.types.iter() {
             sub.collect(queue);
         }
@@ -51,9 +56,16 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for AllOf<U, 
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for AllOf<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         for sub in self.types.iter() {
             sub.upgrade(collected);
         }
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -389,10 +401,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<Type<T>, T> {
 
         let new_type = match kept_len {
             1 => kept_iter.next().unwrap(),
-            _ => AllOf {
-                types: allocators.v.alloc(kept_len, |_| kept_iter.next().unwrap()),
-                source_info,
-                _phantom: std::marker::PhantomData,
+            _ => {
+                let types = allocators.v.alloc(kept_len, |_| kept_iter.next().unwrap());
+                let rootless = types.iter().all(|t| t.rootless());
+                AllOf { types, rootless, source_info, _phantom: std::marker::PhantomData }
             }
             .dispatch(),
         };
@@ -404,7 +416,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AllOf<Type<T>, T> {
     }
 
     pub fn unknown(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        AllOf { types: ArcSlice::empty(), source_info, _phantom: std::marker::PhantomData }
-            .dispatch()
+        AllOf {
+            types: ArcSlice::empty(),
+            rootless: true,
+            source_info,
+            _phantom: std::marker::PhantomData,
+        }
+        .dispatch()
     }
 }

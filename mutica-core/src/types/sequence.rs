@@ -42,18 +42,27 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for SequenceType<U, V>
 /// 区间类型，表示一组不同长度元组的Any
 pub struct Sequence<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     ty: SequenceType<U, V>,
+    rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
     offset: usize,
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Sequence<U, V> {
     fn clone(&self) -> Self {
-        Self { ty: self.ty.clone(), source_info: self.source_info.clone(), offset: self.offset }
+        Self {
+            ty: self.ty.clone(),
+            source_info: self.source_info.clone(),
+            offset: self.offset,
+            rootless: self.rootless,
+        }
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Sequence<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         match &self.ty {
             SequenceType::Repeat(prefix, tail) => {
                 for (ty, _) in prefix.as_ref() {
@@ -80,6 +89,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Sequence<
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Sequence<U, V> {
     fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         match &self.ty {
             SequenceType::Repeat(prefix, tail) => {
                 for (ty, _) in prefix.as_ref() {
@@ -101,6 +113,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Sequence<U, 
             SequenceType::Unit => {}
             SequenceType::Phantom(_) => {}
         }
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -214,6 +230,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
+                                        rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), cons.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -286,6 +303,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
                                         offset: self.physical_prefix_len(),
+                                        rootless: self.rootless,
                                     };
                                     // 由于不消耗任何前缀元素就直接匹配剩余部分，可能会导致无限递归，因此需要做循环假设检测
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
@@ -304,6 +322,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
+                                        rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -357,6 +376,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.block_to_index(seek.0, seek.1),
+                                        rootless: v.rootless,
                                     };
                                     all &= test_true!(
                                         cons.check(viewed.as_ref_dispatcher(), &mut inner_ctx)?
@@ -383,6 +403,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.physical_prefix_len(),
+                                        rootless: v.rootless,
                                     };
                                     let pair = (cons.tagged_ptr(), viewed.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -400,6 +421,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.block_to_index(seek.0, seek.1),
+                                        rootless: v.rootless,
                                     };
                                     all &= test_true!(
                                         cons.check(viewed.as_ref_dispatcher(), &mut inner_ctx)?
@@ -423,6 +445,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.physical_prefix_len(),
+                                        rootless: v.rootless,
                                     };
                                     let pair = (cons.tagged_ptr(), viewed.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -465,6 +488,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.block_to_index(seek.0, seek.1),
+                                        rootless: v.rootless,
                                     };
                                     all &= test_true!(
                                         l_cons.check(viewed.as_ref_dispatcher(), &mut inner_ctx)?
@@ -476,6 +500,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
+                                        rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -593,6 +618,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
+                                        rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), cons.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -663,6 +689,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
                                         offset: self.physical_prefix_len(),
+                                        rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -680,6 +707,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
+                                        rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -732,6 +760,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.block_to_index(seek.0, seek.1),
+                                        rootless: v.rootless,
                                     };
                                     all &= test_true!(
                                         cons.subof(viewed.as_ref_dispatcher(), &mut inner_ctx)?
@@ -758,6 +787,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.physical_prefix_len(),
+                                        rootless: v.rootless,
                                     };
                                     let pair = (cons.tagged_ptr(), viewed.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -775,6 +805,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.block_to_index(seek.0, seek.1),
+                                        rootless: v.rootless,
                                     };
                                     all &= test_true!(
                                         cons.subof(viewed.as_ref_dispatcher(), &mut inner_ctx)?
@@ -798,6 +829,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.physical_prefix_len(),
+                                        rootless: v.rootless,
                                     };
                                     let pair = (cons.tagged_ptr(), viewed.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -840,6 +872,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
                                         offset: v.block_to_index(seek.0, seek.1),
+                                        rootless: v.rootless,
                                     };
                                     all &= test_true!(
                                         l_cons.subof(viewed.as_ref_dispatcher(), &mut inner_ctx)?
@@ -851,6 +884,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
                                         offset: self.block_to_index(seek.0, seek.1),
+                                        rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
                                     if inner_ctx.coinductive_assumptions.contains(&pair) {
@@ -1043,11 +1077,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
     ) -> Type<T> {
         let mut prefix_iter = prefix.into_iter().map(|(ty, count)| (ty.into_dispatcher(), count));
         let len = prefix_iter.size_hint().0; // 这里假设前缀的长度不会超过 usize::MAX
+        let prefix = allocators.rle.alloc(len, |_| prefix_iter.next().unwrap());
+        let tail = tail.into_dispatcher();
+        let rootless = tail.rootless() & prefix.iter().all(|(ty, _)| ty.rootless());
         Self {
-            ty: SequenceType::Repeat(
-                allocators.rle.alloc(len, |_| prefix_iter.next().unwrap()),
-                allocators.v.alloc_value(tail.into_dispatcher()),
-            ),
+            ty: SequenceType::Repeat(prefix, allocators.v.alloc_value(tail)),
+            rootless,
             source_info,
             offset: 0,
         }
@@ -1062,11 +1097,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
     ) -> Type<T> {
         let mut prefix_iter = prefix.into_iter().map(|(ty, count)| (ty.into_dispatcher(), count));
         let len = prefix_iter.size_hint().0; // 这里假设前缀的长度不会超过 usize::MAX
+        let prefix = allocators.rle.alloc(len, |_| prefix_iter.next().unwrap());
+        let tail = tail.into_dispatcher();
+        let rootless = tail.rootless() & prefix.iter().all(|(ty, _)| ty.rootless());
         Self {
-            ty: SequenceType::Cons(
-                allocators.rle.alloc(len, |_| prefix_iter.next().unwrap()),
-                allocators.v.alloc_value(tail.into_dispatcher()),
-            ),
+            ty: SequenceType::Cons(prefix, allocators.v.alloc_value(tail)),
+            rootless,
             source_info,
             offset: 0,
         }
@@ -1083,22 +1119,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
         if len == 0 {
             return Self::unit(source_info);
         }
-        Self {
-            ty: SequenceType::NonEmptyTuple(
-                allocators.rle.alloc(len, |_| prefix_iter.next().unwrap()),
-            ),
-            source_info,
-            offset: 0,
-        }
-        .dispatch()
+        let prefix = allocators.rle.alloc(len, |_| prefix_iter.next().unwrap());
+        let rootless = prefix.iter().all(|(ty, _)| ty.rootless());
+        Self { ty: SequenceType::NonEmptyTuple(prefix), rootless, source_info, offset: 0 }
+            .dispatch()
     }
 
     pub fn unit(source_info: Option<Arc<SourceLocation>>) -> Type<T> {
-        Self { ty: SequenceType::Unit, source_info, offset: 0 }.dispatch()
+        Self { ty: SequenceType::Unit, source_info, offset: 0, rootless: true }.dispatch()
     }
 
     pub fn unit_seq(source_info: Option<Arc<SourceLocation>>) -> Sequence<Type<T>, T> {
-        Self { ty: SequenceType::Unit, source_info, offset: 0 }
+        Self { ty: SequenceType::Unit, source_info, offset: 0, rootless: true }
     }
 
     pub fn nature_number<V: AsDispatcher<Type<T>, T>>(
@@ -1110,13 +1142,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
         if num == 0 {
             Self::unit(source_info)
         } else {
+            let ty = ty.into_dispatcher();
+            let rootless = ty.rootless();
             Self {
                 ty: SequenceType::NonEmptyTuple(
-                    allocators
-                        .rle
-                        .alloc_value((ty.into_dispatcher(), NonZero::new(num).unwrap()))
-                        .into(),
+                    allocators.rle.alloc_value((ty, NonZero::new(num).unwrap())).into(),
                 ),
+                rootless,
                 source_info,
                 offset: 0,
             }
@@ -1291,6 +1323,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
                         ty: SequenceType::Unit,
                         source_info: self.source_info.clone(),
                         offset: 0,
+                        rootless: self.rootless,
                     })
                 } else {
                     // 视图仍然有元素
@@ -1298,6 +1331,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
                         ty: self.ty.clone(),
                         source_info: self.source_info.clone(),
                         offset: self.offset + offset,
+                        rootless: self.rootless,
                     })
                 }
             }
@@ -1310,6 +1344,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
                         ty: self.ty.clone(),
                         source_info: self.source_info.clone(),
                         offset: self.offset + offset,
+                        rootless: self.rootless,
                     })
                 }
             }
@@ -1319,6 +1354,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
                     ty: self.ty.clone(),
                     source_info: self.source_info.clone(),
                     offset: if self.offset + offset >= len { len } else { self.offset + offset },
+                    rootless: self.rootless,
                 })
             }
             SequenceType::Unit => {
@@ -1327,6 +1363,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
                         ty: self.ty.clone(),
                         source_info: self.source_info.clone(),
                         offset: 0,
+                        rootless: self.rootless,
                     })
                 } else {
                     None
@@ -1505,7 +1542,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
             SequenceType::Phantom(_) => unreachable!(),
         };
 
-        Ok(Sequence { ty: new_ty, source_info: self.source_info.clone(), offset: self.offset })
+        Ok(Sequence {
+            ty: new_ty,
+            source_info: self.source_info.clone(),
+            offset: self.offset,
+            rootless: self.rootless & other.rootless,
+        })
     }
 
     pub fn is_tuple(&self) -> bool {

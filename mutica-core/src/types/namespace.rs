@@ -18,6 +18,7 @@ use crate::{
 pub struct Namespace<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     tag: Arc<str>,
     expr: ArcSingle<U, usize>,
+    rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<V>,
 }
@@ -27,6 +28,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Namespace<U, V> {
         Self {
             tag: self.tag.clone(),
             expr: self.expr.clone(),
+            rootless: self.rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
@@ -35,13 +37,23 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Namespace<U, V> {
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Namespace<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         self.expr.collect(queue);
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Namespace<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         self.expr.upgrade(collected);
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -190,9 +202,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Namespace<Type<T>, T> {
         allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
+        let expr = expr.into_dispatcher();
+        let rootless = expr.rootless();
         Self {
             tag: tag.into(),
-            expr: allocators.v.alloc_value(expr.into_dispatcher()),
+            expr: allocators.v.alloc_value(expr),
+            rootless,
             source_info,
             _phantom: std::marker::PhantomData,
         }

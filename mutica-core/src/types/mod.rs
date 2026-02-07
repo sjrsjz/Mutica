@@ -977,6 +977,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Rootable<T> for Type<T> {
     fn upgrade(&self, collected: &mut Vec<GCArc<T>>) {
         type_dispatch!(self, upgrade, collected)
     }
+
+    #[stacksafe::stacksafe]
+    fn rootless(&self) -> bool {
+        type_dispatch!(self, rootless)
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<T> {

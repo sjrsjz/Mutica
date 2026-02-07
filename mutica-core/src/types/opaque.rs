@@ -45,6 +45,10 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for OpaqueObject
     fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<V>>) {
         self.object.upgrade(collected);
     }
+
+    fn rootless(&self) -> bool {
+        false
+    }
 }
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for OpaqueObject<Type<T>, T> {

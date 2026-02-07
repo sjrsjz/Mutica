@@ -111,6 +111,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> CaptureEnv<U, V> {
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for CaptureEnv<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless() {
+            return;
+        }
         match self {
             CaptureEnv::Unsolved(_) => {}
             CaptureEnv::Solved(vars) => {
@@ -125,6 +128,9 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for CaptureEn
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for CaptureEnv<U, V> {
     fn upgrade(&self, collected: &mut Vec<arc_gc::arc::GCArc<V>>) {
+        if self.rootless() {
+            return;
+        }
         match self {
             CaptureEnv::Unsolved(_) => {}
             CaptureEnv::Solved(vars) => {
@@ -133,6 +139,21 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for CaptureEnv<U
                 }
             }
             CaptureEnv::Pandom(_) => {}
+        }
+    }
+
+    fn rootless(&self) -> bool {
+        match self {
+            CaptureEnv::Unsolved(_) => true,
+            CaptureEnv::Solved(v) => {
+                for (_, var_type) in v.iter() {
+                    if !var_type.rootless() {
+                        return false;
+                    }
+                }
+                true
+            }
+            CaptureEnv::Pandom(_) => true,
         }
     }
 }

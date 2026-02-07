@@ -15,6 +15,7 @@ use crate::{
 pub struct Lazy<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     expr: ArcSingle<U, usize>,
     source_info: Option<Arc<SourceLocation>>,
+    rootless: bool,
     _phantom: std::marker::PhantomData<V>,
 }
 
@@ -23,6 +24,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Lazy<U, V> {
         Self {
             expr: self.expr.clone(),
             source_info: self.source_info.clone(),
+            rootless: self.rootless,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -30,13 +32,23 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Clone for Lazy<U, V> {
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Lazy<U, V> {
     fn collect(&self, queue: &mut std::collections::VecDeque<arc_gc::arc::GCArcWeak<V>>) {
+        if self.rootless {
+            return;
+        }
         self.expr.collect(queue);
     }
 }
 
 impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Lazy<U, V> {
     fn upgrade(&self, collected: &mut Vec<GCArc<V>>) {
+        if self.rootless {
+            return;
+        }
         self.expr.upgrade(collected);
+    }
+
+    fn rootless(&self) -> bool {
+        self.rootless
     }
 }
 
@@ -130,8 +142,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let new_expr = self.expr.reduce(ctx)?;
+        let rootless = new_expr.rootless();
         Ok(Lazy {
             expr: ctx.allocators.v.alloc_value(new_expr),
+            rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
         }
@@ -178,8 +192,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<Type<T>, T> {
         allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
+        let value = value.into_dispatcher();
+        let rootless = value.rootless();
         Lazy {
-            expr: allocators.v.alloc_value(value.into_dispatcher()),
+            expr: allocators.v.alloc_value(value),
+            rootless,
             source_info,
             _phantom: std::marker::PhantomData,
         }
