@@ -511,7 +511,7 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                 }
             }
             TypeError::AssertFailed(types) => {
-                let repr_a = types.0.represent(&mut FastCycleDetector::new(), 0, 3);
+                let repr_a = types.0.represent(&mut FastCycleDetector::new(), 0, usize::MAX);
                 let repr_b = types.1.represent(&mut FastCycleDetector::new(), 0, 3);
                 let loc_a = types.0.source_info();
                 let loc_b = types.1.source_info();

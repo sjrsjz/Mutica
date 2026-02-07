@@ -257,24 +257,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 unreachable!("InvokeCountinuationStyle::Pandom should never be reduced")
             }
         };
-        Ok(Self::new(
-            new_func,
-            new_arg,
-            match new_cont_style {
-                InvokeCountinuationStyle::TailCall => None,
-                InvokeCountinuationStyle::WithContinuation(cont) => Some(cont),
-                InvokeCountinuationStyle::WithPerformHandler(cont) => Some(cont),
-                InvokeCountinuationStyle::WithBoth(cont1, cont2) => {
-                    Some(Self::new(cont1, cont2, None::<Type<T>>, None, ctx.allocators, None))
-                }
-                InvokeCountinuationStyle::Pandom(_) => {
-                    unreachable!("InvokeCountinuationStyle::Pandom should never be reduced")
-                }
-            },
-            None,
-            ctx.allocators,
-            self.source_info.clone(),
-        ))
+        Ok(Self {
+            inner: ctx.allocators.invoke.alloc_value((new_func, new_arg, new_cont_style)),
+            source_info: self.source_info.clone(),
+        }
+        .dispatch())
     }
 
     fn invoke(
