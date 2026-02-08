@@ -1,7 +1,6 @@
 use std::{ops::ControlFlow, sync::Arc};
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
-use arena_arc::{ArcSingle, ArcSlice};
 use smallvec::SmallVec;
 
 use crate::{
@@ -9,7 +8,6 @@ use crate::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
         GcAllocObject, PatternCollector, Representable, Rootable, TaggedPtr, Type,
         TypeCheckContext, TypeError, TypeRef,
-        allocator::Allocators,
         allof::AllOf,
         unify::{
             ArgumentBinding, GenericBinding, capture_env::CaptureEnvList, collector::Collector,
@@ -20,8 +18,8 @@ use crate::{
 };
 
 pub struct Constraint<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    pattern: ArcSingle<U, usize>,
-    constraint: ArcSlice<(Arc<str>, U), usize>,
+    pattern: Arc<U>,
+    constraint: Arc<[(Arc<str>, U)]>,
     rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
     #[doc(hidden)]
@@ -116,7 +114,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -144,7 +141,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -172,18 +168,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
         ctx: &mut super::ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         // 约束类型的规约主要是规约其主体类型，并尝试将约束条件中的变量绑定到规约后的主体类型上
-        let reduced_pattern = self.pattern.get().reduce(ctx)?;
+        let reduced_pattern = self.pattern.reduce(ctx)?;
         let mut reduced_constraint = SmallVec::<[(Arc<str>, Type<T>); 8]>::new();
         for (k, v) in self.constraint.iter() {
             reduced_constraint.push((k.clone(), v.reduce(ctx)?));
         }
         let rootless =
             reduced_pattern.rootless() && reduced_constraint.iter().all(|(_, ty)| ty.rootless());
-        let len = reduced_constraint.len();
-        let mut iter = reduced_constraint.into_iter();
+        let iter = reduced_constraint.into_iter();
         Ok(Type::Constraint(Constraint {
-            pattern: ctx.allocators.v.alloc_value(reduced_pattern),
-            constraint: ctx.allocators.kv.alloc(len, |_| iter.next().unwrap()),
+            pattern: Arc::from(reduced_pattern),
+            constraint: Arc::from_iter(iter),
             rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
@@ -275,7 +270,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
             ctx.lhs_env,
             ctx.rhs_env,
             &empty_bindings,
-            ctx.allocators,
         );
         let pattern_result =
             lhs_pattern.subof(rhs_pattern.as_ref_dispatcher(), &mut pattern_check_ctx)?;
@@ -319,7 +313,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
                 ctx.lhs_env,
                 ctx.rhs_env,
                 &bound_subtype_assumptions,
-                ctx.allocators,
             );
 
             let mut constraint_result = ThreeValuedLogic::True;
@@ -370,7 +363,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
                     ctx.rhs_env,
                     ctx.lhs_env,
                     &bound_subtype_assumptions,
-                    ctx.allocators,
                 );
                 for (lhs, rhs) in lhs_subtype_assumptions {
                     let lhs_ty = self
@@ -407,7 +399,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
                     ctx.lhs_env,
                     ctx.rhs_env,
                     &bound_subtype_assumptions,
-                    ctx.allocators,
                 );
                 constraint_result &= check_fn(&mut new_ctx)?;
             }
@@ -441,7 +432,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
             ctx.lhs_env,
             ctx.rhs_env,
             &empty_bindings,
-            ctx.allocators,
         );
         // 先检查主体类型，即 X where {...} 的 X 部分
         let result = other.check(self.pattern().as_ref_dispatcher(), &mut new_ctx)?;
@@ -458,7 +448,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
         for (k, v) in collected {
             GenericBinding::bind(&mut pool, k, v)?
         }
-        GenericBinding::finalize(&mut pool, ctx.lhs_env, ctx.allocators)?; // 解构的值都来源于于 LHS 环境
+        GenericBinding::finalize(&mut pool, ctx.lhs_env)?; // 解构的值都来源于于 LHS 环境
         let env = GenericBinding::pattern(&pool, &[], Some(ctx.bound_generic_variables));
 
         let mut bindings: SmallVec<[(Arc<str>, ArgumentBinding<Type<T>, T>); 4]> = SmallVec::new();
@@ -486,7 +476,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
                 ctx.lhs_env,
                 ctx.rhs_env,
                 &env,
-                ctx.allocators,
             );
             check_result &= ty.check(c.as_ref_dispatcher(), &mut new_ctx)?;
             if let ThreeValuedLogic::False = check_result {
@@ -503,22 +492,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
         expr: P,
         constraint: impl IntoIterator<Item = (Arc<str>, C)>,
         env: CaptureEnvList<Type<T>, T>,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>>
     where
         P: AsDispatcher<Type<T>, T>,
         C: AsDispatcher<Type<T>, T>,
     {
-        Self::new_constraint(expr, constraint, env, allocators, source_info)
-            .map(|c| c.into_dispatcher())
+        Self::new_constraint(expr, constraint, env, source_info).map(|c| c.into_dispatcher())
     }
 
     pub fn new_constraint<P, C>(
         expr: P,
         constraint: impl IntoIterator<Item = (Arc<str>, C)>,
         env: CaptureEnvList<Type<T>, T>,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Self, TypeError<Type<T>, T>>
     where
@@ -536,15 +524,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
         }
         let merged_constraints = set
             .into_iter()
-            .map(|(k, v)| AllOf::new(v.into_iter(), allocators, None, env).map(|v| (k, v)))
+            .map(|(k, v)| AllOf::new(v.into_iter(), None, env).map(|v| (k, v)))
             .collect::<Result<SmallVec<[(Arc<str>, Type<T>); 4]>, TypeError<Type<T>, T>>>()?;
         let expr = expr.into_dispatcher();
         let rootless = expr.rootless() && merged_constraints.iter().all(|(_, ty)| ty.rootless());
-        let len = merged_constraints.len();
-        let mut iter = merged_constraints.into_iter();
+        let iter = merged_constraints.into_iter();
         Ok(Constraint {
-            pattern: allocators.v.alloc_value(expr),
-            constraint: allocators.kv.alloc(len, |_| iter.next().unwrap()),
+            pattern: Arc::from(expr),
+            constraint: Arc::from_iter(iter),
             rootless,
             source_info,
             _phantom: std::marker::PhantomData,

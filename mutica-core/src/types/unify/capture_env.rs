@@ -229,7 +229,7 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> CaptureEnvList<'a, U, V>
                         return Ok(Some(var_type));
                     }
                 }
-                return Err(CaptureEnvLookupError::NotCaptured(self.local));
+                Err(CaptureEnvLookupError::NotCaptured(self.local))
             }
             CaptureEnv::Unsolved(vars) => {
                 let found = vars.iter().find(|(var_name, _)| var_name.as_ref() == name);
@@ -258,9 +258,7 @@ impl<'a, U: CoinductiveType<U, V>, V: GcAllocObject<V>> CaptureEnvList<'a, U, V>
                             Err(CaptureEnvLookupError::Argument(layer))
                         }
                     }
-                    None => {
-                        return Err(CaptureEnvLookupError::NotCaptured(self.local));
-                    }
+                    None => Err(CaptureEnvLookupError::NotCaptured(self.local)),
                 }
             }
             CaptureEnv::Pandom(_) => unreachable!("Invalid CaptureEnv state"),

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use arc_gc::traceable::GCTraceable;
-use arena_arc::ArcSlice;
 use smallvec::SmallVec;
 
 use crate::{
@@ -9,7 +8,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
-        Type, TypeCheckContext, TypeError, TypeRef, allocator::Allocators, constraint::Constraint,
+        Type, TypeCheckContext, TypeError, TypeRef, constraint::Constraint,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -18,7 +17,7 @@ use crate::{
 };
 
 pub struct Lambda<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    patterns: ArcSlice<Constraint<U, V>, usize>,
+    patterns: Arc<[Constraint<U, V>]>,
     rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
 }
@@ -86,7 +85,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -113,7 +111,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -138,7 +135,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
                         ctx.rhs_env,            // 交换方向（因为是逆变性检查）
                         ctx.lhs_env,
                         &flipped,
-                        ctx.allocators,
                     );
                     let mut i = 0usize;
                     let mut j = 0usize;
@@ -186,11 +182,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
             .iter()
             .map(|constraint| constraint.reduce(ctx).map(|v| as_type!(v, Type::Constraint)))
             .collect::<Result<SmallVec<[_; 8]>, TypeError<Type<T>, T>>>()?;
-        let len = new_patterns.len();
         let rootless = new_patterns.iter().all(|c| c.rootless());
-        let mut iter = new_patterns.into_iter();
+        let iter = new_patterns.into_iter();
         Ok(Lambda {
-            patterns: ctx.allocators.constraint.alloc(len, |_| iter.next().unwrap()),
+            patterns: Arc::from_iter(iter),
             rootless,
             source_info: self.source_info.clone(),
         }
@@ -254,17 +249,17 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lambda<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(
         patterns: impl IntoIterator<Item = Constraint<Type<T>, T>>,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let mut iter = patterns.into_iter();
         let len = iter.size_hint().0;
         let mut rootless = true;
-        let patterns = allocators.constraint.alloc(len, |_| {
+        let patterns = Arc::from_iter((0..len).map(|_| {
             let pattern = iter.next().unwrap();
             rootless = rootless && pattern.rootless();
             pattern
-        });
+        }));
 
         Lambda { patterns, rootless, source_info }.dispatch()
     }
@@ -276,20 +271,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lambda<Type<T>, T> {
     pub fn impls(
         &self,
         other: &Self,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let self_len = self.patterns.len();
         let len = self_len + other.patterns.len();
 
         Ok(Lambda {
-            patterns: allocators.constraint.alloc(len, |i| {
+            patterns: Arc::from_iter((0..len).map(|i| {
                 if i < self_len {
                     self.patterns[i].clone()
                 } else {
                     other.patterns[i - self_len].clone()
                 }
-            }),
+            })),
             rootless: self.rootless && other.rootless,
             source_info,
         }

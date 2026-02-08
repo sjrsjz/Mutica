@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use mimalloc::MiMalloc;
 use std::{
     collections::HashMap,
     fs,
@@ -19,12 +20,12 @@ use mutica_core::{
     scheduler::{self, ContinuationOrHandler, stack::Stack},
     stacksafe::{set_minimum_stack_size, set_stack_allocation_size},
     tokio,
-    types::{
-        AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef,
-        allocator::Allocators,
-    },
+    types::{AsDispatcher, GcAllocObject, Representable, TaggedPtr, Type, TypeError, TypeRef},
     util::{cycle_detector::FastCycleDetector, rootstack::RootStack},
 };
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 // 定义一个用于GC堆分配的类型
 pub enum TypeGcOnceLock {
@@ -196,6 +197,10 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
+    async_main().await;
+}
+
+async fn async_main() {
     set_stack_allocation_size(16 * 1024 * 1024); // 设置栈大小为16MB
     set_minimum_stack_size(512 * 1024); // 设置最小栈大小为512KB
     let cli = Cli::parse();
@@ -434,27 +439,21 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
 
     let mut gc = GC::new();
     let mut roots = RootStack::new();
-    let mut allocators = Allocators::new();
-    let built_type = match flowed.to_type(
-        &mut BuildContext::new(),
-        &mut gc,
-        &mut roots,
-        &mut allocators,
-        flowed.location(),
-    ) {
-        Ok(result) => result,
-        Err(Ok(type_error)) => {
-            println!("Type building error: {:?}", type_error);
-            return;
-        }
-        Err(Err(parse_error)) => {
-            // 获取源文件信息用于错误报告
-            let filepath = source.filepath();
-            let source_content = source.content().to_string();
-            parse_error.report().eprint((filepath, ariadne::Source::from(source_content))).ok();
-            return;
-        }
-    };
+    let built_type =
+        match flowed.to_type(&mut BuildContext::new(), &mut gc, &mut roots, flowed.location()) {
+            Ok(result) => result,
+            Err(Ok(type_error)) => {
+                println!("Type building error: {:?}", type_error);
+                return;
+            }
+            Err(Err(parse_error)) => {
+                // 获取源文件信息用于错误报告
+                let filepath = source.filepath();
+                let source_content = source.content().to_string();
+                parse_error.report().eprint((filepath, ariadne::Source::from(source_content))).ok();
+                return;
+            }
+        };
     #[cfg(debug_assertions)]
     println!("Built type: {}\n", built_type.ty().display(&mut FastCycleDetector::new(), 0, 6));
 
@@ -470,7 +469,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
         // #[cfg(debug_assertions)]
         // linear_scheduler.sweep_roots();
 
-        match linear_scheduler.step(&mut gc, &mut allocators).await {
+        match linear_scheduler.step(&mut gc).await {
             Ok(true) => (),
             Ok(false) => break Ok(linear_scheduler.current().clone()),
             Err(e) => break Err(e),
@@ -479,6 +478,7 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
         step_counter += 1;
         if step_counter >= SWEEP_INTERVAL {
             linear_scheduler.sweep_roots();
+            gc.collect();
             step_counter = 0;
         }
     };
@@ -580,5 +580,12 @@ pub async fn parse_and_reduce(expr: &str, path: PathBuf) {
             // TypeErrorReport now bundles the report with all needed source files
             e.to_report().eprint().ok();
         }
-    }
+    };
+    // drop(linear_scheduler);
+    // gc.collect();
+    // assert!(
+    //     gc.object_count() == 0,
+    //     "GC should have collected all objects, but {} remain",
+    //     gc.object_count()
+    // );
 }

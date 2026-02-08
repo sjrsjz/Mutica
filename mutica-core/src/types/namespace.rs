@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
-use arena_arc::ArcSingle;
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef, allocator::Allocators,
+        TypeCheckContext, TypeError, TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -17,7 +16,7 @@ use crate::{
 
 pub struct Namespace<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     tag: Arc<str>,
-    expr: ArcSingle<U, usize>,
+    expr: Arc<U>,
     rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<V>,
@@ -99,7 +98,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -134,7 +132,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -159,7 +156,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Names
         ctx: &mut ReductionContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         let new_expr = self.expr.reduce(ctx)?;
-        Ok(Self::new(self.tag.clone(), new_expr, ctx.allocators, self.source_info.clone()))
+        Ok(Self::new(self.tag.clone(), new_expr, self.source_info.clone()))
     }
 
     fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
@@ -199,14 +196,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Namespace<Type<T>, T> {
     pub fn new<I: AsDispatcher<Type<T>, T>, S: Into<Arc<str>>>(
         tag: S,
         expr: I,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let expr = expr.into_dispatcher();
         let rootless = expr.rootless();
         Self {
             tag: tag.into(),
-            expr: allocators.v.alloc_value(expr),
+            expr: Arc::new(expr),
             rootless,
             source_info,
             _phantom: std::marker::PhantomData,

@@ -1,15 +1,13 @@
-use std::{num::NonZero, sync::Arc};
+use std::sync::Arc;
 
 use arc_gc::traceable::GCTraceable;
-use arena_arc::{ArcSingle, ArcSlice};
 
 use crate::{
     test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef, allocator::Allocators,
-        unify::capture_env::CaptureEnvList,
+        TypeCheckContext, TypeError, TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -18,9 +16,9 @@ use crate::{
 };
 
 pub enum SequenceType<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    Repeat(ArcSlice<(U, NonZero<usize>), usize>, ArcSingle<U, usize>), // 任意长度, usize仅仅用来做内存身份
-    Cons(ArcSlice<(U, NonZero<usize>), usize>, ArcSingle<U, usize>),   // 余下的结构
-    NonEmptyTuple(ArcSlice<(U, NonZero<usize>), usize>),               // 无剩余元素
+    Repeat(Arc<[U]>, Arc<U>), // 任意长度, usize仅仅用来做内存身份
+    Cons(Arc<[U]>, Arc<U>),   // 余下的结构
+    NonEmptyTuple(Arc<[U]>),  // 无剩余元素
     Unit,
     Phantom(std::marker::PhantomData<V>),
 }
@@ -65,19 +63,19 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> GCTraceable<V> for Sequence<
         }
         match &self.ty {
             SequenceType::Repeat(prefix, tail) => {
-                for (ty, _) in prefix.as_ref() {
+                for ty in prefix.as_ref() {
                     ty.collect(queue);
                 }
                 tail.collect(queue);
             }
             SequenceType::Cons(prefix, tail) => {
-                for (ty, _) in prefix.as_ref() {
+                for ty in prefix.as_ref() {
                     ty.collect(queue);
                 }
                 tail.collect(queue);
             }
             SequenceType::NonEmptyTuple(prefix) => {
-                for (ty, _) in prefix.as_ref() {
+                for ty in prefix.as_ref() {
                     ty.collect(queue);
                 }
             }
@@ -94,19 +92,19 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> Rootable<V> for Sequence<U, 
         }
         match &self.ty {
             SequenceType::Repeat(prefix, tail) => {
-                for (ty, _) in prefix.as_ref() {
+                for ty in prefix.as_ref() {
                     ty.upgrade(collected);
                 }
                 tail.upgrade(collected);
             }
             SequenceType::Cons(prefix, tail) => {
-                for (ty, _) in prefix.as_ref() {
+                for ty in prefix.as_ref() {
                     ty.upgrade(collected);
                 }
                 tail.upgrade(collected);
             }
             SequenceType::NonEmptyTuple(prefix) => {
-                for (ty, _) in prefix.as_ref() {
+                for ty in prefix.as_ref() {
                     ty.upgrade(collected);
                 }
             }
@@ -147,7 +145,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -193,14 +190,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             match (self_seek, other_seek) {
                                 (None, None) => Ok(all),
                                 (mut seek @ Some(_), None) => {
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_self = &self.physical_prefix()[cursor].0;
+                                    while let Some(cursor) = seek {
+                                        let ty_self = &self.physical_prefix()[cursor];
                                         all &=
                                             test_true!(ty_self.check(
                                                 r_repeat.as_ref_dispatcher(),
                                                 &mut inner_ctx
                                             )?);
-                                        seek = self.next_block(cursor);
+                                        seek = self.next_index(cursor);
                                     }
                                     Ok(all)
                                 }
@@ -229,7 +226,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
-                                        offset: self.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), cons.tagged_ptr());
@@ -321,7 +318,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
-                                        offset: self.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
@@ -375,7 +372,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
-                                        offset: v.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: v.rootless,
                                     };
                                     all &= test_true!(
@@ -420,7 +417,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
-                                        offset: v.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: v.rootless,
                                     };
                                     all &= test_true!(
@@ -431,14 +428,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                 (seek @ Some(_), None) => {
                                     // self还有前缀未匹配完，other剩余部分是repeat，可以继续匹配
                                     let mut seek = seek;
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_self = &self.physical_prefix()[cursor].0;
+                                    while let Some(cursor) = seek {
+                                        let ty_self = &self.physical_prefix()[cursor];
                                         all &=
                                             test_true!(ty_self.check(
                                                 r_repeat.as_ref_dispatcher(),
                                                 &mut inner_ctx
                                             )?);
-                                        seek = self.next_block(cursor);
+                                        seek = self.next_index(cursor);
                                     }
                                     // 处理完前缀后，检查剩余部分
                                     let viewed = Self {
@@ -487,7 +484,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
-                                        offset: v.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: v.rootless,
                                     };
                                     all &= test_true!(
@@ -499,7 +496,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
-                                        offset: self.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
@@ -538,7 +535,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -581,14 +577,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             match (self_seek, other_seek) {
                                 (None, None) => Ok(all),
                                 (mut seek @ Some(_), None) => {
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_self = &self.physical_prefix()[cursor].0;
+                                    while let Some(cursor) = seek {
+                                        let ty_self = &self.physical_prefix()[cursor];
                                         all &=
                                             test_true!(ty_self.subof(
                                                 r_repeat.as_ref_dispatcher(),
                                                 &mut inner_ctx
                                             )?);
-                                        seek = self.next_block(cursor);
+                                        seek = self.next_index(cursor);
                                     }
                                     Ok(all)
                                 }
@@ -617,7 +613,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
-                                        offset: self.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), cons.tagged_ptr());
@@ -646,14 +642,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                             match (self_seek, other_seek) {
                                 (None, None) => Ok(all),
                                 (mut seek @ Some(_), None) => {
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_self = &self.physical_prefix()[cursor].0;
+                                    while let Some(cursor) = seek {
+                                        let ty_self = &self.physical_prefix()[cursor];
                                         all &=
                                             test_true!(ty_self.subof(
                                                 r_repeat.as_ref_dispatcher(),
                                                 &mut inner_ctx
                                             )?);
-                                        seek = self.next_block(cursor);
+                                        seek = self.next_index(cursor);
                                     }
                                     Ok(all)
                                 }
@@ -706,7 +702,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
-                                        offset: self.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
@@ -759,7 +755,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
-                                        offset: v.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: v.rootless,
                                     };
                                     all &= test_true!(
@@ -804,7 +800,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
-                                        offset: v.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: v.rootless,
                                     };
                                     all &= test_true!(
@@ -815,14 +811,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                 (seek @ Some(_), None) => {
                                     // self还有前缀未匹配完，other剩余部分是repeat，可以继续匹配
                                     let mut seek = seek;
-                                    while let Some((cursor, _)) = seek {
-                                        let ty_self = &self.physical_prefix()[cursor].0;
+                                    while let Some(cursor) = seek {
+                                        let ty_self = &self.physical_prefix()[cursor];
                                         all &=
                                             test_true!(ty_self.subof(
                                                 r_repeat.as_ref_dispatcher(),
                                                 &mut inner_ctx
                                             )?);
-                                        seek = self.next_block(cursor);
+                                        seek = self.next_index(cursor);
                                     }
                                     // 处理完前缀后，检查剩余部分
                                     let viewed = Self {
@@ -871,7 +867,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: v.ty.clone(),
                                         source_info: v.source_info.clone(),
-                                        offset: v.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: v.rootless,
                                     };
                                     all &= test_true!(
@@ -883,7 +879,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
                                     let viewed = Self {
                                         ty: self.ty.clone(),
                                         source_info: self.source_info.clone(),
-                                        offset: self.block_to_index(seek.0, seek.1),
+                                        offset: seek,
                                         rootless: self.rootless,
                                     };
                                     let pair = (viewed.tagged_ptr(), r_cons.tagged_ptr());
@@ -917,39 +913,29 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
             SequenceType::Unit => Ok(self.clone().dispatch()),
             SequenceType::NonEmptyTuple(prefix) => {
                 let mut new_prefix = Vec::with_capacity(prefix.len());
-                for (ty, count) in prefix.iter() {
+                for ty in prefix.iter() {
                     let reduced_ty = ty.reduce(ctx)?.into_dispatcher();
-                    new_prefix.push((reduced_ty, *count));
+                    new_prefix.push(reduced_ty);
                 }
-                Ok(Sequence::new_tuple(new_prefix, ctx.allocators, self.source_info.clone()))
+                Ok(Sequence::new_tuple(new_prefix, self.source_info.clone()))
             }
             SequenceType::Repeat(prefix, tail) => {
                 let mut new_prefix = Vec::with_capacity(prefix.len());
-                for (ty, count) in prefix.iter() {
+                for ty in prefix.iter() {
                     let reduced_ty = ty.reduce(ctx)?.into_dispatcher();
-                    new_prefix.push((reduced_ty, *count));
+                    new_prefix.push(reduced_ty);
                 }
-                let reduced_tail = tail.get().reduce(ctx)?.into_dispatcher();
-                Ok(Sequence::new_repeat(
-                    new_prefix,
-                    reduced_tail,
-                    ctx.allocators,
-                    self.source_info.clone(),
-                ))
+                let reduced_tail = tail.reduce(ctx)?.into_dispatcher();
+                Ok(Sequence::new_repeat(new_prefix, reduced_tail, self.source_info.clone()))
             }
             SequenceType::Cons(prefix, tail) => {
                 let mut new_prefix = Vec::with_capacity(prefix.len());
-                for (ty, count) in prefix.iter() {
+                for ty in prefix.iter() {
                     let reduced_ty = ty.reduce(ctx)?.into_dispatcher();
-                    new_prefix.push((reduced_ty, *count));
+                    new_prefix.push(reduced_ty);
                 }
-                let reduced_tail = tail.get().reduce(ctx)?.into_dispatcher();
-                Ok(Sequence::new_cons(
-                    new_prefix,
-                    reduced_tail,
-                    ctx.allocators,
-                    self.source_info.clone(),
-                ))
+                let reduced_tail = tail.reduce(ctx)?.into_dispatcher();
+                Ok(Sequence::new_cons(new_prefix, reduced_tail, self.source_info.clone()))
             }
             SequenceType::Phantom(_) => unreachable!(),
         }
@@ -1003,29 +989,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Sequence<Type<T>, T
         max_depth: usize,
     ) -> String {
         // 处理 offset，只显示视图中可见的部分
-        if let Some((start_idx, start_rem)) = self.seek_prefix() {
+        if let Some(start_idx) = self.seek_prefix() {
             let prefix = self.physical_prefix();
             let mut parts = Vec::new();
-
-            // 处理第一个被切断的块
-            let first_ty = &prefix[start_idx].0;
-            if start_rem == 1 {
-                parts.push(first_ty.represent(path, depth + 1, max_depth));
-            } else {
-                parts.push(format!(
-                    "{} @ {}",
-                    start_rem,
-                    first_ty.represent(path, depth + 1, max_depth)
-                ));
-            }
-
-            // 处理后续完整的块
-            for (ty, count) in prefix.iter().skip(start_idx + 1) {
-                if count.get() == 1 {
-                    parts.push(ty.represent(path, depth + 1, max_depth));
-                } else {
-                    parts.push(format!("{} @ {}", count, ty.represent(path, depth + 1, max_depth)));
-                }
+            for ty in prefix.iter().skip(start_idx) {
+                parts.push(ty.represent(path, depth + 1, max_depth));
             }
 
             // 根据类型决定如何格式化
@@ -1070,57 +1038,44 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Sequence<Type<T>, T
 
 impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
     pub fn new_repeat<U: AsDispatcher<Type<T>, T>, V: AsDispatcher<Type<T>, T>>(
-        prefix: impl IntoIterator<Item = (U, NonZero<usize>)>,
+        prefix: impl IntoIterator<Item = U>,
         tail: V,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
-        let mut prefix_iter = prefix.into_iter().map(|(ty, count)| (ty.into_dispatcher(), count));
-        let len = prefix_iter.size_hint().0; // 这里假设前缀的长度不会超过 usize::MAX
-        let prefix = allocators.rle.alloc(len, |_| prefix_iter.next().unwrap());
+        let prefix_iter = prefix.into_iter().map(|ty| ty.into_dispatcher());
+        let prefix = Arc::from_iter(prefix_iter);
         let tail = tail.into_dispatcher();
-        let rootless = tail.rootless() & prefix.iter().all(|(ty, _)| ty.rootless());
-        Self {
-            ty: SequenceType::Repeat(prefix, allocators.v.alloc_value(tail)),
-            rootless,
-            source_info,
-            offset: 0,
-        }
-        .dispatch()
+        let rootless = tail.rootless() & prefix.iter().all(|ty| ty.rootless());
+        Self { ty: SequenceType::Repeat(prefix, Arc::new(tail)), rootless, source_info, offset: 0 }
+            .dispatch()
     }
 
     pub fn new_cons<U: AsDispatcher<Type<T>, T>, V: AsDispatcher<Type<T>, T>>(
-        prefix: impl IntoIterator<Item = (U, NonZero<usize>)>,
+        prefix: impl IntoIterator<Item = U>,
         tail: V,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
-        let mut prefix_iter = prefix.into_iter().map(|(ty, count)| (ty.into_dispatcher(), count));
-        let len = prefix_iter.size_hint().0; // 这里假设前缀的长度不会超过 usize::MAX
-        let prefix = allocators.rle.alloc(len, |_| prefix_iter.next().unwrap());
+        let prefix_iter = prefix.into_iter().map(|ty| ty.into_dispatcher());
+        let prefix = Arc::from_iter(prefix_iter);
         let tail = tail.into_dispatcher();
-        let rootless = tail.rootless() & prefix.iter().all(|(ty, _)| ty.rootless());
-        Self {
-            ty: SequenceType::Cons(prefix, allocators.v.alloc_value(tail)),
-            rootless,
-            source_info,
-            offset: 0,
-        }
-        .dispatch()
+        let rootless = tail.rootless() & prefix.iter().all(|ty| ty.rootless());
+        Self { ty: SequenceType::Cons(prefix, Arc::new(tail)), rootless, source_info, offset: 0 }
+            .dispatch()
     }
 
     pub fn new_tuple<U: AsDispatcher<Type<T>, T>>(
-        prefix: impl IntoIterator<Item = (U, NonZero<usize>)>,
-        allocators: &mut Allocators<Type<T>, T>,
+        prefix: impl IntoIterator<Item = U>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
-        let mut prefix_iter = prefix.into_iter().map(|(ty, count)| (ty.into_dispatcher(), count));
-        let len = prefix_iter.size_hint().0; // 这里假设前缀的长度不会超过 usize::MAX
-        if len == 0 {
+        let prefix_iter = prefix.into_iter().map(|ty| ty.into_dispatcher());
+        if prefix_iter.size_hint().0 == 0 {
             return Self::unit(source_info);
         }
-        let prefix = allocators.rle.alloc(len, |_| prefix_iter.next().unwrap());
-        let rootless = prefix.iter().all(|(ty, _)| ty.rootless());
+        let prefix = Arc::from_iter(prefix_iter);
+        let rootless = prefix.iter().all(|ty| ty.rootless());
         Self { ty: SequenceType::NonEmptyTuple(prefix), rootless, source_info, offset: 0 }
             .dispatch()
     }
@@ -1136,7 +1091,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
     pub fn nature_number<V: AsDispatcher<Type<T>, T>>(
         num: usize,
         ty: V,
-        allocators: &mut Allocators<Type<T>, T>,
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         if num == 0 {
@@ -1144,15 +1098,9 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
         } else {
             let ty = ty.into_dispatcher();
             let rootless = ty.rootless();
-            Self {
-                ty: SequenceType::NonEmptyTuple(
-                    allocators.rle.alloc_value((ty, NonZero::new(num).unwrap())).into(),
-                ),
-                rootless,
-                source_info,
-                offset: 0,
-            }
-            .dispatch()
+            let prefix = Arc::from_iter(std::iter::repeat_n(ty, num));
+            Self { ty: SequenceType::NonEmptyTuple(prefix), rootless, source_info, offset: 0 }
+                .dispatch()
         }
     }
 
@@ -1161,36 +1109,21 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
         &self,
         other: &Sequence<Type<T>, T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<
-        (ThreeValuedLogic, Option<(usize, usize)>, Option<(usize, usize)>),
-        TypeError<Type<T>, T>,
-    > {
+    ) -> Result<(ThreeValuedLogic, Option<usize>, Option<usize>), TypeError<Type<T>, T>> {
         let mut self_seek = self.seek_prefix();
         let mut other_seek = other.seek_prefix();
         let mut all = ThreeValuedLogic::True;
 
-        while let (Some((cursor_self, self_rem)), Some((cursor_other, other_rem))) =
-            (self_seek, other_seek)
-        {
-            let ty_self = &self.physical_prefix()[cursor_self].0;
-            let ty_other = &other.physical_prefix()[cursor_other].0;
+        while let (Some(cursor_self), Some(cursor_other)) = (self_seek, other_seek) {
+            let ty_self = &self.physical_prefix()[cursor_self];
+            let ty_other = &other.physical_prefix()[cursor_other];
             all &= ty_self.check(ty_other.as_ref_dispatcher(), ctx)?;
             if let ThreeValuedLogic::False = all {
                 return Ok((ThreeValuedLogic::False, self_seek, other_seek));
             }
 
-            if self_rem == other_rem {
-                self_seek = self.next_block(cursor_self);
-                other_seek = other.next_block(cursor_other);
-            } else if self_rem < other_rem {
-                // self块用完，other块未用完
-                other_seek = Some((cursor_other, other_rem - self_rem));
-                self_seek = self.next_block(cursor_self);
-            } else {
-                // other块用完，self块未用完
-                self_seek = Some((cursor_self, self_rem - other_rem));
-                other_seek = other.next_block(cursor_other);
-            }
+            self_seek = self.next_index(cursor_self);
+            other_seek = other.next_index(cursor_other);
         }
 
         Ok((all, self_seek, other_seek))
@@ -1201,77 +1134,37 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
         &self,
         other: &Sequence<Type<T>, T>,
         ctx: &mut TypeCheckContext<Type<T>, T>,
-    ) -> Result<
-        (ThreeValuedLogic, Option<(usize, usize)>, Option<(usize, usize)>),
-        TypeError<Type<T>, T>,
-    > {
+    ) -> Result<(ThreeValuedLogic, Option<usize>, Option<usize>), TypeError<Type<T>, T>> {
         let mut self_seek = self.seek_prefix();
         let mut other_seek = other.seek_prefix();
         let mut all = ThreeValuedLogic::True;
 
-        while let (Some((cursor_self, self_rem)), Some((cursor_other, other_rem))) =
-            (self_seek, other_seek)
-        {
-            let ty_self = &self.physical_prefix()[cursor_self].0;
-            let ty_other = &other.physical_prefix()[cursor_other].0;
+        while let (Some(cursor_self), Some(cursor_other)) = (self_seek, other_seek) {
+            let ty_self = &self.physical_prefix()[cursor_self];
+            let ty_other = &other.physical_prefix()[cursor_other];
             all &= ty_self.subof(ty_other.as_ref_dispatcher(), ctx)?;
             if let ThreeValuedLogic::False = all {
                 return Ok((ThreeValuedLogic::False, self_seek, other_seek));
             }
 
-            if self_rem == other_rem {
-                self_seek = self.next_block(cursor_self);
-                other_seek = other.next_block(cursor_other);
-            } else if self_rem < other_rem {
-                // self块用完，other块未用完
-                other_seek = Some((cursor_other, other_rem - self_rem));
-                self_seek = self.next_block(cursor_self);
-            } else {
-                // other块用完，self块未用完
-                self_seek = Some((cursor_self, self_rem - other_rem));
-                other_seek = other.next_block(cursor_other);
-            }
+            self_seek = self.next_index(cursor_self);
+            other_seek = other.next_index(cursor_other);
         }
 
         Ok((all, self_seek, other_seek))
     }
 
-    // 返回 (block_index, remaining_count_in_this_block)
-    // 如果 offset 超出了 prefix，返回 None
-    fn seek_prefix(&self) -> Option<(usize, usize)> {
-        let mut pending_offset = self.offset;
-
-        for (i, (_, count)) in self.physical_prefix().iter().enumerate() {
-            let cnt = count.get();
-            if pending_offset < cnt {
-                // 找到了起点：在第 i 个块，还剩 cnt - pending_offset 个元素
-                return Some((i, cnt - pending_offset));
-            }
-            pending_offset -= cnt;
-        }
-
-        // Offset 超出了 Prefix，说明当前处于 Tail 区域
-        None
+    // 返回起始索引，如果 offset 超出了 prefix，返回 None
+    fn seek_prefix(&self) -> Option<usize> {
+        if self.offset < self.physical_prefix().len() { Some(self.offset) } else { None }
     }
 
-    fn next_block(&self, current_idx: usize) -> Option<(usize, usize)> {
+    fn next_index(&self, current_idx: usize) -> Option<usize> {
         let next_idx = current_idx + 1;
-        if next_idx < self.physical_prefix().len() {
-            Some((next_idx, self.physical_prefix()[next_idx].1.get()))
-        } else {
-            None
-        }
+        if next_idx < self.physical_prefix().len() { Some(next_idx) } else { None }
     }
 
-    fn block_to_index(&self, block: usize, offset_in_block: usize) -> usize {
-        let mut index = 0;
-        for i in 0..block {
-            index += self.physical_prefix()[i].1.get();
-        }
-        index + (self.physical_prefix()[block].1.get() - offset_in_block)
-    }
-
-    pub fn physical_prefix(&self) -> &[(Type<T>, NonZero<usize>)] {
+    pub fn physical_prefix(&self) -> &[Type<T>] {
         match &self.ty {
             SequenceType::Repeat(prefix, _) => prefix.as_ref(),
             SequenceType::Cons(prefix, _) => prefix.as_ref(),
@@ -1282,11 +1175,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
     }
 
     pub fn physical_prefix_len(&self) -> usize {
-        let mut total: usize = 0;
-        for (_, count) in self.physical_prefix().iter() {
-            total += count.get();
-        }
-        total
+        self.physical_prefix().len()
     }
 
     pub fn offset(&self) -> usize {
@@ -1294,21 +1183,11 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
     }
 
     pub fn is_prefix_empty(&self) -> bool {
-        self.physical_prefix_len() == self.offset
+        self.physical_prefix_len() <= self.offset
     }
 
     pub fn get_prefix_value(&self, index: usize) -> Option<&Type<T>> {
-        let index = index + self.offset;
-        let mut total = 0;
-        for (ty, count) in self.physical_prefix().iter() {
-            let cnt = count.get();
-            if total <= index && index < total + cnt {
-                return Some(ty);
-            }
-            total += cnt;
-        }
-        // 如果没有找到，说明 index 超出了范围
-        None
+        self.physical_prefix().get(self.offset + index)
     }
 
     pub fn view(&self, offset: usize) -> Option<Sequence<Type<T>, T>> {
@@ -1373,128 +1252,12 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
         }
     }
 
-    /*
-    pub fn add<'a>(
-        &'a self,
-        other: &Sequence<T>,
-        env: EnvironmentView<'a, Type<T>, T>,
-    ) -> Result<Sequence<T>, TypeError<Type<T>, T>> {
-        // 1. 检查 Self 是否为有限序列
-        // 如果 Self 是无限的 (Repeat) 或未知的 (Cons)，则无法在物理层面上拼接后续内容
-        match self.ty {
-            SequenceType::Repeat(..) | SequenceType::Cons(..) => {
-                return Err(TypeError::TypeMismatch(
-                    (
-                        self.as_ref_dispatcher().clone_data(),
-                        "Finite Sequence (Tuple or Unit)".into(),
-                    )
-                        .into(),
-                ));
-            }
-            _ => {} // Unit 和 NonEmptyTuple 是合法的左值
-        }
-
-        // 2. 准备新的前缀缓冲区
-        // 预估容量：左边块数 + 右边块数 (最坏情况)
-        let self_phys = self.physical_prefix();
-        let other_phys = other.physical_prefix();
-        let mut new_prefix: Vec<(Type<T>, NonZero<usize>)> =
-            Vec::with_capacity(self_phys.len() + other_phys.len());
-
-        // 3. 定义 RLE 推入与合并逻辑
-        let mut push_rle = |ty: &Type<T>, count: usize| -> Result<(), TypeError<Type<T>, T>> {
-            if count == 0 {
-                return Ok(());
-            }
-            match new_prefix.last_mut() {
-                // 类型相同 -> 合并计数
-                Some((last_ty, last_count))
-                    if matches!(
-                        last_ty.equals(ty.as_ref_dispatcher(), env, env)?,
-                        ThreeValuedLogic::True
-                    ) =>
-                {
-                    let current = last_count.get();
-                    let new_count = current.checked_add(count).ok_or_else(|| {
-                        TypeError::RuntimeError(Arc::new(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Sequence length overflow during concatenation",
-                        )))
-                    })?;
-                    // Safety: current >= 1, count >= 1 -> new_count >= 2
-                    *last_count = unsafe { NonZero::new_unchecked(new_count) };
-                }
-                // 类型不同 -> 追加新块
-                _ => {
-                    // Safety: count > 0 check passed
-                    new_prefix.push((ty.clone(), unsafe { NonZero::new_unchecked(count) }));
-                }
-            }
-            Ok(())
-        };
-
-        // 4. 处理 Self (需要考虑 self.offset)
-        // 即使 self 是 Unit，seek_prefix 也会正确返回 None (因为 offset 0 >= len 0 如果逻辑不对，或者 range 为空)
-        // 这里的 seek_prefix 需要适配 SequenceType，建议实现一个通用的 seek_prefix 方法
-        if let Some((idx, rem)) = self.seek_prefix() {
-            // 4.1 第一个被切断的块
-            push_rle(&self_phys[idx].0, rem)?;
-            // 4.2 后续完整的块
-            for (ty, count) in self_phys.iter().skip(idx + 1) {
-                push_rle(ty, count.get())?;
-            }
-        }
-
-        // 5. 处理 Other (需要考虑 other.offset)
-        if let Some((idx, rem)) = other.seek_prefix() {
-            // 5.1 第一个被切断的块
-            push_rle(&other_phys[idx].0, rem)?;
-            // 5.2 后续完整的块
-            for (ty, count) in other_phys.iter().skip(idx + 1) {
-                push_rle(ty, count.get())?;
-            }
-        }
-
-        // 6. 构造新的 SequenceType
-        // 尾部状态完全由 other 决定
-        // 注意：我们必须把 new_prefix 包装进去
-        let new_prefix_arc: Arc<[_]> = Arc::from(new_prefix);
-
-        let new_ty = match &other.ty {
-            // 如果 Other 是定长的，结果也是定长的
-            SequenceType::Unit | SequenceType::NonEmptyTuple(_) => {
-                if new_prefix_arc.is_empty() {
-                    SequenceType::Unit
-                } else {
-                    SequenceType::NonEmptyTuple(new_prefix_arc)
-                }
-            }
-            // 如果 Other 是变长的，结果继承其尾部定义
-            SequenceType::Repeat(_, tail) => {
-                // 注意：Other 的原 prefix 已经被我们（部分）合并进 new_prefix 了
-                // 我们只需要把原来的 tail 逻辑部分拿过来即可
-                SequenceType::Repeat(new_prefix_arc, tail.clone())
-            }
-            SequenceType::Cons(_, tail) => SequenceType::Cons(new_prefix_arc, tail.clone()),
-        };
-
-        // 7. 返回结果
-        Ok(Sequence {
-            ty: new_ty,
-            source_info: self.source_info.clone(), // 或者合并 info
-            offset: 0,                             // 物理拼接后，offset 归零
-        })
-    }
-    */
-
-    pub fn add<'a>(
-        &'a self,
+    pub fn add(
+        &self,
         other: &Sequence<Type<T>, T>,
-        allocators: &mut Allocators<Type<T>, T>,
-        _env: CaptureEnvList<'a, Type<T>, T>,
     ) -> Result<Sequence<Type<T>, T>, TypeError<Type<T>, T>> {
         // 朴素拼接：直接拼接 Vec，不做任何合并或展开。
-        // 对于 LHS，直接保留其物理前缀和 offset，不需要 seek 切割。
+        // 对于 LHS，不复用其原始块，必须通过 seek 切割后重新拷贝。
         match self.ty {
             SequenceType::Repeat(..) | SequenceType::Cons(..) => {
                 return Err(TypeError::TypeMismatch(
@@ -1510,25 +1273,26 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
 
         let self_phys = self.physical_prefix();
         let other_phys = other.physical_prefix();
-        let mut new_prefix: Vec<(Type<T>, NonZero<usize>)> =
-            Vec::with_capacity(self_phys.len() + other_phys.len());
 
-        // 处理 self：保留所有物理块，后续直接复用 self.offset
-        new_prefix.extend(self_phys.iter().cloned());
+        let self_seek = self.seek_prefix();
+        let other_seek = other.seek_prefix();
 
-        // 处理 other：需要 seek 以去除其 offset 跳过的部分，紧接在 self 逻辑末尾之后
-        if let Some((idx, rem)) = other.seek_prefix() {
-            // 第一个可能被切断的块
-            new_prefix.push((other_phys[idx].0.clone(), NonZero::new(rem).unwrap()));
-            // 后续完整的块
-            for (ty, count) in other_phys.iter().skip(idx + 1) {
-                new_prefix.push((ty.clone(), *count));
-            }
+        let self_remaining = self_seek.map(|idx| self_phys.len().saturating_sub(idx)).unwrap_or(0);
+        let other_remaining =
+            other_seek.map(|idx| other_phys.len().saturating_sub(idx)).unwrap_or(0);
+
+        let mut new_prefix = Vec::with_capacity(self_remaining + other_remaining);
+
+        if let Some(idx) = self_seek {
+            new_prefix.extend(self_phys[idx..].iter().cloned());
         }
-        let len = new_prefix.len();
-        let mut iter = new_prefix.into_iter();
+        if let Some(idx) = other_seek {
+            new_prefix.extend(other_phys[idx..].iter().cloned());
+        }
 
-        let new_prefix_arc = allocators.rle.alloc(len, |_| iter.next().unwrap());
+        let total = new_prefix.len();
+        let mut iter = new_prefix.into_iter();
+        let new_prefix_arc = Arc::from_iter(iter.by_ref().take(total));
         let new_ty = match &other.ty {
             SequenceType::Unit | SequenceType::NonEmptyTuple(_) => {
                 if new_prefix_arc.is_empty() {
@@ -1545,7 +1309,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
         Ok(Sequence {
             ty: new_ty,
             source_info: self.source_info.clone(),
-            offset: self.offset,
+            offset: 0,
             rootless: self.rootless & other.rootless,
         })
     }
@@ -1557,13 +1321,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Sequence<Type<T>, T> {
     pub fn len(&self) -> usize {
         match &self.ty {
             SequenceType::Unit => 0,
-            SequenceType::NonEmptyTuple(prefix) => {
-                let mut total = 0;
-                for (_, count) in prefix.iter() {
-                    total += count.get();
-                }
-                total - self.offset
-            }
+            SequenceType::NonEmptyTuple(prefix) => prefix.len().saturating_sub(self.offset),
             SequenceType::Repeat(_, _) => {
                 panic!("Cannot get length of Repeat sequence");
             }

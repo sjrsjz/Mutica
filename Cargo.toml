@@ -19,6 +19,7 @@ colored = "2.1"
 mutica-core = { workspace = true }
 mutica-compiler = { workspace = true }
 mutica-semantic = { workspace = true }
+mimalloc = "0.1.48"
 
 [workspace.dependencies]
 mutica-core = { version = "0.3.0", path = "mutica-core" }
@@ -29,7 +30,12 @@ mutica-semantic = { version = "0.3.0", path = "mutica-semantic" }
 name = "mutica"
 
 [workspace]
-members = ["mutica-core", "mutica-compiler", "mutica-semantic", "."]
+members = [
+	"mutica-core",
+	"mutica-compiler",
+	"mutica-semantic",
+	".",
+]
 
 [profile.release]
 debug = true

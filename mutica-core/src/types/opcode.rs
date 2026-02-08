@@ -1,4 +1,4 @@
-use std::{num::NonZero, sync::Arc};
+use std::sync::Arc;
 
 use arc_gc::traceable::GCTraceable;
 
@@ -113,7 +113,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -157,7 +156,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -216,7 +214,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 | OpcodeKind::Mul
                 | OpcodeKind::Div
                 | OpcodeKind::Mod => self.invoke_arithmetic(&mut ctx, arg),
-                OpcodeKind::Less | OpcodeKind::Greater => self.invoke_compare(&mut ctx, arg),
+                OpcodeKind::Less | OpcodeKind::Greater => self.invoke_compare(arg),
                 OpcodeKind::Pandom => {
                     unreachable!()
                 }
@@ -349,27 +347,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
         let invoke = Invoke::new(
             Self::new(OpcodeKind::SetFixPoint, None).dispatch(),
             Sequence::new_tuple(
-                vec![
-                    (place_holder.clone(), NonZero::new(1).unwrap()),
-                    (Variable::new_argument("var#fixpoint", None), NonZero::new(1).unwrap()),
-                ],
-                ctx.allocators,
+                vec![place_holder.clone(), Variable::new_argument("var#fixpoint", None)],
                 None,
             ),
             None::<Type<T>>,
             None::<Type<T>>,
-            ctx.allocators,
             None,
         );
 
-        let call_back: Type<T> =
-            Closure::lazy(None, "var#fixpoint", invoke, ctx.environment, ctx.allocators)?;
+        let call_back: Type<T> = Closure::lazy(None, "var#fixpoint", invoke, ctx.environment)?;
         Ok(Invoke::new(
             arg,
             place_holder,
             Some(call_back),
             None::<Type<_>>,
-            ctx.allocators,
             ctx.source_info.cloned(),
         ))
     }
@@ -407,7 +398,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
                     ctx.environment,
                     ctx.environment,
                     &empty_binding,
-                    ctx.allocators,
                 );
                 match left.check(right.as_ref_dispatcher(), &mut type_check_ctx) {
                     Ok(res) => Ok(if let ThreeValuedLogic::True = res {
@@ -509,9 +499,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
                         _ => unreachable!(),
                     },
                     (Type::Sequence(l), Type::Sequence(r)) => match &self.kind {
-                        OpcodeKind::Add => {
-                            Ok(l.add(r, ctx.allocators, ctx.environment)?.dispatch())
-                        }
+                        OpcodeKind::Add => Ok(l.add(r)?.dispatch()),
                         _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                             std::io::Error::other(
                                 "Only 'Add' operation is supported for Sequence types",
@@ -519,9 +507,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
                         ))),
                     },
                     (Type::Closure(l), Type::Closure(r)) => match &self.kind {
-                        OpcodeKind::Add => {
-                            Ok(l.impls(r, ctx.allocators, ctx.source_info.cloned())?)
-                        }
+                        OpcodeKind::Add => Ok(l.impls(r, ctx.source_info.cloned())?),
                         _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                             std::io::Error::other(
                                 "Only 'Add' operation is supported for Closure types",
@@ -529,9 +515,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
                         ))),
                     },
                     (Type::Lambda(l), Type::Lambda(r)) => match &self.kind {
-                        OpcodeKind::Add => {
-                            Ok(l.impls(r, ctx.allocators, ctx.source_info.cloned())?)
-                        }
+                        OpcodeKind::Add => Ok(l.impls(r, ctx.source_info.cloned())?),
                         _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
                             std::io::Error::other(
                                 "Only 'Add' operation is supported for Lambda types",
@@ -543,11 +527,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
                         Err(TypeError::TypeMismatch(
                             (
                                 Sequence::new_tuple(
-                                    vec![
-                                        (l, NonZero::new(1).unwrap()),
-                                        (r, NonZero::new(1).unwrap()),
-                                    ],
-                                    ctx.allocators,
+                                    vec![l.clone(), r.clone()],
                                     ctx.source_info.cloned(),
                                 ),
                                 err,
@@ -566,11 +546,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
         }
     }
 
-    fn invoke_compare(
-        &self,
-        ctx: &mut InvokeContext<Type<T>, T>,
-        arg: TypeRef<T>,
-    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+    fn invoke_compare(&self, arg: TypeRef<T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         if let TypeRef::Sequence(tuple) = arg
             && tuple.is_tuple()
         {
@@ -612,11 +588,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
                         Err(TypeError::TypeMismatch(
                             (
                                 Sequence::new_tuple(
-                                    vec![
-                                        (l, NonZero::new(1).unwrap()),
-                                        (r, NonZero::new(1).unwrap()),
-                                    ],
-                                    ctx.allocators,
+                                    vec![l.clone(), r.clone()],
                                     self.source_info.clone(),
                                 ),
                                 err,

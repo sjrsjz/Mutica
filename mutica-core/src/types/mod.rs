@@ -1,6 +1,5 @@
 //! Mutica 类型系统模块
 
-pub mod allocator;
 pub mod allof;
 pub mod anyof;
 pub mod character;
@@ -95,7 +94,6 @@ use smallvec::SmallVec;
 use crate::{
     test_true,
     types::{
-        allocator::Allocators,
         allof::AllOf,
         anyof::AnyOf,
         character::Character,
@@ -1262,7 +1260,6 @@ pub struct TypeCheckContext<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V
     pub lhs_env: CaptureEnvList<'a, U, V>,
     pub rhs_env: CaptureEnvList<'a, U, V>,
     pub bound_generic_variables: &'a GenericBinding<'a, U, V>,
-    pub allocators: &'a mut Allocators<U, V>,
 }
 
 impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a, 'b, U, V> {
@@ -1273,7 +1270,6 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a,
         lhs_env: CaptureEnvList<'a, U, V>,
         rhs_env: CaptureEnvList<'a, U, V>,
         bound_generic_variables: &'a GenericBinding<U, V>,
-        allocators: &'a mut Allocators<U, V>,
     ) -> Self {
         Self {
             coinductive_assumptions,
@@ -1281,7 +1277,6 @@ impl<'a, 'b, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeCheckContext<'a,
             lhs_env,
             rhs_env,
             bound_generic_variables,
-            allocators,
         }
     }
 }
@@ -1293,7 +1288,6 @@ pub struct ReductionContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObje
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
-    pub allocators: &'a mut Allocators<U, V>,
 }
 
 impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext<'a, 'roots, U, V> {
@@ -1303,9 +1297,8 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> ReductionContext
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
-        allocators: &'a mut Allocators<U, V>,
     ) -> Self {
-        Self { solved_argument, capture_env, rec_assumptions, gc, roots, allocators }
+        Self { solved_argument, capture_env, rec_assumptions, gc, roots }
     }
 }
 
@@ -1316,7 +1309,6 @@ pub struct InvokeContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<
     pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
     pub gc: &'a mut GC<V>,
     pub roots: &'roots mut RootStack<U, V>,
-    pub allocators: &'a mut Allocators<U, V>,
     pub source_info: Option<&'a Arc<SourceLocation>>,
 }
 
@@ -1327,10 +1319,9 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
         rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
         gc: &'a mut GC<V>,
         roots: &'roots mut RootStack<U, V>,
-        allocators: &'a mut Allocators<U, V>,
         source_info: Option<&'a Arc<SourceLocation>>,
     ) -> Self {
-        Self { arg, environment, rec_assumptions, gc, roots, allocators, source_info }
+        Self { arg, environment, rec_assumptions, gc, roots, source_info }
     }
 }
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:

@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
-use arena_arc::ArcSingle;
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
-        allocator::Allocators,
     },
     util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
@@ -15,7 +13,7 @@ use crate::{
 use crate::types::CoinductiveTypeRef;
 
 pub struct SubOf<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    expr: ArcSingle<U, usize>,
+    expr: Arc<U>,
     source_info: Option<Arc<SourceLocation>>,
     rootless: bool,
     _phantom: std::marker::PhantomData<V>,
@@ -96,7 +94,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -125,7 +122,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -149,7 +145,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for SubOf
         let new_expr = self.expr.reduce(ctx)?;
         let rootless = new_expr.rootless();
         Ok(SubOf {
-            expr: ctx.allocators.v.alloc_value(new_expr),
+            expr: Arc::new(new_expr),
             rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
@@ -214,18 +210,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> SubOf<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<X: AsDispatcher<Type<T>, T>>(
         value: X,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let expr = value.into_dispatcher();
         let rootless = expr.rootless();
-        Self {
-            expr: allocators.v.alloc_value(expr),
-            rootless,
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
-        .into_dispatcher()
+        Self { expr: Arc::new(expr), rootless, source_info, _phantom: std::marker::PhantomData }
+            .into_dispatcher()
     }
 
     pub fn value(&self) -> &Type<T> {

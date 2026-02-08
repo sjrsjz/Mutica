@@ -1,20 +1,19 @@
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
-use arena_arc::ArcSingle;
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
         GcAllocObject, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
-        TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef, allocator::Allocators,
+        TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
     },
     util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Pattern<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     bind_name: Arc<str>,
-    expr: ArcSingle<U, usize>,
+    expr: Arc<U>,
     rootless: bool,
     source_info: Option<Arc<SourceLocation>>,
     _phantom: std::marker::PhantomData<V>,
@@ -89,7 +88,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -117,7 +115,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -149,7 +146,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
         let rootless = new_expr.rootless();
         Ok(Self {
             bind_name: self.bind_name.clone(),
-            expr: ctx.allocators.v.alloc_value(new_expr),
+            expr: Arc::new(new_expr),
             rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
@@ -219,14 +216,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Pattern<Type<T>, T> {
     pub fn new<S: Into<Arc<str>>, X: AsDispatcher<Type<T>, T>>(
         bind_name: S,
         expr: X,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let expr = expr.into_dispatcher();
         let rootless = expr.rootless();
         Self {
             bind_name: bind_name.into(),
-            expr: allocators.v.alloc_value(expr),
+            expr: Arc::new(expr),
             rootless,
             source_info,
             _phantom: std::marker::PhantomData,

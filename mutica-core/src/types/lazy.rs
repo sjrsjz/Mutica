@@ -1,19 +1,17 @@
 use std::sync::Arc;
 
 use arc_gc::{arc::GCArc, traceable::GCTraceable};
-use arena_arc::ArcSingle;
 
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
-        allocator::Allocators,
     },
     util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
 
 pub struct Lazy<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
-    expr: ArcSingle<U, usize>,
+    expr: Arc<U>,
     source_info: Option<Arc<SourceLocation>>,
     rootless: bool,
     _phantom: std::marker::PhantomData<V>,
@@ -94,7 +92,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -123,7 +120,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                ctx.allocators,
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -144,7 +140,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
         let new_expr = self.expr.reduce(ctx)?;
         let rootless = new_expr.rootless();
         Ok(Lazy {
-            expr: ctx.allocators.v.alloc_value(new_expr),
+            expr: Arc::new(new_expr),
             rootless,
             source_info: self.source_info.clone(),
             _phantom: std::marker::PhantomData,
@@ -189,18 +185,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Lazy<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<X: AsDispatcher<Type<T>, T>>(
         value: X,
-        allocators: &mut Allocators<Type<T>, T>,
+
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let value = value.into_dispatcher();
         let rootless = value.rootless();
-        Lazy {
-            expr: allocators.v.alloc_value(value),
-            rootless,
-            source_info,
-            _phantom: std::marker::PhantomData,
-        }
-        .dispatch()
+        Lazy { expr: Arc::new(value), rootless, source_info, _phantom: std::marker::PhantomData }
+            .dispatch()
     }
 
     pub fn value(&self) -> &Type<T> {
