@@ -1,14 +1,25 @@
 use std::sync::Arc;
 
 use arc_gc::traceable::GCTraceable;
+use smallvec::SmallVec;
 
 use crate::{
     types::{
-        AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
-        InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
-        Type, TypeCheckContext, TypeError, TypeRef, closure::Closure, fixpoint::FixPoint,
-        float_value::FloatValue, invoke::Invoke, natural_number::NaturalNumber, sequence::Sequence,
-        unify::GenericBinding, variable::Variable,
+        AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
+        GcAllocObject, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
+        TaggedPtr, Type, TypeCheckContext, TypeError, TypeOfContext, TypeRef,
+        closure::Closure,
+        fixpoint::FixPoint,
+        float_value::FloatValue,
+        invoke::Invoke,
+        natural_number::NaturalNumber,
+        sequence::Sequence,
+        subof::SubOf,
+        unify::{
+            GenericBinding,
+            capture_env::{CaptureEnv, CaptureEnvList},
+        },
+        variable::Variable,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -38,6 +49,7 @@ pub enum OpcodeKind {
     Assign,
     SetFixPoint,
     BuildFixPoint,
+    TypeOf,
     // I/O
     IO(Box<String>),
     Pandom,
@@ -69,6 +81,7 @@ impl Clone for OpcodeKind {
             OpcodeKind::Assign => OpcodeKind::Assign,
             OpcodeKind::SetFixPoint => OpcodeKind::SetFixPoint,
             OpcodeKind::BuildFixPoint => OpcodeKind::BuildFixPoint,
+            OpcodeKind::TypeOf => OpcodeKind::TypeOf,
             OpcodeKind::IO(v) => OpcodeKind::IO(v.clone()),
             OpcodeKind::Pandom => OpcodeKind::Pandom,
         }
@@ -204,6 +217,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 OpcodeKind::Assign => self.invoke_assign(&ctx, arg),
                 OpcodeKind::SetFixPoint => self.invoke_set_fixpoint(arg),
                 OpcodeKind::BuildFixPoint => self.invoke_build_fixpoint(&mut ctx, arg),
+                OpcodeKind::TypeOf => self.invoke_typeof(&mut ctx, arg),
                 OpcodeKind::IO(v) => Err(TypeError::RuntimeError(std::sync::Arc::new(
                     std::io::Error::other(format!("Unhandled IO operation: {}", v)),
                 ))),
@@ -220,6 +234,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Opcod
                 }
             })?
             .unwrap_or(Err(TypeError::UnresolvableType(self_clone.dispatch().into())))
+    }
+
+    fn type_of(
+        &self,
+        _ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        match &self.kind {
+            OpcodeKind::Opcode => Ok(SubOf::new(self.clone(), self.source_info.clone())),
+            _ => Ok(Opcode::new(OpcodeKind::Opcode, self.source_info.clone()).dispatch()),
+        }
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
@@ -269,6 +293,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Representable for Opcode<Type<T>, T> 
             OpcodeKind::Assign => "Assign".to_string(),
             OpcodeKind::SetFixPoint => "SetFixPoint".to_string(),
             OpcodeKind::BuildFixPoint => "BuildFixPoint".to_string(),
+            OpcodeKind::TypeOf => "TypeOf".to_string(),
             OpcodeKind::IO(v) => format!("IO({})", v),
             OpcodeKind::Pandom => "Pandom".to_string(),
         }
@@ -415,6 +440,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
         } else {
             Err(TypeError::TypeMismatch((arg.into_dispatcher(), "Finite Sequence".into()).into()))
         }
+    }
+
+    fn invoke_typeof(
+        &self,
+        ctx: &mut InvokeContext<Type<T>, T>,
+        arg: TypeRef<T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        let capture_env = CaptureEnv::Solved(SmallVec::new());
+        let mut rec_assumptions = SmallVec::new();
+        let env_list = CaptureEnvList::new(&capture_env);
+        let mut ctx = TypeOfContext::new(env_list, &mut rec_assumptions, ctx.gc, ctx.roots);
+        arg.type_of(&mut ctx)
     }
 
     fn invoke_arithmetic(

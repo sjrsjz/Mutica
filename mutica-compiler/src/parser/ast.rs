@@ -56,6 +56,7 @@ pub enum AtomicOpcode {
     Assign,
     SetFixPoint,
     BuildFixPoint,
+    TypeOf,
     IO(String),
 }
 
@@ -3037,6 +3038,7 @@ impl LinearTypeAst {
                     AtomicOpcode::Assign => OpcodeKind::Assign,
                     AtomicOpcode::SetFixPoint => OpcodeKind::SetFixPoint,
                     AtomicOpcode::BuildFixPoint => OpcodeKind::BuildFixPoint,
+                    AtomicOpcode::TypeOf => OpcodeKind::TypeOf,
                     AtomicOpcode::IO(v) => OpcodeKind::IO(v.clone().into()),
                 },
                 location_arc(loc),

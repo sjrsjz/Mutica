@@ -8,10 +8,11 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         GenericBinding, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
-        TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
+        TaggedPtr, Type, TypeCheckContext, TypeError, TypeOfContext, TypeRef,
         allof::AllOf,
         anyof::AnyOf,
         constraint::Constraint,
+        lambda::Lambda,
         pattern::Pattern,
         unify::{
             ArgumentBinding,
@@ -378,6 +379,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
             )
                 .into(),
         ))
+    }
+
+    fn type_of(
+        &self,
+        _ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        // 提取所有分支的模式类型，构造一个 Lambda 类型
+        Ok(Lambda::new(self.branches.iter().map(|b| b.pattern.clone()), self.source_info.clone())
+            .dispatch())
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

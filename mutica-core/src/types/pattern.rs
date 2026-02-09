@@ -6,7 +6,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
         GcAllocObject, InvokeContext, PatternCollector, ReductionContext, Representable, Rootable,
-        TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
+        TaggedPtr, Type, TypeCheckContext, TypeError, TypeOfContext, TypeRef,
     },
     util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
@@ -152,6 +152,15 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Patte
             _phantom: std::marker::PhantomData,
         }
         .dispatch())
+    }
+
+    fn type_of(
+        &self,
+        _ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        // 实际上这个意义不大，逻辑上不应该对Pattern进行type_of
+        panic!("Pattern::type_of should not be called")
+        // Ok(Self::new(self.bind_name.clone(), self.expr.type_of(ctx)?, self.source_info.clone()))
     }
 
     fn tagged_ptr(&self) -> super::TaggedPtr<()> {

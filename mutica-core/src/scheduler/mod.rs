@@ -124,6 +124,8 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> LinearScheduler<T> {
                     let stopwatch = native::timer::Stopwatch::new(source_info.cloned());
                     Ok(Some(stopwatch))
                 }
+                // 异常
+                "panic_with" => Err(TypeError::Panic(arg.clone().into())),
                 // 类型表示相关
                 "repr" => {
                     let repr = arg.represent(&mut FastCycleDetector::new(), 0, usize::MAX);

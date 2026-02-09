@@ -8,7 +8,8 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
-        Type, TypeCheckContext, TypeError, TypeRef, constraint::Constraint,
+        Type, TypeCheckContext, TypeError, TypeOfContext, TypeRef, constraint::Constraint,
+        subof::SubOf,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -194,6 +195,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lambd
 
     fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn type_of(
+        &self,
+        _ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Ok(SubOf::new(self.clone(), self.source_info.clone()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

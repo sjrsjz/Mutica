@@ -11,7 +11,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
         GcAllocObject, Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError,
-        TypeRef,
+        TypeOfContext, TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation,
@@ -103,7 +103,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutab
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                
             );
             match other {
                 TypeRef::Any(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -148,7 +147,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutab
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -220,6 +218,41 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Mutab
         _ctx: super::InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn type_of(
+        &self,
+        ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        match self.reference.upgrade() {
+            Some(strong) => match strong.as_ref().get_mutable_value() {
+                Some(value) => {
+                    for r in ctx.rec_assumptions.iter_mut().rev() {
+                        if r.0 == value.tagged_ptr() {
+                            r.2 = true; // mark as used
+                            return Ok(r.1.clone());
+                        }
+                    }
+                    let temp_mutable = Self::new(
+                        self.clone().dispatch(),
+                        self.source_info.clone(),
+                        ctx.gc,
+                        ctx.roots,
+                    );
+                    ctx.rec_assumptions.push((value.tagged_ptr(), temp_mutable.clone(), false));
+                    let result = value.type_of(ctx);
+                    let (_, _, used) = ctx.rec_assumptions.pop().unwrap();
+                    if used {
+                        as_type!(&temp_mutable, Type::Mutable).assign(result?)?;
+                        Ok(temp_mutable)
+                    } else {
+                        result.map(|ty| Self::new(ty, self.source_info.clone(), ctx.gc, ctx.roots))
+                    }
+                }
+                None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
+            },
+            None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
+        }
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

@@ -6,7 +6,8 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef, natural_number::NaturalNumber,
+        TypeCheckContext, TypeError, TypeOfContext, TypeRef, natural_number::NaturalNumber,
+        subof::SubOf,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -66,7 +67,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T>
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -94,7 +94,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T>
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                
             );
             match other {
                 TypeRef::Any(v) => v.superof(self.as_ref_dispatcher(), &mut inner_ctx),
@@ -127,6 +126,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T>
                 )),
             })?
             .unwrap_or(Err(TypeError::UnresolvableType(self.clone().dispatch().into())))
+    }
+
+    fn type_of(
+        &self,
+        _ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Ok(SubOf::new(self.clone(), self.source_info.clone()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

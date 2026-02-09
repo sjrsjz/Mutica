@@ -8,8 +8,9 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
-        Type, TypeCheckContext, TypeError, TypeRef,
+        Type, TypeCheckContext, TypeError, TypeOfContext, TypeRef,
         allof::AllOf,
+        subof::SubOf,
         unify::{GenericBinding, capture_env::CaptureEnvList},
     },
     util::{
@@ -24,7 +25,11 @@ use crate::types::CoinductiveTypeRef;
 ///
 /// - **协变性质**：`S : Any<T₁, ..., Tₙ>` **定义为** `∃i. S : Tᵢ`
 /// - **逆变性质**：`Any<T₁, ..., Tₙ> : U` **定义为** `∀i. Tᵢ : U`
-/// - Any<A₁, ..., Aₙ> : Any<B₁, ..., Bₙ>  当且仅当  ∀i. ∃j. Aⱼ : Bᵢ
+///   - 由于 `check` 是“实例判定”而非纯子类型语义，
+///     当 LHS 为 `Any<...>` 时还要求它是**单例**（长度为 1）。
+///     规范化保证等价元素已被吸收，因此无需额外等价性检验。
+///     空 `Any<>` 视为非单例，判定为 False。
+/// - Any<A₁, ..., Aₙ> : Any<B₁, ..., Bₙ>  当且仅当  ∀i. ∃j. Aᵢ : Bⱼ
 pub struct AnyOf<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     types: Arc<[U]>,
     rootless: bool,
@@ -107,55 +112,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
                 _ => {
-                    let mut found = ThreeValuedLogic::True;
-                    if self.types.is_empty() {
-                        // Any<> 属于非单例，直接False
+                    if self.types.len() != 1 {
+                        // Any<> 或 Any<...>（多元素）在实例判定中视为非单例
+                        // 规范化保证等价元素已被吸收，因此无需额外等价性检验
                         return Ok(ThreeValuedLogic::False);
                     }
-                    let first = self.types.first().unwrap();
 
-                    // 验证LHS是单例类型
-                    // 这是因为 check 不是子类型语义，而是验证某个类型是否是某个类型的实例
-                    // 而实例一般要求LHS是单例类型，至于RHS为通配符的情况，可以通过Constraint的空约束来实现
-                    let mut unique = ThreeValuedLogic::True;
-
-                    // 首先验证所有类型都满足条件
-                    for sub in self.types.iter() {
-                        found &= test_true!(sub.check(other, &mut inner_ctx)?);
-                    }
-
-                    let mut assumptions = inner_ctx.coinductive_assumptions;
-                    let mut collector = inner_ctx.pattern_collector;
-                    let lhs_env = inner_ctx.lhs_env;
-                    let rhs_env = inner_ctx.lhs_env; // 这里使用lhs_env是因为equals的语义只对LHS要求单例，左右环境相同
-                    let mut bound_generic_layers = inner_ctx.bound_generic_variables;
-
-                    // 然后验证所有类型互相等价（手动实现equals：双向subof，第二次需要交换lhs_env和rhs_env）
-                    for sub in self.types.iter().skip(1) {
-                        // 第一次：sub <: first，使用正常的env顺序
-                        let mut ctx1 = TypeCheckContext::new(
-                            assumptions,
-                            collector,
-                            lhs_env,
-                            rhs_env,
-                            bound_generic_layers,
-                        );
-                        unique &= test_true!(sub.subof(first.as_ref_dispatcher(), &mut ctx1)?);
-
-                        // 第二次：first <: sub，需要交换lhs_env和rhs_env（equals的语义）
-                        let mut ctx2 = TypeCheckContext::new(
-                            ctx1.coinductive_assumptions,
-                            ctx1.pattern_collector,
-                            rhs_env,
-                            lhs_env,
-                            ctx1.bound_generic_variables,
-                        );
-                        unique &= test_true!(first.subof(sub.as_ref_dispatcher(), &mut ctx2)?);
-                        assumptions = ctx2.coinductive_assumptions;
-                        collector = ctx2.pattern_collector;
-                        bound_generic_layers = ctx2.bound_generic_variables;
-                    }
-                    Ok(found & unique)
+                    // check 不是子类型语义，而是验证某个类型是否是某个类型的实例
+                    // 规范化已保证 Any<...> 内部不会出现等价元素，因此这里只需单元素判断
+                    let sub = self.types.first().unwrap();
+                    Ok(sub.check(other, &mut inner_ctx)?)
                 }
             }
         })
@@ -203,6 +169,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AnyOf
 
     fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn type_of(
+        &self,
+        ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        // 先检查是否为单例，如果不是单例则返回SubOf<>
+        if self.types.len() != 1 {
+            return Ok(SubOf::new(self.clone(), self.source_info.clone()));
+        }
+        let sub = self.types.first().unwrap();
+        sub.type_of(ctx)
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

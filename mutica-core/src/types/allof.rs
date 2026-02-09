@@ -8,7 +8,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
-        Type, TypeCheckContext, TypeError, TypeRef,
+        Type, TypeCheckContext, TypeError, TypeOfContext, TypeRef,
         anyof::AnyOf,
         unify::{GenericBinding, capture_env::CaptureEnvList},
     },
@@ -20,8 +20,10 @@ use crate::{
 
 use crate::types::CoinductiveTypeRef;
 
+/// ### check语义（定义性质）
+///
 /// - **协变性质**：`S : All<T₁, ..., Tₙ>` **定义为** `∀i. S : Tᵢ`
-/// - **逆变性质**：`All<T₁, ..., Tₙ> : U` **定义为** `∃i. Tᵢ : U`
+/// - **逆变性质**：`All<T₁, ..., Tₙ> : U` **定义为** `∃i. Tᵢ : U`（当 `U` 不是 `All<...>` 时）
 /// - All<A₁, ..., Aₙ> : All<B₁, ..., Bₙ>  当且仅当  ∀j. ∃i. Aᵢ : Bⱼ
 pub struct AllOf<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     types: Arc<[U]>,
@@ -187,6 +189,18 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for AllOf
     fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
     }
+
+    fn type_of(
+        &self,
+        ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        let mut result = smallvec::SmallVec::<[Type<T>; 8]>::new();
+        for sub in self.types.iter() {
+            result.push(sub.type_of(ctx)?);
+        }
+        Self::new(&result, self.source_info.clone(), ctx.capture_env)
+    }
+
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
     }

@@ -7,8 +7,9 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeRef, CoinductiveTypeWithAny, CollectorExt,
         GcAllocObject, PatternCollector, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef,
+        TypeCheckContext, TypeError, TypeOfContext, TypeRef,
         allof::AllOf,
+        subof::SubOf,
         unify::{
             ArgumentBinding, GenericBinding, capture_env::CaptureEnvList, collector::Collector,
             path_collector::PathCollector,
@@ -194,6 +195,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Const
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
+    }
+
+    fn type_of(
+        &self,
+        _ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Ok(SubOf::new(self.clone(), self.source_info.clone()))
     }
 
     fn report_source_info(&self) -> crate::types::TypeReport {

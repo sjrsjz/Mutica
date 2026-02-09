@@ -5,7 +5,8 @@ use arc_gc::{arc::GCArc, traceable::GCTraceable};
 use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
-        Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeRef,
+        Representable, Rootable, TaggedPtr, Type, TypeCheckContext, TypeError, TypeOfContext,
+        TypeRef,
     },
     util::{source_info::SourceLocation, three_valued_logic::ThreeValuedLogic},
 };
@@ -153,6 +154,13 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Lazy<
         _ctx: super::InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn type_of(
+        &self,
+        ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        Ok(Lazy::new(self.expr.type_of(ctx)?, self.source_info.clone()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

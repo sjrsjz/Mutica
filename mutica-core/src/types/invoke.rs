@@ -7,7 +7,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef,
+        TypeCheckContext, TypeError, TypeOfContext, TypeRef, subof::SubOf,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -290,6 +290,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
         _ctx: InvokeContext<Type<T>, T>,
     ) -> Result<Type<T>, super::TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn type_of(
+        &self,
+        _ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        // Invoke的类型是一个SubOf，表示它是一个函数调用类型，但具体是什么函数调用类型需要根据上下文来确定
+        Ok(SubOf::new(self.clone(), self.source_info.clone()))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

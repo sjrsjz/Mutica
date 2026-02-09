@@ -52,13 +52,12 @@ extern {
         "If"            => LexerToken::If,
         "Then"          => LexerToken::Then,
         "Else"          => LexerToken::Else,
-        "Rot"           => LexerToken::Rot,
         "Handle"        => LexerToken::Handle,
         "SubOf"         => LexerToken::SubOf,
+        "TypeOf"        => LexerToken::TypeOf,
         "For"           => LexerToken::For,
         "In"            => LexerToken::In,
         "Extend"        => LexerToken::Extend,
-        "As"            => LexerToken::As,
         "Constraint"    => LexerToken::Constraint,
         "Lazy"          => LexerToken::Lazy,
         "Mutable"       => LexerToken::Mutable,
@@ -188,13 +187,12 @@ ImportTok: () = <l:@L> "Import" <r:@R> => TokenColor::fill_colors(colors, l..r, 
 IfTok: () = <l:@L> "If" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 ThenTok: () = <l:@L> "Then" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 ElseTok: () = <l:@L> "Else" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
-RotTok: () = <l:@L> "Rot" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 HandleTok: () = <l:@L> "Handle" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 SubOfTok: () = <l:@L> "SubOf" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
+TypeOfTok: () = <l:@L> "TypeOf" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 ForTok: () = <l:@L> "For" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 InTok: () = <l:@L> "In" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 ExtendTok: () = <l:@L> "Extend" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
-AsTok: () = <l:@L> "As" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 ConstraintTok: () = <l:@L> "Constraint" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 LazyTok: () = <l:@L> "Lazy" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 MutableTok: () = <l:@L> "Mutable" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
@@ -306,6 +304,7 @@ AtomType: WithLocation<TypeAst> = {
             "__assign" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::Assign),
             "__build_fixpoint" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::BuildFixPoint),
             "__set_fixpoint" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::SetFixPoint),
+            "__typeof" => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::TypeOf),
             _ => TypeAst::AtomicOpcode(crate::parser::ast::AtomicOpcode::IO(io)),
         };
         with_loc(op, source, l..r)
@@ -363,6 +362,17 @@ SubOf: WithLocation<TypeAst> = {
     <l:@L> SubOfTok <t: Factor> <r:@R> => {
         with_loc(TypeAst::SubOf {
             value: Box::new(t),
+        }, source, l..r)
+    },
+}
+
+TypeOf: WithLocation<TypeAst> = {
+    <l:@L> TypeOfTok <t: Factor> <r:@R> => {
+        // typeof T => ($"op#typeof")(T)
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Variable(with_loc("op#typeof".to_string(), source, l..r)), source, l..r)),
+            arg: Box::new(t),
+            auto_cps: true,
         }, source, l..r)
     },
 }
@@ -701,6 +711,7 @@ Factor: WithLocation<TypeAst> = {
     <c: CpsApply> => c,
     <a: Apply> => a,
     <sub: SubOf> => sub,
+    <type_of: TypeOf> => type_of,
 }
 
 

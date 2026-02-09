@@ -11,7 +11,7 @@ use crate::{
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef,
+        TypeCheckContext, TypeError, TypeOfContext, TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, rootstack::RootStack, source_info::SourceLocation,
@@ -184,7 +184,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                
             );
             match other {
                 TypeRef::All(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx), // AllOf 是特殊情况，先展开All是可以的，因为外层全称量词作用于All
@@ -240,7 +239,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                
             );
             match other {
                 TypeRef::FixPoint(v) => {
@@ -326,6 +324,39 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for FixPo
         }
     }
 
+    fn type_of(
+        &self,
+        ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        match self.reference.upgrade() {
+            Some(inner) => {
+                let inner_type = match inner.as_ref().get_fixpoint_value() {
+                    Some(t) => t,
+                    None => return Ok(self.clone().dispatch()), // 未初始化
+                };
+                for r in ctx.rec_assumptions.iter_mut().rev() {
+                    if r.0 == inner_type.tagged_ptr() {
+                        // 已经假设递归的 type_of 结果, 直接返回
+                        r.2 = true; // mark as used
+                        return Ok(r.1.clone());
+                    }
+                }
+                let temp_fixpoint = Self::new_placeholder(ctx.gc, ctx.roots);
+                // 假设递归类型的 type_of 结果为 temp_fixpoint
+                ctx.rec_assumptions.push((inner_type.tagged_ptr(), temp_fixpoint.clone(), false));
+                let result = (*inner_type).type_of(ctx);
+                let (_, _, used) = ctx.rec_assumptions.pop().unwrap();
+                if used {
+                    as_type!(&temp_fixpoint, Type::FixPoint).set(result?)?;
+                    Ok(temp_fixpoint)
+                } else {
+                    result
+                }
+            }
+            None => Err(TypeError::UnresolvableType(self.clone().dispatch().into())),
+        }
+    }
+
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
         self.source_info.as_ref()
     }
@@ -368,7 +399,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T>
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                
             );
             match self.reference.upgrade() {
                 Some(inner) => other.check(
@@ -396,7 +426,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeWithAny<Type<T>, T>
                 ctx.lhs_env,
                 ctx.rhs_env,
                 ctx.bound_generic_variables,
-                
             );
             match self.reference.upgrade() {
                 Some(inner) => other.subof(

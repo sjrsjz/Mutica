@@ -215,20 +215,18 @@ pub enum LexerToken {
     Then,
     #[token("else")]
     Else,
-    #[token("rot")]
-    Rot,
     #[token("handle")]
     Handle,
     #[token("sub")]
     SubOf,
+    #[token("typeof")]
+    TypeOf,
     #[token("for")]
     For,
     #[token("in")]
     In,
     #[token("extend")]
     Extend,
-    #[token("as")]
-    As,
     #[token("constraint")]
     Constraint,
     #[token("lazy")]

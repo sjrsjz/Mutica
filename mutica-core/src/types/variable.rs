@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::types::unify::capture_env::CaptureEnvLookupError;
-use crate::types::{CoinductiveTypeRef, CollectorExt};
+use crate::types::{CoinductiveTypeRef, CollectorExt, TypeOfContext};
 use crate::util::source_info::SourceLocation;
 use crate::{
     types::{
@@ -310,6 +310,10 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Varia
 
     fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn type_of(&self, _ctx: &mut TypeOfContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        panic!("Variable::type_of should not be called")
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

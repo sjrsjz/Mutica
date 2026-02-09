@@ -92,7 +92,6 @@ use arc_gc::{
 use smallvec::SmallVec;
 
 use crate::{
-    test_true,
     types::{
         allof::AllOf,
         anyof::AnyOf,
@@ -161,7 +160,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
 }
 
 pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
-    // 整数类型
+    // 序列类型
     Sequence(Sequence<Type<T>, T>),
     // 浮点类型
     Float(Float<Type<T>, T>),
@@ -171,9 +170,9 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Char(Character<Type<T>, T>),
     // 字符值类型
     CharValue(CharacterValue<Type<T>, T>),
-    // 泛化类型
+    // 泛化类型（无序Union，不允许分配律）
     Any(AnyOf<Type<T>, T>),
-    // 专化类型
+    // 专化类型（无序Intersection，不允许分配律）
     All(AllOf<Type<T>, T>),
     // 不动点类型
     FixPoint(FixPoint<Type<T>, T>),
@@ -181,23 +180,23 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Invoke(Invoke<Type<T>, T>),
     // 类型变量
     Variable(Variable<Type<T>, T>),
-    // 闭包类型
+    // 闭包类型（Pi类型）
     Closure(Closure<Type<T>, T>),
     // 操作码类型
     Opcode(Opcode<Type<T>, T>),
     // 命名空间类型
     Namespace(Namespace<Type<T>, T>),
-    // 约束类型
+    // 约束类型（Sigma类型）
     Constraint(Constraint<Type<T>, T>),
-    // 模式类型
+    // 模式类型（泛型参数绑定）
     Pattern(Pattern<Type<T>, T>),
     // 惰性包装器
     Lazy(Lazy<Type<T>, T>),
     // 子类型
     SubOf(SubOf<Type<T>, T>),
-    // 函数类型（仅仅只是粗略的表示）
+    // 函数接口（只表示参数，不表示返回值）
     Lambda(Lambda<Type<T>, T>),
-    // 可变类型
+    // 可变包装器
     Mutable(Mutable<Type<T>, T>),
     // 自然数类型
     NaturalNumber(NaturalNumber<Type<T>, T>),
@@ -271,6 +270,13 @@ impl<'a, T: GcAllocObject<T, Inner = Type<T>>> CoinductiveTypeRef<'a, Type<T>, T
         ctx: &mut TypeCheckContext<Type<T>, T>,
     ) -> Result<ThreeValuedLogic, TypeError<Type<T>, T>> {
         typeref_dispatch!(self, subof, other, ctx)
+    }
+
+    fn type_of(
+        &self,
+        ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        typeref_dispatch!(self, type_of, ctx)
     }
 
     fn tagged_ptr(&self) -> TaggedPtr<()> {
@@ -383,7 +389,7 @@ pub enum TypeError<U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
     MissingPerformHandler(Box<U>),
     ClosureNotReduced(Box<U>),
     RuntimeError(Arc<dyn Error + Send + Sync>),
-    OtherError(Box<str>),
+    Panic(Box<U>),
     Perform(Box<U>),
     TypeMayCauseCircularReasoning(Box<U>),
     #[doc(hidden)]
@@ -428,10 +434,12 @@ impl<U: CoinductiveType<U, V> + Debug, V: GcAllocObject<V>> std::fmt::Display fo
             TypeError::TypeMayCauseCircularReasoning(ty) => {
                 write!(f, "Type may cause circular reasoning: {:?}", ty)
             }
+            TypeError::Panic(ty) => {
+                write!(f, "Panic raised: {:?}", ty)
+            }
             TypeError::ClosureNotReduced(ty) => write!(f, "Closure not reduced: {:?}", ty),
             TypeError::RuntimeError(err) => write!(f, "Runtime error: {}", err),
             TypeError::Perform(ty) => write!(f, "Perform raised: {:?}", ty),
-            TypeError::OtherError(msg) => write!(f, "Other error: {}", msg),
             TypeError::Pandom(_) => write!(f, "Pandom error (hidden)"),
         }
     }
@@ -780,6 +788,31 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                         .finish()
                 }
             }
+            TypeError::Panic(payload_value) => {
+                let payload_repr = payload_value.represent(&mut FastCycleDetector::new(), 0, 3);
+                if let Some(loc) = payload_value.source_info() {
+                    let span =
+                        byte_offset_span_to_char_span(loc.source().content(), loc.span().clone());
+                    let filepath = loc.source().filepath().to_string();
+                    let content = loc.source().content().to_string();
+                    sources.push((filepath.clone(), content));
+
+                    ariadne::Report::build(ariadne::ReportKind::Error, filepath.clone(), span.start)
+                        .with_message(format!("Panic raised with payload: {}", payload_repr))
+                        .with_label(
+                            ariadne::Label::new((filepath, span)).with_message("Panic raised here"),
+                        )
+                        .finish()
+                } else {
+                    ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
+                        .with_message(format!("Panic raised with payload: {}", payload_repr))
+                        .with_label(
+                            ariadne::Label::new(("<unknown>".to_string(), 0..0))
+                                .with_message("Panic raised"),
+                        )
+                        .finish()
+                }
+            }
             // For errors without type information, create a generic report
             TypeError::InfiniteRecursion => {
                 ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
@@ -849,15 +882,6 @@ impl<U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeError<U, V> {
                     .with_label(
                         ariadne::Label::new(("<unknown>".to_string(), 0..0))
                             .with_message("Runtime error occurred"),
-                    )
-                    .finish()
-            }
-            TypeError::OtherError(msg) => {
-                ariadne::Report::build(ariadne::ReportKind::Error, "<unknown>".to_string(), 0)
-                    .with_message(format!("Error: {}", msg))
-                    .with_label(
-                        ariadne::Label::new(("<unknown>".to_string(), 0..0))
-                            .with_message(msg.as_ref()),
                     )
                     .finish()
             }
@@ -1003,6 +1027,14 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Type<
     #[stacksafe::stacksafe]
     fn invoke(&self, ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         type_dispatch!(self, invoke, ctx)
+    }
+
+    #[stacksafe::stacksafe]
+    fn type_of(
+        &self,
+        ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        type_dispatch!(self, type_of, ctx)
     }
 
     #[stacksafe::stacksafe]
@@ -1324,6 +1356,25 @@ impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> InvokeContext<'a
         Self { arg, environment, rec_assumptions, gc, roots, source_info }
     }
 }
+
+pub struct TypeOfContext<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> {
+    pub capture_env: CaptureEnvList<'a, U, V>,
+    pub rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
+    pub gc: &'a mut GC<V>,
+    pub roots: &'roots mut RootStack<U, V>,
+}
+
+impl<'a, 'roots, U: CoinductiveType<U, V>, V: GcAllocObject<V>> TypeOfContext<'a, 'roots, U, V> {
+    pub fn new(
+        capture_env: CaptureEnvList<'a, U, V>,
+        rec_assumptions: &'a mut SmallVec<[(TaggedPtr<()>, U, bool); 8]>,
+        gc: &'a mut GC<V>,
+        roots: &'roots mut RootStack<U, V>,
+    ) -> Self {
+        Self { capture_env, rec_assumptions, gc, roots }
+    }
+}
+
 pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
     Clone + Rootable<V> + Representable + AsDispatcher<U, V> + GCTraceable<V> + 'static + Sized
 {
@@ -1346,6 +1397,8 @@ pub trait CoinductiveType<U: CoinductiveType<U, V>, V: GcAllocObject<V>>:
 
     // 类型应用 (apply)
     fn invoke(&self, ctx: InvokeContext<U, V>) -> Result<U, TypeError<U, V>>;
+
+    fn type_of(&self, ctx: &mut TypeOfContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>>;
 
@@ -1388,15 +1441,7 @@ pub trait CoinductiveTypeRef<
         ctx: &mut TypeCheckContext<U, V>,
     ) -> Result<ThreeValuedLogic, TypeError<U, V>>;
 
-    fn equals(
-        &self,
-        other: W,
-        ctx: &mut TypeCheckContext<U, V>,
-    ) -> Result<ThreeValuedLogic, TypeError<U, V>> {
-        let sub_ba = test_true!(other.subof(self.as_ref_dispatcher(), ctx)?);
-        let sub_ab = test_true!(self.subof(other, ctx)?);
-        Ok(sub_ab & sub_ba)
-    }
+    fn type_of(&self, ctx: &mut TypeOfContext<U, V>) -> Result<U, TypeError<U, V>>;
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>>;
 

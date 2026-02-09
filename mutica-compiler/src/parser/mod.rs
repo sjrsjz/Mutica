@@ -1045,6 +1045,7 @@ pub fn inject_std_library(
     let $"op#neg": any = x: any => __neg!(x);
     let $"op#is": any = (x: any, y: any) => __is!(x, y, true, false);
     let $"op#assign": any = (x: any, y: any) => __assign!(x, y);
+    let $"op#typeof": any = x: any => __typeof!(x);
     $"<placeholder>"
     "##;
     let mut import_ast = HashMap::new();

@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use arc_gc::traceable::GCTraceable;
+use smallvec::SmallVec;
 
 use crate::{
     test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
         InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeRef,
+        TypeCheckContext, TypeError, TypeOfContext, TypeRef,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -943,6 +944,43 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Seque
 
     fn invoke(&self, _ctx: InvokeContext<Type<T>, T>) -> Result<Type<T>, TypeError<Type<T>, T>> {
         Err(TypeError::NonApplicableType(self.clone().dispatch().into()))
+    }
+
+    fn type_of(
+        &self,
+        ctx: &mut TypeOfContext<Type<T>, T>,
+    ) -> Result<Type<T>, TypeError<Type<T>, T>> {
+        // 对子元素逐一进行type_of，构造新的Sequence类型
+        match &self.ty {
+            SequenceType::Unit => Ok(self.clone().dispatch()),
+            SequenceType::NonEmptyTuple(prefix) => {
+                let mut new_prefix = SmallVec::<[Type<T>; 8]>::with_capacity(prefix.len());
+                prefix.iter().try_for_each(|ty| {
+                    new_prefix.push(ty.type_of(ctx)?.into_dispatcher());
+                    Ok(())
+                })?;
+                Ok(Sequence::new_tuple(new_prefix, self.source_info.clone()))
+            }
+            SequenceType::Repeat(prefix, tail) => {
+                let mut new_prefix = SmallVec::<[Type<T>; 8]>::with_capacity(prefix.len());
+                prefix.iter().try_for_each(|ty| {
+                    new_prefix.push(ty.type_of(ctx)?.into_dispatcher());
+                    Ok(())
+                })?;
+                let tail_type = tail.type_of(ctx)?.into_dispatcher();
+                Ok(Sequence::new_repeat(new_prefix, tail_type, self.source_info.clone()))
+            }
+            SequenceType::Cons(prefix, tail) => {
+                let mut new_prefix = SmallVec::<[Type<T>; 8]>::with_capacity(prefix.len());
+                prefix.iter().try_for_each(|ty| {
+                    new_prefix.push(ty.type_of(ctx)?.into_dispatcher());
+                    Ok(())
+                })?;
+                let tail_type = tail.type_of(ctx)?.into_dispatcher();
+                Ok(Sequence::new_cons(new_prefix, tail_type, self.source_info.clone()))
+            }
+            SequenceType::Phantom(_) => unreachable!(),
+        }
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {
