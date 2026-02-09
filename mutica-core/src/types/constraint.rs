@@ -443,7 +443,7 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Constraint<Type<T>, T> {
             .constraint()
             .iter()
             .map(|(v, _)| (v.clone(), ArgumentBinding::Collect(SmallVec::new())))
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[_; 4]>>();
         let collected = collector.take_items().expect("Unable to take items from collector");
         for (k, v) in collected {
             GenericBinding::bind(&mut pool, k, v)?
