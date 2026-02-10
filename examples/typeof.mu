@@ -10,3 +10,4 @@ println![foo(1, 1)];
 println![foo(char, char, char)];
 println![foo(char, char, nat)];
 println![foo(typeof Vec::"Hello, world!")];
+println![typeof foo]

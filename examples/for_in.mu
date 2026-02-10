@@ -1,7 +1,7 @@
 let list_pkg: any = import "lib/list.mu";
 let List::(List: any) = list_pkg;
 
-let iter: any = T: any => lst: List(T) => f: (lambda | v: T | panic) => {
+let iter: any = T: any => lst: List(T) => f: sub (_v: T => unknown) => {
     loop go: t: any = lst;
     match t
         | () => ()

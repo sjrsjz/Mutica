@@ -86,14 +86,6 @@ impl<'ast> SourceMapping<'ast> {
                     Self::build_mapping(expr, mapping, source_file);
                 }
             }
-            LinearTypeAst::Lambda { patterns, .. } => {
-                for (pattern, constraint) in patterns {
-                    Self::build_mapping(pattern, mapping, source_file);
-                    for (_, expr) in constraint {
-                        Self::build_mapping(expr, mapping, source_file);
-                    }
-                }
-            }
             LinearTypeAst::Invoke { func, arg, continuation, perform_handler } => {
                 if let Some(perform_handler) = perform_handler {
                     Self::build_mapping(perform_handler, mapping, source_file);

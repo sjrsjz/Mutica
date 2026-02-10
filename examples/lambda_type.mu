@@ -1,7 +1,7 @@
 println! {
     let 2 = match (x: nat => x + 1)
-        | f: (lambda | x: char | panic) => f('A')
-        | f: (lambda | x: nat | panic) => f(1)
+        | f: sub (_x: char => unknown) => f('A')
+        | f: sub (_x: nat => unknown) => f(1)
         | panic;
 
     let f: any = [A::() | B::() | C::()] => [X::() | Y::() | Z::()];
@@ -16,7 +16,7 @@ println! {
     let V: any = A::() | B::();
     let X: any = C::() | D::();
     let Y: any = C::();
-    let f: any = x: nat => y: X => (U, 1);
-    let g: any = a: nat => b: Y => (V, 1);
+    let f: any = _x: nat => _y: X => (U, 1);
+    let g: any = _a: nat => _b: Y => (V, 1);
     f is sub g, U is sub V
 };

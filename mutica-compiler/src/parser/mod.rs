@@ -1155,30 +1155,6 @@ pub fn inject_std_library(
                     },
                     loc.as_ref(),
                 ),
-                BasicTypeAst::Lambda { patterns } => WithLocation::new(
-                    BasicTypeAst::Lambda {
-                        patterns: patterns
-                            .into_iter()
-                            .map(|pattern_variant| match pattern_variant {
-                                BasicGenericPattern::Standard { pattern, constraint } => {
-                                    BasicGenericPattern::Standard {
-                                        pattern: replace_placeholder(pattern, ast),
-                                        constraint: constraint
-                                            .into_iter()
-                                            .map(|(v, expr)| (v, replace_placeholder(expr, ast)))
-                                            .collect(),
-                                    }
-                                }
-                                BasicGenericPattern::AutoBind { pattern } => {
-                                    BasicGenericPattern::AutoBind {
-                                        pattern: replace_placeholder(pattern, ast),
-                                    }
-                                }
-                            })
-                            .collect(),
-                    },
-                    loc.as_ref(),
-                ),
                 BasicTypeAst::Bind { var, expr } => WithLocation::new(
                     BasicTypeAst::Bind { var, expr: replace_placeholder(*expr, ast).into() },
                     loc.as_ref(),

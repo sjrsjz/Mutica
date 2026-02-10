@@ -79,7 +79,7 @@ let is_nil: any = match
     | () => true
     | _T: _ => false
     | panic;
-let iter: any = lst: List(any) => f: (lambda | v: never | panic) => {
+let iter: any = lst: List(any) => f: sub (_v: never => unknown) => {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -89,7 +89,7 @@ let iter: any = lst: List(any) => f: (lambda | v: never | panic) => {
         }
         | panic
 };
-let iteri: any = lst: List(any) => f: (lambda | (index: nat, v: never) | panic) => {
+let iteri: any = lst: List(any) => f: sub ((_index: nat, _v: never) => unknown) => {
     loop go: (t: any, index: nat) = (lst, 0);
     match t
         | () => ()
@@ -99,7 +99,7 @@ let iteri: any = lst: List(any) => f: (lambda | (index: nat, v: never) | panic) 
         }
         | panic
 };
-let map: any = lst: List(any) => f: (lambda | v: never | panic) => {
+let map: any = lst: List(any) => f: sub (_v: never => unknown) => {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -113,7 +113,7 @@ let len: any = lst: List(any) => {
         | (_T: _ ~ t: any) => 1 + go(t)
         | panic
 };
-let filter: any = lst: List(any) => pred: (lambda | v: never | panic) => {
+let filter: any = lst: List(any) => pred: sub (_v: never => unknown) => {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -125,7 +125,7 @@ let filter: any = lst: List(any) => pred: (lambda | v: never | panic) => {
 let fold: any = 
     lst: List(any) => 
     acc: any => 
-    f: (lambda | (acc: never, v: never) | panic) => {
+    f: sub ((_acc: never, _v: never) => unknown) => {
     loop go: (t: any, a: any) = (lst, acc);
     match t
         | () => a
@@ -135,7 +135,7 @@ let fold: any =
 let foldr: any = 
     lst: List(any) => 
     acc: any => 
-    f: (lambda | (v: never, acc: never) | panic) => {
+    f: sub ((_v: never, _acc: never) => unknown) => {
     loop go: t: any = lst;
     match t
         | () => acc
@@ -177,7 +177,7 @@ let drop: any = lst: List(any) => n: nat => {
         | ((_T: _ ~ t: any), i: nat) => go(t, i - 1)
         | panic
 };
-let find: any = lst: List(any) => pred: (lambda | v: never | panic) => {
+let find: any = lst: List(any) => pred: sub (_v: never => unknown) => {
     let go: any = dyn_rec go: match
         | () => {
             let Nothing::(v: any) = maybe_pkg;
@@ -192,7 +192,7 @@ let find: any = lst: List(any) => pred: (lambda | v: never | panic) => {
         | panic;
     go(lst)
 };
-let allof: any = lst: List(any) => pred: (lambda | v: never | panic) => {
+let allof: any = lst: List(any) => pred: sub (_v: never => unknown) => {
     let go: any = dyn_rec go: match
         | () => true
         | (h: any ~ t: any) => if pred(h)
@@ -201,7 +201,7 @@ let allof: any = lst: List(any) => pred: (lambda | v: never | panic) => {
         | panic;
     go(lst)
 };
-let anyof: any = lst: List(any) => pred: (lambda | v: never | panic) => {
+let anyof: any = lst: List(any) => pred: sub (_v: never => unknown) => {
     let go: any = dyn_rec go: match
         | () => false
         | (h: any ~ t: any) => if pred(h)

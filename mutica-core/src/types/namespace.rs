@@ -203,7 +203,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Namespace<Type<T>, T> {
     pub fn new<I: AsDispatcher<Type<T>, T>, S: Into<Arc<str>>>(
         tag: S,
         expr: I,
-
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let expr = expr.into_dispatcher();

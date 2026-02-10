@@ -7,7 +7,7 @@ let {
     take::(take: any)
 } = list_pkg;
 // 归并两个已排序的列表
-let merge: any = (cmp: (lambda | (l: never, r: never) | panic), lst1: List(any), lst2: List(any)) => {
+let merge: any = (cmp: sub ((_l: never, _r: never) => unknown), lst1: List(any), lst2: List(any)) => {
     loop merge_go: t: any = (lst1, lst2);
     match t
         | ((), l2: any) => l2
@@ -29,7 +29,7 @@ let split: any = lst: List(any) => {
 };
 
 // 归并排序主函数
-let merge_sort: any = cmp: (lambda | (l: never, r: never) | panic) => lst: List(any) =>  {
+let merge_sort: any = cmp: sub ((_l: never, _r: never) => unknown) => lst: List(any) =>  {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -45,7 +45,7 @@ let merge_sort: any = cmp: (lambda | (l: never, r: never) | panic) => lst: List(
 
 
 // 快速排序
-let quick_sort: any = cmp: (lambda | (l: never, r: never) | panic) => lst: List(any) => {
+let quick_sort: any = cmp: sub ((_l: never, _r: never) => unknown) => lst: List(any) => {
     loop go: t: any = lst;
     match t
         | () => ()
@@ -76,7 +76,7 @@ let quick_sort: any = cmp: (lambda | (l: never, r: never) | panic) => lst: List(
 };
 
 // 插入排序
-let insert_sort: any = cmp: (lambda | (l: never, r: never) | panic) => lst: List(any) => {
+let insert_sort: any = cmp: sub ((_l: never, _r: never) => unknown) => lst: List(any) => {
     // 将元素插入已排序列表
     let insert: any = (x: any, sorted: List(any)) => {
         loop go: t: any = sorted;

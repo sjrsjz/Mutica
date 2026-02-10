@@ -551,14 +551,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Opcode<Type<T>, T> {
                             ),
                         ))),
                     },
-                    (Type::Lambda(l), Type::Lambda(r)) => match &self.kind {
-                        OpcodeKind::Add => Ok(l.impls(r, ctx.source_info.cloned())?),
-                        _ => Err(TypeError::RuntimeError(std::sync::Arc::new(
-                            std::io::Error::other(
-                                "Only 'Add' operation is supported for Lambda types",
-                            ),
-                        ))),
-                    },
                     (l, r) => {
                         let err = "(Finite Sequence, Finite Sequence) | (FloatValue, FloatValue) | (Closure, Closure) | (Lambda, Lambda) | (Tuple, Tuple)".into();
                         Err(TypeError::TypeMismatch(

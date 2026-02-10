@@ -18,7 +18,6 @@ use mutica_core::types::fixpoint::FixPoint;
 use mutica_core::types::float::Float;
 use mutica_core::types::float_value::FloatValue;
 use mutica_core::types::invoke::Invoke;
-use mutica_core::types::lambda::Lambda;
 use mutica_core::types::lazy::Lazy;
 use mutica_core::types::mutable::Mutable;
 use mutica_core::types::namespace::Namespace;
@@ -285,9 +284,6 @@ pub enum TypeAst {
     NaturalNumberSet,
     Float,
     Char,
-    Lambda {
-        patterns: Vec<GenericPattern>, // 参数模式
-    },
     Wildcard,
     DiscardPattern,
     NaturalNumberLiteral(usize),
@@ -364,7 +360,6 @@ impl Clone for TypeAst {
             TypeAst::NaturalNumberSet => TypeAst::NaturalNumberSet,
             TypeAst::Float => TypeAst::Float,
             TypeAst::Char => TypeAst::Char,
-            TypeAst::Lambda { patterns } => TypeAst::Lambda { patterns: patterns.clone() },
             TypeAst::Wildcard => TypeAst::Wildcard,
             TypeAst::DiscardPattern => TypeAst::DiscardPattern,
             TypeAst::NaturalNumberLiteral(n) => TypeAst::NaturalNumberLiteral(*n),
@@ -435,9 +430,6 @@ pub enum BasicTypeAst {
     NaturalNumberSet,
     Float,
     Char,
-    Lambda {
-        patterns: Vec<BasicGenericPattern>, // 参数模式
-    },
     NaturalNumberLiteral(usize),
     FloatLiteral(f64),
     CharLiteral(char),
@@ -501,9 +493,6 @@ impl Clone for BasicTypeAst {
             BasicTypeAst::NaturalNumberSet => BasicTypeAst::NaturalNumberSet,
             BasicTypeAst::Float => BasicTypeAst::Float,
             BasicTypeAst::Char => BasicTypeAst::Char,
-            BasicTypeAst::Lambda { patterns } => {
-                BasicTypeAst::Lambda { patterns: patterns.clone() }
-            }
             BasicTypeAst::NaturalNumberLiteral(n) => BasicTypeAst::NaturalNumberLiteral(*n),
             BasicTypeAst::FloatLiteral(f) => BasicTypeAst::FloatLiteral(*f),
             BasicTypeAst::CharLiteral(c) => BasicTypeAst::CharLiteral(*c),
@@ -967,33 +956,6 @@ impl BasicTypeAst {
                     .collect();
                 (WithLocation::new(BasicTypeAst::Match { branches: new_branches }, loc), Vec::new())
             }
-            BasicTypeAst::Lambda { patterns } => {
-                let new_patterns = patterns
-                    .into_iter()
-                    .map(|b| match b {
-                        BasicGenericPattern::Standard { pattern, constraint } => {
-                            let (new_pattern, additional) = pattern.auto_bind();
-                            let mut new_constraints = additional;
-                            for (name, ctype) in constraint {
-                                let (new_ctype, _) = ctype.auto_bind();
-                                new_constraints.push((name, new_ctype));
-                            }
-
-                            BasicGenericPattern::Standard {
-                                pattern: new_pattern,
-                                constraint: new_constraints,
-                            }
-                        }
-                        BasicGenericPattern::AutoBind { pattern } => {
-                            Self::convert_auto_bind_to_standard(pattern)
-                        }
-                    })
-                    .collect();
-                (
-                    WithLocation::new(BasicTypeAst::Lambda { patterns: new_patterns }, loc),
-                    Vec::new(),
-                )
-            }
             BasicTypeAst::Apply { func, arg, handler, auto_cps } => {
                 let (new_func, mut binds) = func.auto_bind();
                 let (new_arg, arg_binds) = arg.auto_bind();
@@ -1119,33 +1081,6 @@ impl BasicTypeAst {
             }
             BasicTypeAst::Char => {
                 LinearizeResult::new_simple(WithLocation::new(LinearTypeAst::Char, loc))
-            }
-            BasicTypeAst::Lambda { patterns } => {
-                let mut linearized_patterns = Vec::new();
-                let mut bindings = Vec::new();
-                for branch in patterns {
-                    let BasicGenericPattern::Standard { pattern: p, constraint } = branch else {
-                        errors.push(WithLocation::new(
-                            ParseError::AstNotDesugared(WithLocation::new(self.clone(), loc)),
-                            loc,
-                        ));
-                        return LinearizeResult::new_simple(WithLocation::new(
-                            LinearTypeAst::AllOf(vec![]),
-                            loc,
-                        ));
-                    };
-                    let pat = p.linearize(ctx, errors, p.location());
-                    let mut new_constraint = Vec::new();
-                    for (name, ctype) in constraint {
-                        let ctype = ctype.linearize(ctx, errors, ctype.location());
-                        new_constraint.push((name.clone(), ctype.tail_type().clone()));
-                        bindings.extend(ctype.bindings);
-                    }
-                    bindings.extend(pat.bindings.clone());
-                    linearized_patterns.push((pat.tail_type().clone(), new_constraint));
-                }
-                let ty = LinearTypeAst::Lambda { patterns: linearized_patterns };
-                LinearizeResult::new_with_binding(bindings, WithLocation::new(ty, loc))
             }
             BasicTypeAst::NaturalNumberLiteral(v) => LinearizeResult::new_simple(
                 WithLocation::new(LinearTypeAst::NaturalNumberLiteral(*v), loc),
@@ -1419,13 +1354,6 @@ pub enum LinearTypeAst {
     NaturalNumberSet,
     Char,
     Float,
-    #[allow(clippy::type_complexity)]
-    Lambda {
-        patterns: Vec<(
-            WithLocation<LinearTypeAst, FlowedMetaData>,
-            Vec<(WithLocation<String>, WithLocation<LinearTypeAst, FlowedMetaData>)>,
-        )>, // pattern
-    },
     NaturalNumberLiteral(usize),
     FloatLiteral(f64),
     CharLiteral(char),
@@ -1492,9 +1420,6 @@ impl Clone for LinearTypeAst {
             LinearTypeAst::NaturalNumberSet => LinearTypeAst::NaturalNumberSet,
             LinearTypeAst::Char => LinearTypeAst::Char,
             LinearTypeAst::Float => LinearTypeAst::Float,
-            LinearTypeAst::Lambda { patterns } => {
-                LinearTypeAst::Lambda { patterns: patterns.clone() }
-            }
             LinearTypeAst::NaturalNumberLiteral(n) => LinearTypeAst::NaturalNumberLiteral(*n),
             LinearTypeAst::FloatLiteral(f) => LinearTypeAst::FloatLiteral(*f),
             LinearTypeAst::CharLiteral(c) => LinearTypeAst::CharLiteral(*c),
@@ -1563,34 +1488,6 @@ impl TypeAst {
             TypeAst::NaturalNumberSet => WithLocation::new(BasicTypeAst::NaturalNumberSet, loc),
             TypeAst::Float => WithLocation::new(BasicTypeAst::Float, loc),
             TypeAst::Char => WithLocation::new(BasicTypeAst::Char, loc),
-            TypeAst::Lambda { patterns } => WithLocation::new(
-                BasicTypeAst::Lambda {
-                    patterns: patterns
-                        .iter()
-                        .map(|branch| match branch {
-                            GenericPattern::Standard { pattern, constraint } => {
-                                BasicGenericPattern::Standard {
-                                    pattern: pattern
-                                        .into_basic(multifile_builder, pattern.location()),
-                                    constraint: constraint
-                                        .iter()
-                                        .map(|(var, expr)| {
-                                            (
-                                                var.clone(),
-                                                expr.into_basic(multifile_builder, expr.location()),
-                                            )
-                                        })
-                                        .collect(),
-                                }
-                            }
-                            GenericPattern::AutoBind { pattern } => BasicGenericPattern::AutoBind {
-                                pattern: pattern.into_basic(multifile_builder, pattern.location()),
-                            },
-                        })
-                        .collect(),
-                },
-                loc,
-            ),
             TypeAst::Wildcard => WithLocation::new(BasicTypeAst::AllOf(vec![]), loc),
             TypeAst::DiscardPattern => WithLocation::new(BasicTypeAst::Tuple(vec![]), loc), // 副作用只允许丢弃unit
             TypeAst::NaturalNumberLiteral(v) => {
@@ -1903,21 +1800,6 @@ impl TypeAst {
                     }
                 }
             }
-            TypeAst::Lambda { patterns } => {
-                for branch in patterns {
-                    match branch {
-                        GenericPattern::Standard { pattern, constraint } => {
-                            pattern.collect_errors(errors);
-                            for (_, c_expr) in constraint {
-                                c_expr.collect_errors(errors);
-                            }
-                        }
-                        GenericPattern::AutoBind { pattern } => {
-                            pattern.collect_errors(errors);
-                        }
-                    }
-                }
-            }
             TypeAst::Apply { func, arg, .. } => {
                 func.collect_errors(errors);
                 arg.collect_errors(errors);
@@ -2034,25 +1916,6 @@ impl TypeAst {
                             }
                         };
                         (sanitized_branch, Self::sanitize(expr))
-                    })
-                    .collect(),
-            },
-            TypeAst::Lambda { patterns } => TypeAst::Lambda {
-                patterns: patterns
-                    .into_iter()
-                    .map(|branch| match branch {
-                        GenericPattern::Standard { pattern, constraint } => {
-                            GenericPattern::Standard {
-                                pattern: Self::sanitize(pattern),
-                                constraint: constraint
-                                    .into_iter()
-                                    .map(|(var, c_expr)| (var, Self::sanitize(c_expr)))
-                                    .collect(),
-                            }
-                        }
-                        GenericPattern::AutoBind { pattern } => {
-                            GenericPattern::AutoBind { pattern: Self::sanitize(pattern) }
-                        }
                     })
                     .collect(),
             },
@@ -2629,67 +2492,6 @@ impl LinearTypeAst {
                 )
                 .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
             }
-            LinearTypeAst::Lambda { patterns } => {
-                let mut new_patterns = Vec::new();
-                let mut all_captures = HashMap::new();
-                for (pattern, constraints) in patterns {
-                    let pattern_res = pattern.flow(ctx, pattern.location(), errors);
-                    // 第一个作用域：处理模式和约束类型
-                    ctx.enter_generic_scope(true);
-                    for (name, _) in constraints {
-                        match ctx.declare_variable(name.clone()) {
-                            Ok(_) => {}
-                            Err(ContextError::EmptyContext) => {
-                                panic!(
-                                    "Internal error: Context should not be empty when declaring a variable"
-                                );
-                            }
-                            Err(ContextError::NotDeclared(_)) => unreachable!(),
-                            Err(ContextError::NotUsed(v)) => {
-                                errors.push(WithLocation::new(
-                                    ParseError::UnusedVariable(
-                                        WithLocation::new(self.clone(), name.location()),
-                                        v,
-                                    ),
-                                    loc,
-                                ));
-                            }
-                        }
-                    }
-                    let mut flowed_constraints = Vec::new();
-                    for (name, ctype) in constraints {
-                        let mut ctype_res = ctype.flow(ctx, ctype.location(), errors);
-                        for (name, _) in constraints {
-                            ctype_res.captures.remove(name.value());
-                        }
-                        flowed_constraints.push((name.clone(), ctype_res.ty));
-                        all_captures.extend(ctype_res.captures.clone());
-                    }
-                    all_captures.extend(pattern_res.captures);
-
-                    match ctx.exit_scope() {
-                        Ok(_) => {}
-                        Err(ContextError::EmptyContext) => {
-                            panic!(
-                                "Internal error: Context should not be empty when exiting a scope"
-                            );
-                        }
-                        Err(ContextError::NotDeclared(_)) => unreachable!(),
-                        Err(ContextError::NotUsed(v)) => {
-                            errors.push(WithLocation::new(
-                                ParseError::UnusedVariable(WithLocation::new(self.clone(), loc), v),
-                                loc,
-                            ));
-                        }
-                    }
-                    new_patterns.push((pattern_res.ty, flowed_constraints));
-                }
-                FlowResult::complex(
-                    WithLocation::new(LinearTypeAst::Lambda { patterns: new_patterns }, loc),
-                    all_captures,
-                )
-                .with_payload(FlowedMetaData::default().with_variable_context(ctx.capture()))
-            }
             LinearTypeAst::Lazy(inner) => {
                 let inner_res = inner.flow(ctx, inner.location(), errors);
                 FlowResult::complex(
@@ -2979,38 +2781,6 @@ impl LinearTypeAst {
                     ));
                 }
                 Ok(BuildResult::simple(Closure::new(new_branches, location_arc(loc))))
-            }
-            LinearTypeAst::Lambda { patterns } => {
-                let mut new_patterns = Vec::new();
-                for (pattern, constraints) in patterns {
-                    let patterns = constraints
-                        .iter()
-                        .map(|(name, _)| (name.value().clone(), name.as_ref().map(|_| ())))
-                        .collect::<HashMap<_, _>>();
-                    ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone(), true));
-                    let pattern_type: BuildResult<T> =
-                        pattern.to_type(ctx, gc, roots, pattern.location())?;
-                    ctx.exit_layer();
-                    ctx.enter_layer(BuildContextLayer::GenericBinding(patterns.clone(), false));
-                    let mut constraint_types = Vec::new();
-                    for (name, ctype) in constraints {
-                        let ctype_result = ctype.to_type(ctx, gc, roots, ctype.location())?;
-                        constraint_types.push((Arc::from(name.value().as_str()), ctype_result.ty));
-                    }
-                    ctx.exit_layer();
-
-                    let empty_env = CaptureEnv::Solved(SmallVec::new());
-                    new_patterns.push(
-                        Constraint::new_constraint(
-                            pattern_type.ty,
-                            constraint_types,
-                            CaptureEnvList::new(&empty_env),
-                            location_arc(loc),
-                        )
-                        .map_err(Ok)?,
-                    );
-                }
-                Ok(BuildResult::simple(Lambda::new(new_patterns, location_arc(loc))))
             }
             LinearTypeAst::StaticFixPoint { param_name, expr } => {
                 let placeholder = FixPoint::new_placeholder(gc, roots);

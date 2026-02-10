@@ -218,7 +218,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> SubOf<Type<T>, T> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<X: AsDispatcher<Type<T>, T>>(
         value: X,
-
         source_info: Option<Arc<SourceLocation>>,
     ) -> Type<T> {
         let expr = value.into_dispatcher();

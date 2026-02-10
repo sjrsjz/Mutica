@@ -42,7 +42,7 @@ let balance: any = t: Tree(any, any) =>
         | panic;
 
 // 插入辅助函数
-let insert_helper: any = cmp: (lambda | (l: never, r: never) | panic) => tree: Tree(any, any) => key: any => value: any => {
+let insert_helper: any = cmp: sub ((_l: never, _r: never) => unknown) => tree: Tree(any, any) => key: any => value: any => {
     loop go: t: any = tree;
     match t
         | Empty::() => Node::(Red, key, value, Empty::(), Empty::())
@@ -58,7 +58,7 @@ let insert_helper: any = cmp: (lambda | (l: never, r: never) | panic) => tree: T
 };
 
 // 插入函数 - 确保根节点是黑色
-let insert: any = cmp: (lambda | (l: never, r: never) | panic) => tree: Tree(any, any) => key: any => value: any => {
+let insert: any = cmp: sub ((_l: never, _r: never) => unknown) => tree: Tree(any, any) => key: any => value: any => {
     let result: any = insert_helper(cmp)(tree)(key)(value);
     match result
         | Node::(_T: _, k: any, v: any, left: any, right: any) => Node::(Black, k, v, left, right)
@@ -67,7 +67,7 @@ let insert: any = cmp: (lambda | (l: never, r: never) | panic) => tree: Tree(any
 };
 
 // 查找函数
-let lookup: any = cmp: (lambda | (l: never, r: never) | panic) => tree: Tree(any, any) => key: any => {
+let lookup: any = cmp: sub ((_l: never, _r: never) => unknown) => tree: Tree(any, any) => key: any => {
     loop go: t: any = tree;
     match t
         | Empty::() => Nothing
@@ -83,7 +83,7 @@ let lookup: any = cmp: (lambda | (l: never, r: never) | panic) => tree: Tree(any
 };
 
 // 检查键是否存在
-let contains: any = cmp: (lambda | (l: never, r: never) | panic) => tree: Tree(any, any) => key: any => {
+let contains: any = cmp: sub ((_l: never, _r: never) => unknown) => tree: Tree(any, any) => key: any => {
     match lookup(cmp)(tree)(key)
         | Just::(_T: _) => true
         | Nothing::() => false
@@ -100,7 +100,7 @@ let size: any = tree: Tree(any, any) => {
 };
 
 // 中序遍历
-let inorder: any = tree: Tree(any, any) => f: (lambda | (k: never, v: never) | panic) => {
+let inorder: any = tree: Tree(any, any) => f: sub ((_k: never, _v: never) => unknown) => {
     loop go: t: any = tree;
     match t
         | Empty::() => ()

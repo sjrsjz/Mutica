@@ -42,7 +42,6 @@ extern {
         "Nat"           => LexerToken::Nat,
         "Char"          => LexerToken::Char,
         "Float"         => LexerToken::Float,
-        "Lambda"        => LexerToken::Lambda,
         "True"          => LexerToken::True,
         "False"         => LexerToken::False,
         "Any"           => LexerToken::Any,
@@ -164,7 +163,6 @@ CharLiteral: char = {
 NatTok: () = <l:@L> "Nat" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 FloatTok: () = <l:@L> "Float" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 CharTok: () = <l:@L> "Char" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
-LambdaTok: () = <l:@L> "Lambda" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Keyword);
 TrueTok: () = <l:@L> "True" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 FalseTok: () = <l:@L> "False" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
 AnyTok: () = <l:@L> "Any" <r:@R> => TokenColor::fill_colors(colors, l..r, TokenColor::Type);
@@ -339,7 +337,7 @@ Delay: WithLocation<TypeAst> = {
         with_loc(TypeAst::Match {
             branches: vec![(
                 GenericPattern::Standard {
-                    pattern: with_no_loc(TypeAst::Tuple(vec![])),
+                    pattern: with_no_loc(TypeAst::DiscardPattern),
                     constraint: vec![],
                 },
                 t,
@@ -471,10 +469,6 @@ Match: WithLocation<TypeAst> = {
     },
 }
 
-Lambda: WithLocation<TypeAst> = {
-    <l:@L> LambdaTok <inner_l:@L> <branches: LambdaBranch*> <inner_r:@R> PipeTok PanicTok <r:@R> => with_loc(TypeAst::Lambda { patterns: branches }, source, l..r)
-}
-
 ForIn: WithLocation<TypeAst> = {
     <l:@L> ForTok <inner_l:@L> <binding: Binding> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
         let (branch, value) = binding;
@@ -486,9 +480,43 @@ ForIn: WithLocation<TypeAst> = {
             auto_cps: true,
         }, source, l..r)
     },
+    <l:@L> ForTok <inner_l:@L> <value: Primary> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
+        let branch = GenericPattern::Standard {
+            pattern: with_no_loc(TypeAst::DiscardPattern),
+            constraint: vec![],
+        };
+        with_loc(TypeAst::Apply {
+            func: Box::new(value),
+            arg: Box::new(with_loc(TypeAst::Match {
+                branches: vec![(branch, expr)],
+            }, source, inner_l..inner_r)),
+            auto_cps: true,
+        }, source, l..r)
+    },
     <l:@L> AtTok <f_l:@L> <func_var: IdentAsMacro> <f_r:@R> <inner_l:@L> <binding: Binding> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
         let (branch, value) = binding;
         // func_var(value)(pattern=>expr)
+        with_loc(TypeAst::Apply {
+            func: Box::new(with_loc(TypeAst::Apply {
+                func: Box::new(with_loc(
+                    TypeAst::Variable(with_loc(func_var, source, f_l..f_r)),
+                    source, f_l..f_r
+                )),
+                arg: Box::new(value),
+                auto_cps: true,
+            }, source, l..r)),
+            arg: Box::new(with_loc(TypeAst::Match {
+                branches: vec![(branch, expr)],
+            }, source, inner_l..inner_r)),
+            auto_cps: true,
+        }, source, l..r)
+    },
+    <l:@L> AtTok <f_l:@L> <func_var: IdentAsMacro> <f_r:@R> <inner_l:@L> <value: Primary> InTok <expr: Primary> <inner_r:@R> <r:@R> => {
+        // func_var(value)(()=>expr)
+        let branch = GenericPattern::Standard {
+            pattern: with_no_loc(TypeAst::DiscardPattern),
+            constraint: vec![],
+        };
         with_loc(TypeAst::Apply {
             func: Box::new(with_loc(TypeAst::Apply {
                 func: Box::new(with_loc(
@@ -529,18 +557,6 @@ MatchBranch: (GenericPattern, WithLocation<TypeAst>) = {
     PipeTok <branch: FnDef> => branch,
 }
 
-LambdaBranch: GenericPattern = {
-    PipeTok <branch: Generic> => branch,
-    PipeTok <pattern: Calculate> => {
-        match pattern.value() {
-            TypeAst::Generic(generic_pattern) => generic_pattern.as_ref().clone().into(),
-            _ => GenericPattern::AutoBind {
-                pattern: pattern,
-            },
-        }
-    }
-}
-
 
 RecursiveGen: WithLocation<TypeAst> = {
     <l:@L> RecTok <id_l:@L> <id: Ident> <id_r:@R> ColonTok <t: Primary> <r:@R> => {
@@ -566,7 +582,7 @@ Closure: WithLocation<TypeAst> = {
 }
 
 Tuple: WithLocation<TypeAst> = {
-    <l:@L> <r:@R> => with_loc(TypeAst::Tuple(vec![]), source, l..r),
+    <l:@L> <r:@R> => with_loc(TypeAst::DiscardPattern, source, l..r),
     <l:@L> <items: Comma<TupleElementWithNum>> <r:@R> => with_loc(TypeAst::Tuple(items), source, l..r),
     <l:@L> <prefix: Comma<TupleElementWithNum>> RangeTok <repeat: TupleElement> <r:@R> => with_loc(TypeAst::List {
             head: prefix,
@@ -674,7 +690,6 @@ Primary: WithLocation<TypeAst> = {
     <r: RecursiveGen> => r,
     <c: Constraint> => c,
     <m: Match> => m,
-    <l: Lambda> => l,
     <c: Closure> => c,
     <f: ForIn> => f,
     <i: IfElse> => i,

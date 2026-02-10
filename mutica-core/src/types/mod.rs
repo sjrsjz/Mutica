@@ -10,7 +10,6 @@ pub mod fixpoint;
 pub mod float;
 pub mod float_value;
 pub mod invoke;
-pub mod lambda;
 pub mod lazy;
 pub mod mutable;
 pub mod namespace;
@@ -44,7 +43,6 @@ macro_rules! type_dispatch {
             Type::Pattern(v) => v.$method($($args),*),
             Type::Lazy(v) => v.$method($($args),*),
             Type::SubOf(v) => v.$method($($args),*),
-            Type::Lambda(v) => v.$method($($args),*),
             Type::Mutable(v) => v.$method($($args),*),
             Type::NaturalNumber(v) => v.$method($($args),*),
             Type::NaturalNumberSet (v) => v.$method($($args),*),
@@ -73,7 +71,6 @@ macro_rules! typeref_dispatch {
             TypeRef::Pattern(v) => v.$method($($args),*),
             TypeRef::Lazy(v) => v.$method($($args),*),
             TypeRef::SubOf(v) => v.$method($($args),*),
-            TypeRef::Lambda(v) => v.$method($($args),*),
             TypeRef::Mutable(v) => v.$method($($args),*),
             TypeRef::NaturalNumber(v) => v.$method($($args),*),
             TypeRef::NaturalNumberSet (v) => v.$method($($args),*),
@@ -103,7 +100,6 @@ use crate::{
         float::Float,
         float_value::FloatValue,
         invoke::Invoke,
-        lambda::Lambda,
         lazy::Lazy,
         mutable::Mutable,
         namespace::Namespace,
@@ -150,7 +146,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> Clone for Type<T> {
             Type::Pattern(v) => Type::Pattern(v.clone()),
             Type::Lazy(v) => Type::Lazy(v.clone()),
             Type::SubOf(v) => Type::SubOf(v.clone()),
-            Type::Lambda(v) => Type::Lambda(v.clone()),
             Type::Mutable(v) => Type::Mutable(v.clone()),
             Type::NaturalNumber(v) => Type::NaturalNumber(v.clone()),
             Type::NaturalNumberSet(v) => Type::NaturalNumberSet(v.clone()),
@@ -194,8 +189,6 @@ pub enum Type<T: GcAllocObject<T, Inner = Type<T>>> {
     Lazy(Lazy<Type<T>, T>),
     // 子类型
     SubOf(SubOf<Type<T>, T>),
-    // 函数接口（只表示参数，不表示返回值）
-    Lambda(Lambda<Type<T>, T>),
     // 可变包装器
     Mutable(Mutable<Type<T>, T>),
     // 自然数类型
@@ -224,7 +217,6 @@ pub enum TypeRef<'a, T: GcAllocObject<T, Inner = Type<T>>> {
     Pattern(&'a Pattern<Type<T>, T>),
     Lazy(&'a Lazy<Type<T>, T>),
     SubOf(&'a SubOf<Type<T>, T>),
-    Lambda(&'a Lambda<Type<T>, T>),
     Mutable(&'a Mutable<Type<T>, T>),
     NaturalNumber(&'a NaturalNumber<Type<T>, T>),
     NaturalNumberSet(&'a NaturalNumberSet<Type<T>, T>),
@@ -316,7 +308,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> TypeRef<'_, T> {
             TypeRef::Pattern(v) => Type::Pattern(v.clone()),
             TypeRef::Lazy(v) => Type::Lazy(v.clone()),
             TypeRef::SubOf(v) => Type::SubOf(v.clone()),
-            TypeRef::Lambda(v) => Type::Lambda(v.clone()),
             TypeRef::Mutable(v) => Type::Mutable(v.clone()),
             TypeRef::NaturalNumber(v) => Type::NaturalNumber(v.clone()),
             TypeRef::NaturalNumberSet(v) => Type::NaturalNumberSet(v.clone()),
@@ -1156,7 +1147,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for Type<T> 
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
-            Type::Lambda(v) => TypeRef::Lambda(v),
             Type::Mutable(v) => TypeRef::Mutable(v),
             Type::NaturalNumber(v) => TypeRef::NaturalNumber(v),
             Type::NaturalNumberSet(v) => TypeRef::NaturalNumberSet(v),
@@ -1195,7 +1185,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> AsDispatcher<Type<T>, T> for &Type<T>
             Type::Pattern(v) => TypeRef::Pattern(v),
             Type::Lazy(v) => TypeRef::Lazy(v),
             Type::SubOf(v) => TypeRef::SubOf(v),
-            Type::Lambda(v) => TypeRef::Lambda(v),
             Type::Mutable(v) => TypeRef::Mutable(v),
             Type::NaturalNumber(v) => TypeRef::NaturalNumber(v),
             Type::NaturalNumberSet(v) => TypeRef::NaturalNumberSet(v),

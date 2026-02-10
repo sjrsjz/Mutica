@@ -1,4 +1,4 @@
-let throw_panic::(throw_panic: (lambda | panic)) = import "panic.mu";
+let throw_panic::(throw_panic: sub (match | panic)) = import "panic.mu";
 let int: any = 0 | Positive::nat | Negative::nat;
 extend $"op#add": match
     | (0, 0) => 0

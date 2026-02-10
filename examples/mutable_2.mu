@@ -3,7 +3,7 @@ let {
     String::(String: any)
 } = import "lib/string.mu";
 
-let mutable: any = k: any => (unique_name: String, init_value: any ~ on_change: [(lambda | v: any | panic,) | ()]) => {
+let mutable: any = k: any => (unique_name: String, init_value: any ~ on_change: [(sub (_v: any => unknown),) | ()]) => {
     let handler: any = dyn_rec self: state: any => {
         dyn_rec built_handler: k: any => match
             | get::Mutable::unique_name => {
@@ -13,7 +13,7 @@ let mutable: any = k: any => (unique_name: String, init_value: any ~ on_change: 
             | set::(Mutable::unique_name, new_state: any) => {
                 handle with (self new_state);
                 match on_change
-                    | (f: (lambda | v: any | panic),) => f(Mutable::unique_name)
+                    | (f: sub (_v: any => unknown),) => f(Mutable::unique_name)
                     | () => ()
                     | panic;
                 k()

@@ -113,7 +113,7 @@ let Nothing: any = Nothing::();
 let Maybe: any = T: any => (Just T | Nothing);
 
 // Use pattern matching on labeled types
-let map: any = v: Maybe(any) => f: (lambda | v: never | panic) => 
+let map: any = v: Maybe(any) => f: sub (v: never => unknown) => 
     match v
         | Just::(x: any) => Just(f(x))
         | Nothing::() => Nothing

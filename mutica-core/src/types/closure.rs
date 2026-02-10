@@ -12,8 +12,8 @@ use crate::{
         allof::AllOf,
         anyof::AnyOf,
         constraint::Constraint,
-        lambda::Lambda,
         pattern::Pattern,
+        subof::SubOf,
         unify::{
             ArgumentBinding,
             capture_env::{CaptureEnv, CaptureEnvList, CaptureOrigin},
@@ -173,52 +173,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
                 TypeRef::Constraint(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
-
-                TypeRef::Lambda(other) => {
-                    // Closure 对 Lambda 的 check：只比较模式，忽略分支的 expr
-                    // 规则与 Lambda::subof 类似，但 LHS 使用 closure 的 branch.pattern
-                    let lhs_branches = self.branches.as_ref();
-                    let rhs_patterns = other.patterns();
-                    let flipped = ctx.bound_generic_variables.flip();
-                    let mut inner_ctx = TypeCheckContext::new(
-                        ctx.coinductive_assumptions,
-                        PatternCollector::None, // 交换方向会导致收集器不可用
-                        ctx.rhs_env,
-                        ctx.lhs_env,
-                        &flipped,
-                    );
-                    let mut i = 0usize;
-                    let mut j = 0usize;
-                    let mut result = ThreeValuedLogic::True;
-
-                    while i < lhs_branches.len() && j < rhs_patterns.len() {
-                        let lhs = &lhs_branches[i].pattern;
-                        let rhs = &rhs_patterns[j];
-                        match rhs.subof_constraint(
-                            lhs,
-                            &mut inner_ctx,
-                            None::<
-                                fn(
-                                    &mut TypeCheckContext<Type<T>, T>,
-                                )
-                                    -> Result<ThreeValuedLogic, TypeError<Type<T>, T>>,
-                            >,
-                        )? {
-                            ThreeValuedLogic::True => {
-                                j += 1;
-                            }
-                            ThreeValuedLogic::False => {
-                                i += 1;
-                            }
-                            ThreeValuedLogic::Unknown => {
-                                result &= ThreeValuedLogic::Unknown;
-                                i += 1;
-                            }
-                        }
-                    }
-
-                    if j >= rhs_patterns.len() { Ok(result) } else { Ok(ThreeValuedLogic::False) }
-                }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -385,9 +339,20 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Closu
         &self,
         _ctx: &mut TypeOfContext<Type<T>, T>,
     ) -> Result<Type<T>, TypeError<Type<T>, T>> {
-        // 提取所有分支的模式类型，构造一个 Lambda 类型
-        Ok(Lambda::new(self.branches.iter().map(|b| b.pattern.clone()), self.source_info.clone())
-            .dispatch())
+        // 提取所有分支的模式类型，构造一个 sub (match | pattern1 => unknown | pattern2 => unknown | ... | panic)
+        let new_branches = self.branches.iter().map(|b| {
+            ClosureBranch::new(
+                CaptureEnv::Solved(SmallVec::new()), // 由于 body 仅仅只是个 unknown，所以 capture env 中的变量不可能被访问到，直接标记为已解决
+                b.pattern.clone(),
+                AllOf::unknown(None),
+            )
+        });
+        let new_branches = Arc::from_iter(new_branches);
+        let rootless = new_branches.iter().all(|b| b.rootless);
+        Ok(SubOf::new(
+            Self { branches: new_branches, source_info: self.source_info.clone(), rootless },
+            self.source_info.clone(),
+        ))
     }
 
     fn source_info(&self) -> Option<&Arc<SourceLocation>> {

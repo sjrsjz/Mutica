@@ -2,18 +2,18 @@ let throw_panic::(throw_panic: any) = import "panic.mu";
 let Just: any = T: any => Just::T;
 let Nothing: any = Nothing::();
 let Maybe: any = T: any => (Just T | Nothing);
-let map: any = v: Maybe(any) => f: (lambda | v: never | panic) => 
+let map: any = v: Maybe(any) => f: sub (_v: never => unknown) => 
     match v
         | Just::(x: any) => Just(f(x))
         | Nothing::() => Nothing
         | panic;
 // A version of map that works with custom let bindings
-let map_let: any = f: (lambda | v: never | panic) => v: Maybe(any) => 
+let map_let: any = f: sub (_v: never => unknown) => v: Maybe(any) => 
     match v
         | Just::(x: any) => Just(f(x))
         | Nothing::() => Nothing
         | panic;
-let unwrap_or_else: any = v: Maybe(any) => f: (lambda | () | panic) => 
+let unwrap_or_else: any = v: Maybe(any) => f: sub (() => unknown) => 
     match v
         | Just::(x: any) => x
         | Nothing::() => f()
@@ -28,7 +28,7 @@ let unwrap: any = v: Maybe(any) =>
         | Just::(x: any) => x
         | _T: any => throw_panic("Called unwrap on Nothing")
         | panic;
-let unwrap_let: any = f: (lambda | v: never | panic) => v: Maybe(any) => 
+let unwrap_let: any = f: sub (_v: never => unknown) => v: Maybe(any) => 
     match v
         | Just::(x: any) => f(x)
         | _T: any => throw_panic("Called unwrap on Nothing")
