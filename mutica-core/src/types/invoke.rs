@@ -6,8 +6,8 @@ use crate::{
     test_true,
     types::{
         AsDispatcher, CoinductiveType, CoinductiveTypeWithAny, CollectorExt, GcAllocObject,
-        InvokeContext, ReductionContext, Representable, Rootable, TaggedPtr, Type,
-        TypeCheckContext, TypeError, TypeOfContext, TypeRef, subof::SubOf,
+        InvokeContext, PatternCollector, ReductionContext, Representable, Rootable, TaggedPtr,
+        Type, TypeCheckContext, TypeError, TypeOfContext, TypeRef, subof::SubOf,
     },
     util::{
         cycle_detector::FastCycleDetector, source_info::SourceLocation,
@@ -156,37 +156,6 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 TypeRef::Variable(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
                 TypeRef::SubOf(v) => v.accept(self.as_ref_dispatcher(), &mut inner_ctx),
 
-                TypeRef::Invoke(v) => {
-                    let (self_func, self_arg, self_cont_style) = self.inner.as_ref();
-                    let (v_func, v_arg, v_cont_style) = v.inner.as_ref();
-
-                    Ok(test_true!(self_func.check(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
-                        & test_true!(self_arg.check(v_arg.as_ref_dispatcher(), &mut inner_ctx)?)
-                        & match (self_cont_style, v_cont_style) {
-                            (
-                                InvokeCountinuationStyle::TailCall,
-                                InvokeCountinuationStyle::TailCall,
-                            ) => ThreeValuedLogic::True,
-                            (
-                                InvokeCountinuationStyle::WithContinuation(c1),
-                                InvokeCountinuationStyle::WithContinuation(c2),
-                            ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                            (
-                                InvokeCountinuationStyle::WithPerformHandler(c1),
-                                InvokeCountinuationStyle::WithPerformHandler(c2),
-                            ) => c1.check(c2.as_ref_dispatcher(), &mut inner_ctx)?,
-                            (
-                                InvokeCountinuationStyle::WithBoth(c1a, c1b),
-                                InvokeCountinuationStyle::WithBoth(c2a, c2b),
-                            ) => {
-                                test_true!(c1a.check(c2a.as_ref_dispatcher(), &mut inner_ctx)?)
-                                    & test_true!(
-                                        c1b.check(c2b.as_ref_dispatcher(), &mut inner_ctx)?
-                                    )
-                            }
-                            _ => ThreeValuedLogic::False,
-                        })
-                }
                 _ => Ok(ThreeValuedLogic::False),
             }
         })
@@ -214,10 +183,16 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                 TypeRef::Invoke(v) => {
                     let (self_func, self_arg, self_cont_style) = self.inner.as_ref();
                     let (v_func, v_arg, v_cont_style) = v.inner.as_ref();
+                    let lhs_env = inner_ctx.lhs_env;
+                    let rhs_env = inner_ctx.rhs_env;
+                    let bound = inner_ctx.bound_generic_variables;
+                    let flipped_bound = bound.flip();
 
-                    Ok(test_true!(self_func.subof(v_func.as_ref_dispatcher(), &mut inner_ctx)?)
-                        & test_true!(self_arg.subof(v_arg.as_ref_dispatcher(), &mut inner_ctx)?)
-                        & match (self_cont_style, v_cont_style) {
+                    let (func_forward, cont_forward) = {
+                        let func_forward = test_true!(
+                            self_func.subof(v_func.as_ref_dispatcher(), &mut inner_ctx)?
+                        );
+                        let cont_forward = match (self_cont_style, v_cont_style) {
                             (
                                 InvokeCountinuationStyle::TailCall,
                                 InvokeCountinuationStyle::TailCall,
@@ -240,7 +215,87 @@ impl<T: GcAllocObject<T, Inner = Type<T>>> CoinductiveType<Type<T>, T> for Invok
                                     )
                             }
                             _ => ThreeValuedLogic::False,
-                        })
+                        };
+                        (func_forward, cont_forward)
+                    };
+
+                    let func_reverse = {
+                        let assumptions = &mut *inner_ctx.coinductive_assumptions;
+                        let mut reverse_ctx = TypeCheckContext::new(
+                            assumptions,
+                            PatternCollector::None,
+                            rhs_env,
+                            lhs_env,
+                            &flipped_bound,
+                        );
+                        test_true!(v_func.subof(self_func.as_ref_dispatcher(), &mut reverse_ctx)?)
+                    };
+
+                    // 参数位置是逆变，等价要求双向包含（都需要翻转环境）
+                    let arg_forward = {
+                        let assumptions = &mut *inner_ctx.coinductive_assumptions;
+                        let mut contra_ctx = TypeCheckContext::new(
+                            assumptions,
+                            PatternCollector::None,
+                            rhs_env,
+                            lhs_env,
+                            &flipped_bound,
+                        );
+                        test_true!(v_arg.subof(self_arg.as_ref_dispatcher(), &mut contra_ctx)?)
+                    };
+                    let arg_reverse = {
+                        let assumptions = &mut *inner_ctx.coinductive_assumptions;
+                        let mut contra_ctx = TypeCheckContext::new(
+                            assumptions,
+                            PatternCollector::None,
+                            rhs_env,
+                            lhs_env,
+                            &flipped_bound,
+                        );
+                        test_true!(self_arg.subof(v_arg.as_ref_dispatcher(), &mut contra_ctx)?)
+                    };
+
+                    let cont_reverse = {
+                        let assumptions = &mut *inner_ctx.coinductive_assumptions;
+                        let mut reverse_ctx = TypeCheckContext::new(
+                            assumptions,
+                            PatternCollector::None,
+                            rhs_env,
+                            lhs_env,
+                            &flipped_bound,
+                        );
+                        match (self_cont_style, v_cont_style) {
+                            (
+                                InvokeCountinuationStyle::TailCall,
+                                InvokeCountinuationStyle::TailCall,
+                            ) => ThreeValuedLogic::True,
+                            (
+                                InvokeCountinuationStyle::WithContinuation(c1),
+                                InvokeCountinuationStyle::WithContinuation(c2),
+                            ) => c2.subof(c1.as_ref_dispatcher(), &mut reverse_ctx)?,
+                            (
+                                InvokeCountinuationStyle::WithPerformHandler(c1),
+                                InvokeCountinuationStyle::WithPerformHandler(c2),
+                            ) => c2.subof(c1.as_ref_dispatcher(), &mut reverse_ctx)?,
+                            (
+                                InvokeCountinuationStyle::WithBoth(c1a, c1b),
+                                InvokeCountinuationStyle::WithBoth(c2a, c2b),
+                            ) => {
+                                test_true!(c2a.subof(c1a.as_ref_dispatcher(), &mut reverse_ctx)?)
+                                    & test_true!(
+                                        c2b.subof(c1b.as_ref_dispatcher(), &mut reverse_ctx)?
+                                    )
+                            }
+                            _ => ThreeValuedLogic::False,
+                        }
+                    };
+
+                    Ok(func_forward
+                        & func_reverse
+                        & arg_forward
+                        & arg_reverse
+                        & cont_forward
+                        & cont_reverse)
                 }
                 _ => Ok(ThreeValuedLogic::False),
             }
